@@ -33,4 +33,12 @@ pub mod safenudge {
             &ctx.bumps,
         )
     }
+
+    pub fn join_group(ctx: Context<JoinGroup>) -> Result<()> {
+        ctx.accounts.handler(&ctx.bumps)
+    }
+
+    pub fn start_cycle(ctx: Context<StartCycle>) -> Result<()> {
+        ctx.accounts.handler()
+    }
 }
