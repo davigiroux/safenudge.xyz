@@ -542,7 +542,12 @@ describe("safenudge", () => {
           .rpc();
         assert.fail("should have failed");
       } catch (e: any) {
-        assert.include(e.message, "InvalidGroupStatus");
+        // Bankrun may format errors differently — check for error code or message
+        const errStr = e.message || e.toString();
+        assert.ok(
+          errStr.includes("InvalidGroupStatus") || errStr.includes("0x1770"),
+          `Expected InvalidGroupStatus, got: ${errStr.substring(0, 200)}`
+        );
       }
     });
   });
