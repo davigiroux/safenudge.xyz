@@ -1,6 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { BankrunProvider, startAnchor } from "anchor-bankrun";
+import { Clock } from "solana-bankrun";
 import { PublicKey, Keypair, SystemProgram, Transaction } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -548,6 +549,169 @@ describe("safenudge", () => {
           errStr.includes("InvalidGroupStatus") || errStr.includes("0x1770"),
           `Expected InvalidGroupStatus, got: ${errStr.substring(0, 200)}`
         );
+      }
+    });
+  });
+
+  // ─── deposit tests ───────────────────────────────────────
+
+  describe("deposit", () => {
+    it("member deposits for current period (period 1 after time advance)", async () => {
+      const code = "deposit-ok";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group (weekly, 4 periods)
+      await program.methods
+        .createGroup(code, new anchor.BN(5_000_000), 0, 4, 5, 0, new anchor.BN(1_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // Two members join
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Advance clock by 8 days (into period 1 for weekly)
+      const currentClock = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(
+          currentClock.slot,
+          currentClock.epochStartTimestamp,
+          currentClock.epoch,
+          currentClock.leaderScheduleEpoch,
+          currentClock.unixTimestamp + BigInt(8 * 86400)
+        )
+      );
+
+      // Member 1 deposits for period 1
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      const record = await program.account.memberRecord.fetch(m1Pda);
+      assert.equal(record.depositsMade, 2); // join + period 1
+      assert.equal(record.totalDeposited.toNumber(), 10_000_000); // 5M + 5M
+      assert.equal(record.periodsDeposited[0], true);
+      assert.equal(record.periodsDeposited[1], true);
+      assert.equal(record.periodsDeposited[2], false);
+    });
+
+    it("fails with duplicate deposit for same period", async () => {
+      const code = "dup-deposit";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(5_000_000), 0, 4, 5, 0, new anchor.BN(1_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m, tokenAccount: mAta } = await createFundedMember(100_000_000);
+      const [mPda] = getMemberPda(gPda, m.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m.publicKey, groupConfig: gPda, memberRecord: mPda,
+          memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Period 0 already deposited via join — try again (clock still in period 0)
+      try {
+        await program.methods.deposit()
+          .accounts({
+            member: m.publicKey, groupConfig: gPda, memberRecord: mPda,
+            memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([m]).rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "AlreadyDeposited");
+      }
+    });
+
+    it("fails when cycle not active", async () => {
+      const code = "not-active-dep";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(5_000_000), 0, 4, 5, 0, new anchor.BN(1_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m, tokenAccount: mAta } = await createFundedMember(100_000_000);
+      const [mPda] = getMemberPda(gPda, m.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m.publicKey, groupConfig: gPda, memberRecord: mPda,
+          memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m]).rpc();
+
+      // Don't start cycle — try to deposit
+      try {
+        await program.methods.deposit()
+          .accounts({
+            member: m.publicKey, groupConfig: gPda, memberRecord: mPda,
+            memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([m]).rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidGroupStatus");
       }
     });
   });

@@ -41,4 +41,8 @@ pub mod safenudge {
     pub fn start_cycle(ctx: Context<StartCycle>) -> Result<()> {
         ctx.accounts.handler()
     }
+
+    pub fn deposit(ctx: Context<Deposit>) -> Result<()> {
+        ctx.accounts.handler()
+    }
 }
