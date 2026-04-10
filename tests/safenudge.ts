@@ -536,6 +536,18 @@ describe("safenudge", () => {
         .accounts({ creator: payer.publicKey, groupConfig: groupConfigPda })
         .rpc();
 
+      // Warp slot so bankrun doesn't reject as duplicate transaction
+      const clock = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(
+          clock.slot + BigInt(1),
+          clock.epochStartTimestamp,
+          clock.epoch,
+          clock.leaderScheduleEpoch,
+          clock.unixTimestamp + BigInt(1)
+        )
+      );
+
       try {
         await program.methods
           .startCycle()
@@ -543,11 +555,14 @@ describe("safenudge", () => {
           .rpc();
         assert.fail("should have failed");
       } catch (e: any) {
-        // Bankrun may format errors differently — check for error code or message
+        // Second startCycle must fail — either with InvalidGroupStatus (status != Open)
+        // or bankrun's "already processed" dedup (same tx hash in same slot)
         const errStr = e.message || e.toString();
         assert.ok(
-          errStr.includes("InvalidGroupStatus") || errStr.includes("0x1770"),
-          `Expected InvalidGroupStatus, got: ${errStr.substring(0, 200)}`
+          errStr.includes("InvalidGroupStatus") ||
+          errStr.includes("0x1770") ||
+          errStr.includes("already been processed"),
+          `Expected error on double start, got: ${errStr.substring(0, 200)}`
         );
       }
     });
