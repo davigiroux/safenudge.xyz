@@ -2,21 +2,41 @@
 
 ## The Problem
 
-Brazilians have a deep cultural tradition of informal group savings. Caixinhas (small group funds), vaquinhas (pooled contributions), and consórcios informais (informal buying consortiums) are everywhere. Friends pool money for trips, coworkers save together for year-end celebrations, families collect monthly for a shared goal.
+Brazil has a savings crisis disguised as a culture of resourcefulness.
 
-These systems work because of social accountability. You don't skip your deposit because your friends will notice and you'll hear about it.
+In a country where inflation has historically eaten savings, where the government literally confiscated bank accounts in 1990 (Plano Collor), and where 32 million people still use poupança (savings accounts that often lose to inflation) as the only investment, Brazilians have learned to save through social commitment rather than financial products.
 
-But they break in predictable ways. Someone holds the money and disappears. The group grows past the point where social pressure works. People miss deposits and there's no enforcement mechanism beyond awkward WhatsApp messages. The person managing the cash has to track everything manually in a spreadsheet or notebook.
+This shows up in three cultural patterns:
 
-The trust problem is the bottleneck. The mechanics are simple. The enforcement is hard.
+**MOAI (poupança coletiva):** Borrowed from Japanese culture and widely practiced in Brazil, a MOAI is a group of people who commit to contributing a fixed amount monthly. Each month, the total pool goes to one member. The cycle continues until everyone has received. It's unregulated, trust-based, and solves a real problem: people who can't discipline themselves to save alone use the group commitment as a forcing function. The MOAI works not because the economics are optimal (they're not, the early receivers get an interest-free loan while later ones effectively lose to inflation), but because the social pressure makes people actually follow through.
+
+**Caixinhas and vaquinhas:** Informal group funds for shared goals. Friends pool for trips, coworkers collect for year-end parties, families save together. Same trust-based mechanics, same enforcement problem.
+
+**Consórcios:** The formalized version. Regulated by the Central Bank, managed by administrator companies charging 15-20% fees. In 2024, the system hit 11.2 million active participants and R$378 billion in credits contracted. Consórcios prove the demand is massive, but they're expensive, rigid, and bureaucratic.
+
+All three patterns reveal the same insight: **Brazilians don't have a savings problem. They have an enforcement problem.** People know they should save. They want to save. But without social accountability and commitment mechanics, individual discipline fails. MOAIs, caixinhas, and consórcios exist because groups solve what willpower alone cannot.
+
+But these systems break in predictable ways. Someone holds the money and disappears. The group grows past the point where social pressure works. People miss deposits and there's no enforcement mechanism beyond awkward WhatsApp messages. The MOAI organizer tracks everything in a spreadsheet. The consórcio administrator charges R$15K+ in fees on a R$80K car.
+
+The trust problem is the bottleneck. The mechanics are simple. The enforcement is hard. And the fees for outsourcing that enforcement to a regulated administrator are absurd.
 
 ## The Solution
 
-SafeNudge is a group accountability savings protocol on Solana. It replaces the trust layer of informal savings groups with smart contract enforcement while keeping the social dynamics that make these groups work.
+SafeNudge is a group accountability savings protocol on Solana. It replaces the trust layer of MOAIs and informal savings groups with smart contract enforcement while keeping the social dynamics that make these groups work.
+
+Think of it as a **digital MOAI with better rules**: no administrator fees, no trust required, penalties for missed commitments that reward consistent savers, and yield on pooled funds that a WhatsApp group coordinator could never offer.
 
 A group creator sets the rules: how much to deposit, how often, for how long, and what happens when someone misses. Members join with an invite code, make their first deposit to commit, and the cycle begins. Deposits are locked until the cycle ends. Missed deposits trigger penalties that get redistributed to members who stayed consistent. At the end of the cycle, everyone gets their savings back, adjusted for penalties earned or owed.
 
 The blockchain handles the rules. The group handles the motivation.
+
+**Why this is better than a traditional MOAI:**
+- No trust required (code enforces the rules, not a person)
+- No administrator fees (vs. 15-20% in formal consórcios)
+- Penalties create positive incentives (consistent savers earn more, not just their money back)
+- Yield on idle funds (USDC lending during cycles, something no WhatsApp-coordinated group can do)
+- Transparent tracking (every deposit, every miss, every penalty visible on-chain)
+- Portable (join from a link, not limited to people you know in person)
 
 ## Target User
 
@@ -132,11 +152,112 @@ The UI defaults to Portuguese (PT-BR) with an English toggle. All user-facing co
 - Challenge mode: goal-based savings with milestone rewards
 - Streak bonuses: consecutive on-time deposits earn multipliers on penalty redistribution
 
+## Market Size
+
+### The Consórcio Market is Massive and Growing
+
+Brazil's formal consórcio system (regulated group buying pools) is not a niche product. According to ABAC (the industry association), in 2024 the system hit all-time records: 11.2 million active participants, 4.49 million new memberships sold, and R$378.7 billion in credits contracted (roughly $73B USD). Credits actually disbursed to members reached R$100.6 billion ($19.4B USD), growing 19.8% year-over-year.
+
+That's just the regulated system. Informal caixinhas, vaquinhas, and friend-group savings pools are by definition unmeasured, but they are culturally ubiquitous. Every Brazilian knows someone who participates in one.
+
+### TAM / SAM / SOM
+
+**TAM (Total Addressable Market):** The global group savings and ROSCA (Rotating Savings and Credit Association) market spans Brazil, Sub-Saharan Africa, South and Southeast Asia, and diaspora communities worldwide. Estimates vary, but ROSCAs collectively handle hundreds of billions of dollars annually across these regions. Brazil alone has 11M+ formal consórcio participants, plus an uncounted informal market.
+
+**SAM (Serviceable Addressable Market):** Brazilian informal savings groups among digitally active users. Brazil has 150M+ Pix users, 100M+ smartphone users under 40, and a cultural familiarity with group savings. Conservative estimate: 5-10M Brazilians participate in informal savings groups annually. At an average group size of 5 and an average commitment of R$200/month for 6 months, that's R$6-12B flowing through informal groups annually ($1.2-2.4B USD).
+
+**SOM (Serviceable Obtainable Market):** Year 1 target: 10,000 active users across 2,000 groups. At an average of R$200/month per member for 6 months, that's R$12M in TVL flowing through the protocol annually.
+
+### Web2 Equivalent
+
+**"SafeNudge is the digital MOAI — group savings with smart contract enforcement, zero fees, and yield on idle deposits."**
+
+For judges who need a quick anchor: "Think of SafeNudge as StickK meets Nubank, on Solana." StickK (commitment contracts with financial stakes) provides the behavioral mechanic. Nubank (accessible fintech for underbanked populations) provides the distribution model. Solana provides the trustless enforcement layer.
+
+The web2 equivalents are savings challenge apps (Goalz, SaverLife, Qapital) and accountability apps (StickK, Beeminder, GymRats). None of them combine group accountability with financial commitment mechanics and on-chain enforcement. The closest web3 comp is PoolTogether (no-loss prize savings on Ethereum), but PoolTogether is individual, not group-based, and the behavioral mechanic is reward-driven (lottery) rather than loss-aversion-driven (penalties).
+
+SafeNudge's moat is the combination: group social pressure + financial penalties + blockchain enforcement + Brazilian cultural fit (MOAI/caixinha behavior already exists). No pure web2 app can offer trustless enforcement. No existing web3 protocol targets the MOAI use case. And the formal consórcio system charges 15-20% for what SafeNudge does at near-zero cost.
+
+## Revenue Model
+
+Three revenue streams, layered over time:
+
+### Stream 1: Protocol Fee on Yield (v2, primary revenue)
+
+When the yield integration launches (Kamino K-Lend or similar), pooled USDC earns lending yield during active cycles. SafeNudge takes a 10-15% performance fee on yield generated. The user's principal is never touched. This is the same model as Lido (10% of staking rewards), Yearn (20% performance fee), and most DeFi yield aggregators.
+
+**Why this works:** Users don't perceive a cost because they never had the yield before. The protocol earns by making their idle savings productive. This is the cleanest revenue model for a savings protocol.
+
+**Unit economics at scale:**
+- 100,000 active users, average deposit R$200/month ($40 USD), 6-month cycles
+- Average TVL: $12M (half of total flow, accounting for cycle timing)
+- USDC lending yield: 5-8% APY (conservative Kamino K-Lend range)
+- Annual yield on TVL: $600K-$960K
+- SafeNudge 15% performance fee: $90K-$144K ARR
+
+This alone doesn't hit $1M ARR. But yield revenue scales directly with TVL, and TVL compounds as groups re-form for new cycles.
+
+### Stream 2: Premium Group Features (v2-v3, subscription)
+
+Free tier: basic group savings with penalties and on-chain enforcement.
+Premium tier ($2-5/month per group creator): yield integration, WhatsApp notifications, analytics dashboard (savings streaks, group leaderboards), custom penalty structures, larger group sizes (20+), multiple concurrent groups.
+
+**Unit economics:**
+- 2,000 premium group creators at $3/month average = $72K ARR
+- 10,000 premium creators at $3/month = $360K ARR
+
+### Stream 3: B2B / White-Label (v3-v4)
+
+Brazilian fintechs (Nubank, Inter, PagBank, Mercado Pago) and neobanks could integrate SafeNudge as a feature. Group savings is a proven engagement driver, but none of these platforms offer it today. SafeNudge licenses the protocol as infrastructure.
+
+**Model:** Revenue share on deposits flowing through the white-label integration, or a flat SaaS fee per institution.
+
+**Why this is credible:** The formal consórcio market (R$378B in credits) is dominated by banks and administrators that charge 15-20% administration fees. SafeNudge's on-chain enforcement eliminates the administrator, reducing the cost to near-zero while offering a better user experience. Any fintech that integrates this immediately differentiates against traditional consórcio administrators.
+
+### Path to $1M ARR
+
+The realistic path combines yield fees + premium subscriptions at scale:
+
+| Milestone | Users | TVL | Yield Fee | Premium | Total ARR |
+|-----------|-------|-----|-----------|---------|-----------|
+| Month 6 | 5,000 | $1M | $7.5K | $18K | ~$25K |
+| Month 12 | 25,000 | $5M | $37.5K | $90K | ~$128K |
+| Month 18 | 100,000 | $20M | $150K | $360K | ~$510K |
+| Month 24 | 250,000 | $50M | $375K | $900K | ~$1.275M |
+
+$1M ARR at ~250K active users and $50M TVL. For context, Nubank has 100M+ customers in Brazil. Capturing 0.25% of digitally active Brazilians who already save in groups is conservative if the product works.
+
+## Go-to-Market
+
+### Phase 1: Crypto-Native Launch (Months 1-3)
+
+**Who:** Solana community members, crypto-native Brazilians, hackathon network.
+**How:** Build in public on X, Superteam Brasil community, Colosseum network. First groups are friends-and-family: savings challenges among existing crypto users who understand wallets.
+**Goal:** 100 active users, 20 groups. Validate the core loop (do groups actually complete cycles?).
+
+### Phase 2: Brazilian Crypto Community (Months 3-6)
+
+**Who:** Brazilian crypto Twitter, Discord communities, Mercado Bitcoin users, Binance BR users.
+**How:** Portuguese content, Pix on-ramp live, partnerships with Brazilian crypto influencers. Target the intersection: people who understand crypto AND participate in informal savings groups.
+**Goal:** 2,000 active users, 400 groups. Prove retention (do groups re-form for second cycles?).
+
+### Phase 3: Non-Crypto Brazilians (Months 6-12)
+
+**Who:** The actual target market. People who use Pix daily, save in WhatsApp groups, and have never used a crypto app.
+**How:** Embedded wallets (no seed phrases), full Pix on/off-ramp, WhatsApp integration for group invites and deposit reminders. The onboarding flow looks like signing up for Nubank, not connecting Phantom.
+**Goal:** 25,000 active users. This is where the unit economics start to work.
+
+### Distribution Moat
+
+SafeNudge has a built-in viral loop that most crypto protocols lack: every group member invites 2-9 other people. If a group of 5 completes a cycle and 3 of those members start new groups, the network grows organically. The invite code mechanic is the distribution mechanism. WhatsApp sharing is the growth channel. No paid acquisition needed for initial traction.
+
 ## Why This Wins
 
 The product that wins in crypto consumer apps isn't the one with the most sophisticated smart contract. It's the one where a user in Campo Grande can join a savings group from a link shared in a WhatsApp group and never think about blockchain.
 
 SafeNudge's edge is that the underlying behavior already exists. Millions of Brazilians already save in groups. The protocol doesn't create new behavior. It removes the trust bottleneck from behavior that's already happening, using technology the user never needs to see.
+
+The business case is grounded in real numbers: Brazil's formal consórcio system alone handles R$378B annually with 11M+ participants. SafeNudge doesn't need to create demand. It needs to give existing demand a better tool.
 
 ---
 
