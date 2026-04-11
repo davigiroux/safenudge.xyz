@@ -1,0 +1,151 @@
+{
+  "name": "SafeNudge Bossa",
+  "version": "1",
+  "source": "Google Stitch - projects/10039124106189115021",
+  "colors": {
+    "primary": {
+      "primary": "#006565",
+      "on-primary": "#ffffff",
+      "primary-container": "#008080",
+      "on-primary-container": "#e3fffe",
+      "primary-fixed": "#93f2f2",
+      "primary-fixed-dim": "#76d6d5",
+      "on-primary-fixed": "#002020",
+      "on-primary-fixed-variant": "#004f4f",
+      "inverse-primary": "#76d6d5"
+    },
+    "secondary": {
+      "secondary": "#006d37",
+      "on-secondary": "#ffffff",
+      "secondary-container": "#6bfe9c",
+      "on-secondary-container": "#00743a",
+      "secondary-fixed": "#6bfe9c",
+      "secondary-fixed-dim": "#4ae183",
+      "on-secondary-fixed": "#00210c",
+      "on-secondary-fixed-variant": "#005228"
+    },
+    "tertiary": {
+      "tertiary": "#804f00",
+      "on-tertiary": "#ffffff",
+      "tertiary-container": "#a26500",
+      "on-tertiary-container": "#fff8f4",
+      "tertiary-fixed": "#ffddb9",
+      "tertiary-fixed-dim": "#ffb961",
+      "on-tertiary-fixed": "#2b1700",
+      "on-tertiary-fixed-variant": "#663e00"
+    },
+    "error": {
+      "error": "#ba1a1a",
+      "on-error": "#ffffff",
+      "error-container": "#ffdad6",
+      "on-error-container": "#93000a"
+    },
+    "surface": {
+      "surface": "#faf9f5",
+      "on-surface": "#1a1c1a",
+      "surface-variant": "#e2e3df",
+      "on-surface-variant": "#3e4949",
+      "surface-bright": "#faf9f5",
+      "surface-dim": "#dadad6",
+      "surface-container-lowest": "#ffffff",
+      "surface-container-low": "#f4f4f0",
+      "surface-container": "#eeeeea",
+      "surface-container-high": "#e8e8e4",
+      "surface-container-highest": "#e2e3df",
+      "surface-tint": "#006a6a",
+      "inverse-surface": "#2f312e",
+      "inverse-on-surface": "#f1f1ed"
+    },
+    "outline": {
+      "outline": "#6e7979",
+      "outline-variant": "#bdc9c8"
+    },
+    "background": {
+      "background": "#faf9f5",
+      "on-background": "#1a1c1a"
+    }
+  },
+  "typography": {
+    "fonts": {
+      "headline": ["Manrope"],
+      "body": ["Inter"],
+      "label": ["Inter"]
+    },
+    "googleFonts": {
+      "manrope": {
+        "weights": [600, 700, 800],
+        "url": "https://fonts.googleapis.com/css2?family=Manrope:wght@600;700;800&display=swap"
+      },
+      "inter": {
+        "weights": [400, 500, 600],
+        "url": "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap"
+      }
+    },
+    "scale": {
+      "display-lg": { "font": "Manrope", "size": "3.5rem" },
+      "display-md": { "font": "Manrope", "size": "2.75rem" },
+      "display-sm": { "font": "Manrope", "size": "2.25rem" },
+      "headline-lg": { "font": "Manrope", "size": "2rem" },
+      "headline-md": { "font": "Manrope", "size": "1.75rem" },
+      "headline-sm": { "font": "Manrope", "size": "1.5rem" },
+      "title-lg": { "font": "Inter", "size": "1.375rem" },
+      "title-md": { "font": "Inter", "size": "1rem" },
+      "title-sm": { "font": "Inter", "size": "0.875rem" },
+      "body-lg": { "font": "Inter", "size": "1rem" },
+      "body-md": { "font": "Inter", "size": "0.875rem" },
+      "body-sm": { "font": "Inter", "size": "0.75rem" },
+      "label-lg": { "font": "Inter", "size": "0.875rem" },
+      "label-md": { "font": "Inter", "size": "0.75rem" },
+      "label-sm": { "font": "Inter", "size": "0.6875rem" }
+    }
+  },
+  "borderRadius": {
+    "DEFAULT": "0.25rem",
+    "sm": "0.25rem",
+    "md": "0.5rem",
+    "lg": "0.5rem",
+    "xl": "0.75rem",
+    "2xl": "1.5rem",
+    "full": "9999px"
+  },
+  "spacing": {
+    "baseUnit": "4px",
+    "grid": "8px",
+    "button": { "vertical": "8px", "horizontal": "16px" },
+    "card": "24px",
+    "gutter": {
+      "mobile": "16px",
+      "mobileLarge": "24px",
+      "desktop": "32px"
+    }
+  },
+  "shadows": {
+    "nudge": "0 12px 32px -4px rgba(0, 101, 101, 0.06)",
+    "activeGlow": "0 0 15px rgba(0, 101, 101, 0.2)",
+    "ghostBorder": "0 0 0 1px rgba(189, 201, 200, 0.15)"
+  },
+  "glass": {
+    "bgGlass": {
+      "background": "rgba(255, 255, 255, 0.8)",
+      "backdropFilter": "blur(12px)"
+    },
+    "glassNudge": {
+      "background": "rgba(250, 249, 245, 0.8)",
+      "backdropFilter": "blur(12px)"
+    }
+  },
+  "gradients": {
+    "primaryCta": "linear-gradient(135deg, #006565, #008080)"
+  },
+  "icons": {
+    "system": "Material Symbols Outlined",
+    "url": "https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0",
+    "settings": "FILL 0, wght 400, GRAD 0, opsz 24"
+  },
+  "overrides": {
+    "neutralColor": "#F5F5F1",
+    "primaryColor": "#008080",
+    "secondaryColor": "#2ECC71",
+    "tertiaryColor": "#F39C12"
+  }
+}

@@ -501,6 +501,40 @@ Decisions that affect security or architecture. Do not change without explicit d
 
 ---
 
+## Design Context
+
+### Users
+Brazilian adults (25-45) who participate in informal savings groups (MOAIs, caixinhas, vaquinhas) but have no crypto experience. They use Pix daily and WhatsApp for group coordination. Their context: mobile-first, often on commutes or during breaks. The job to be done: save consistently with friends/family by turning social commitment into financial discipline. They need the interface to feel like a trusted financial partner, not a crypto app.
+
+### Brand Personality
+**Warm, Trustworthy, Encouraging.** The voice is "parceiro" — a supportive friend who keeps you accountable without lecturing. PT-BR copy should feel like talking to a financially savvy friend, not reading bank terms. Errors are collaborative ("Algo não deu certo. Vamos tentar de novo?"), not clinical ("Erro de sistema").
+
+### Aesthetic Direction
+**Design System:** "SafeNudge Bossa" — The Organic Trust Framework (see `docs/design-system.md` for full spec).
+- **Visual tone:** Editorial, warm, high-end stationery feel. NOT a crypto exchange, NOT a standard fintech template.
+- **North Star:** "The Human Ledger" — tactile, paper-like surfaces with tonal depth instead of borders.
+- **References:** Nubank's accessibility + high-end editorial magazines + Material Design 3 surface architecture.
+- **Anti-references:** Dark mode crypto dashboards, neon accents, boxy grid layouts, default Bootstrap/Tailwind shadows.
+- **Theme:** Light only. Warm paper-like backgrounds (#faf9f5). Deep teal (#006565) to spring green (#006d37) progression. Amber (#804f00) for nudges/warnings.
+- **Color tokens:** 40+ Material Design 3 tokens in `docs/design-tokens.json`.
+- **Typography:** Manrope (headlines) + Inter (body/UI). Dual-typeface editorial rhythm.
+- **Elevation:** Tonal surface layering, not borders. Teal-tinted ambient shadows, not gray.
+- **Accessibility:** WCAG AA contrast ratios. Keyboard navigation. No dark mode.
+
+### Design Principles
+
+1. **Tonal, Not Linear.** Define boundaries through background color shifts, never 1px borders. The "No-Line Rule" is absolute. Space is articulated through surface nesting (lighter cards on darker sections).
+
+2. **Nudge, Don't Nag.** The interface guides through hierarchy and subtle emphasis, not alerts and modals. Penalties are framed as accountability tools, not punishments. The "Nudge Toast" (glassmorphic, amber-accented, asymmetrically positioned) is the signature interaction.
+
+3. **Luxury of Space.** When a screen feels busy, add padding. Generous whitespace is the primary signal of quality. 4px/8px baseline grid, 24px card padding, 32px desktop gutters.
+
+4. **Brazilian-First, Crypto-Never.** All UI copy in PT-BR by default via i18n. The user should never see a Solana address, a raw token amount, or a wallet error. Financial amounts always formatted with locale separators (R$ 1.500,00). The blockchain is infrastructure, not interface.
+
+5. **Encode the System.** Every component must use design tokens from `docs/design-tokens.json`. No hex values in components. No `shadow-md` or `border-gray-200`. CTA gradients, tinted shadows, surface hierarchy — all enforced through Tailwind config and custom utilities.
+
+---
+
 ## Quick Commands
 
 ```bash
