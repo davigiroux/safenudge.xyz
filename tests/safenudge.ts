@@ -10,6 +10,7 @@ import {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
+  AccountLayout,
 } from "@solana/spl-token";
 import { assert } from "chai";
 
@@ -728,6 +729,1082 @@ describe("safenudge", () => {
       } catch (e: any) {
         assert.include(e.message, "InvalidGroupStatus");
       }
+    });
+  });
+
+  // ─── distribute tests ─────────────────────────────────────
+
+  describe("distribute", () => {
+    it("distributes correctly when all members are compliant", async () => {
+      const code = "dist-all-ok";
+      const depositAmount = 5_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 2 periods, fixed 1 USDC penalty, deposit 5 USDC
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 2, 5, 0, new anchor.BN(1_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 2 members join (period 0 deposit included)
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Advance 8 days (into period 1)
+      let clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Both deposit period 1
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      await program.methods.deposit()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m2]).rpc();
+
+      // Advance past cycle end (2 weeks = 14 days total, we're at 8, add 8 more)
+      clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Distribute
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Verify status == Completed
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+    });
+
+    it("distributes with penalties: one member misses deposits", async () => {
+      const code = "dist-penalty";
+      const depositAmount = 10_000_000; // 10 USDC
+      const penaltyValue = 2_000_000;   // 2 USDC fixed penalty per missed period
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 2 periods, fixed 2 USDC penalty
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 2, 5, 0, new anchor.BN(penaltyValue))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 2 members join (both deposit period 0 via join = 10M each)
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Advance 8 days (into period 1)
+      let clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Only m1 deposits period 1 (m2 skips)
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      // Advance past cycle end
+      clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Record balances before distribute
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+
+      const m1BalBefore = await getTokenBalance(m1Ata);
+      const m2BalBefore = await getTokenBalance(m2Ata);
+
+      // Distribute
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m2BalAfter = await getTokenBalance(m2Ata);
+
+      // m1: deposited 20M total, 0 missed, compliant → base 20M + bonus 2M = 22M
+      const m1Received = Number(m1BalAfter - m1BalBefore);
+      assert.equal(m1Received, 22_000_000);
+
+      // m2: deposited 10M total, missed 1 → penalty 2M → base 8M, not compliant → 8M
+      // But m2 is last member so gets vault remainder = 8M
+      const m2Received = Number(m2BalAfter - m2BalBefore);
+      assert.equal(m2Received, 8_000_000);
+
+      // Verify status == Completed
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+    });
+
+    it("distributes with percentage penalty", async () => {
+      const code = "dist-pct-pen";
+      const depositAmount = 10_000_000; // 10 USDC
+      const penaltyValue = 500;         // 5% (basis points)
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 2 periods, percentage 5% penalty
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 2, 5, 1, new anchor.BN(penaltyValue))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 2 members join (both deposit period 0 via join = 10M each)
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Advance 8 days (into period 1)
+      let clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Only m1 deposits period 1 (m2 skips)
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      // Advance past cycle end (2 weeks total)
+      clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Record balances before distribute
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+
+      const m1BalBefore = await getTokenBalance(m1Ata);
+      const m2BalBefore = await getTokenBalance(m2Ata);
+
+      // Distribute
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m2BalAfter = await getTokenBalance(m2Ata);
+
+      // m2 missed 1 period: penalty = 1 * (10_000_000 * 500 / 10000) = 500_000
+      // m1 compliant → base 20M + bonus 500K = 20_500_000
+      const m1Received = Number(m1BalAfter - m1BalBefore);
+      assert.equal(m1Received, 20_500_000);
+
+      // m2: base = 10M - 500K = 9_500_000 (last member gets vault remainder)
+      // vault had 30M, m1 got 20.5M, remainder = 9.5M
+      const m2Received = Number(m2BalAfter - m2BalBefore);
+      assert.equal(m2Received, 9_500_000);
+
+      // Conservation: total received == total deposited (30M)
+      assert.equal(m1Received + m2Received, 30_000_000);
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+    });
+
+    it("distributes when all members miss equally (no compliant members)", async () => {
+      const code = "dist-all-miss";
+      const depositAmount = 5_000_000; // 5 USDC
+      const penaltyValue = 1_000_000;  // 1 USDC fixed
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 2 periods, fixed 1 USDC penalty
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 2, 5, 0, new anchor.BN(penaltyValue))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 2 members join (both deposit period 0 via join = 5M each)
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Neither deposits for period 1 — advance past cycle end (2 weeks)
+      let clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(15 * 86400))
+      );
+
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+
+      const m1BalBefore = await getTokenBalance(m1Ata);
+      const m2BalBefore = await getTokenBalance(m2Ata);
+
+      // Distribute
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m2BalAfter = await getTokenBalance(m2Ata);
+
+      // Both missed 1 period each: penalty = 1M each
+      // No compliant members → bonus_per_compliant = 0
+      // m1 base = 5M - 1M = 4M (paid as calculated, not last)
+      const m1Received = Number(m1BalAfter - m1BalBefore);
+      assert.equal(m1Received, 4_000_000);
+
+      // m2 is last → gets vault remainder = 10M - 4M = 6M
+      // (includes 2M undistributed penalties since no compliant members)
+      const m2Received = Number(m2BalAfter - m2BalBefore);
+      assert.equal(m2Received, 6_000_000);
+
+      // Conservation: total == vault (10M)
+      assert.equal(m1Received + m2Received, 10_000_000);
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+    });
+
+    it("caps penalty at total_deposited (no negative balances)", async () => {
+      // Warp clock to avoid bankrun tx dedup with prior tests
+      const ck = await context.banksClient.getClock();
+      context.setClock(new Clock(ck.slot + BigInt(100), ck.epochStartTimestamp, ck.epoch, ck.leaderScheduleEpoch, ck.unixTimestamp + BigInt(100)));
+
+      const code = "dist-cap-pen";
+      const depositAmount = 5_000_000;  // 5 USDC
+      const penaltyValue = 10_000_000;  // 10 USDC fixed (way more than deposit)
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 4 periods, fixed 10 USDC penalty
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(penaltyValue))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 2 members join (both deposit period 0 via join = 5M each)
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // m1 deposits all remaining periods (1, 2, 3), m2 deposits nothing more
+      for (let period = 1; period <= 3; period++) {
+        let clk = await context.banksClient.getClock();
+        context.setClock(
+          new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+            clk.unixTimestamp + BigInt(7 * 86400 + 100))
+        );
+
+        await program.methods.deposit()
+          .accounts({
+            member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+            memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([m1]).rpc();
+      }
+
+      // Advance past cycle end (4 weeks total)
+      let clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(7 * 86400 + 100))
+      );
+
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+
+      const m1BalBefore = await getTokenBalance(m1Ata);
+      const m2BalBefore = await getTokenBalance(m2Ata);
+
+      // Distribute
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m2BalAfter = await getTokenBalance(m2Ata);
+
+      // m1 deposited 20M (4 periods), 0 missed → compliant
+      // m2 deposited 5M (1 period), missed 3 → raw penalty = 3 * 10M = 30M, capped at 5M
+      // m2 base = 5M - 5M = 0
+      // m1 bonus = 5M (total penalties), m1 payout = 20M + 5M = 25M
+      const m1Received = Number(m1BalAfter - m1BalBefore);
+      assert.equal(m1Received, 25_000_000);
+
+      // m2 gets 0 (last member gets vault remainder = 25M - 25M = 0)
+      const m2Received = Number(m2BalAfter - m2BalBefore);
+      assert.equal(m2Received, 0);
+
+      // Conservation: vault had 25M total (20M from m1 + 5M from m2)
+      assert.equal(m1Received + m2Received, 25_000_000);
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+    });
+
+    it("fails when cycle has not ended", async () => {
+      const code = "dist-early";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 4 periods
+      await program.methods
+        .createGroup(code, new anchor.BN(5_000_000), 0, 4, 5, 0, new anchor.BN(1_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Try to distribute immediately (cycle is 4 weeks, not ended)
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+            { pubkey: m2Pda, isWritable: false, isSigner: false },
+            { pubkey: m2Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "CycleNotEnded");
+      }
+    });
+  });
+
+  // ─── emergency_cancel tests ──────────────────────────────
+
+  describe("emergency_cancel", () => {
+    it("creator cancels during open — full refund", async () => {
+      const code = "cancel-open";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      // Record balance before cancel
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+      const m1BalBefore = await getTokenBalance(m1Ata);
+
+      // Emergency cancel
+      await program.methods.emergencyCancel()
+        .accounts({
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Verify status == Cancelled (3)
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 3);
+
+      // Verify full refund
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m1Received = Number(m1BalAfter - m1BalBefore);
+      assert.equal(m1Received, depositAmount);
+    });
+
+    it("creator cancels during active — full refund", async () => {
+      const code = "cancel-active";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 2 members join
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Record balances
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+      const m1BalBefore = await getTokenBalance(m1Ata);
+      const m2BalBefore = await getTokenBalance(m2Ata);
+
+      // Emergency cancel
+      await program.methods.emergencyCancel()
+        .accounts({
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Verify status == Cancelled (3)
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 3);
+
+      // Verify full refunds
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m2BalAfter = await getTokenBalance(m2Ata);
+      assert.equal(Number(m1BalAfter - m1BalBefore), depositAmount);
+      assert.equal(Number(m2BalAfter - m2BalBefore), depositAmount);
+    });
+
+    it("fails when non-creator tries to cancel", async () => {
+      const code = "cancel-unauth";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      // Imposter tries to cancel
+      const imposter = Keypair.generate();
+      const fundTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: payer.publicKey, toPubkey: imposter.publicKey,
+          lamports: anchor.web3.LAMPORTS_PER_SOL,
+        })
+      );
+      await provider.sendAndConfirm(fundTx, [payer]);
+
+      try {
+        await program.methods.emergencyCancel()
+          .accounts({
+            creator: imposter.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+          ])
+          .signers([imposter])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        const errStr = e.message || e.toString();
+        assert.ok(
+          errStr.includes("UnauthorizedCreator") || errStr.includes("has_one"),
+          `Expected UnauthorizedCreator, got: ${errStr.substring(0, 200)}`
+        );
+      }
+    });
+
+    it("fails when group already cancelled", async () => {
+      const code = "cancel-twice";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      // First cancel
+      await program.methods.emergencyCancel()
+        .accounts({
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Second cancel should fail (status is Cancelled, vault is closed)
+      try {
+        await program.methods.emergencyCancel()
+          .accounts({
+            creator: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        const errStr = e.message || e.toString();
+        assert.ok(
+          errStr.includes("InvalidGroupStatus") ||
+          errStr.includes("AccountNotInitialized") ||
+          errStr.includes("already been processed") ||
+          errStr.includes("0xbbd"),
+          `Expected error on double cancel, got: ${errStr.substring(0, 200)}`
+        );
+      }
+    });
+  });
+
+  // ─── integration tests ────────────────────────────────────
+
+  describe("integration", () => {
+    it("full lifecycle: 3 members, 4 weekly deposits, partial compliance", async () => {
+      const code = "integ-full";
+      const depositAmount = 10_000_000; // 10 USDC
+      const penaltyValue = 2_000_000;   // 2 USDC fixed
+      const totalPeriods = 4;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 4 periods, fixed 2 USDC penalty, max 5 members
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, totalPeriods, 5, 0, new anchor.BN(penaltyValue))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 3 members join (each deposits period 0 via join = 10M each)
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(500_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(500_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      const { keypair: m3, tokenAccount: m3Ata } = await createFundedMember(500_000_000);
+      const [m3Pda] = getMemberPda(gPda, m3.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m3.publicKey, groupConfig: gPda, memberRecord: m3Pda,
+          memberTokenAccount: m3Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m3]).rpc();
+
+      // Verify 3 members joined
+      const groupAfterJoin = await program.account.groupConfig.fetch(gPda);
+      assert.equal(groupAfterJoin.currentMembers, 3);
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Deposit schedule:
+      // Period 0: all 3 deposited (via join)
+      // Period 1: m1 + m2 deposit, m3 skips
+      // Period 2: m1 + m2 deposit, m3 skips
+      // Period 3: m1 deposits, m2 + m3 skip
+
+      // Period 1
+      let clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(7 * 86400 + 100))
+      );
+
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      await program.methods.deposit()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m2]).rpc();
+
+      // Period 2
+      clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(7 * 86400 + 100))
+      );
+
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      await program.methods.deposit()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m2]).rpc();
+
+      // Period 3
+      clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(7 * 86400 + 100))
+      );
+
+      // Only m1 deposits period 3
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      // Verify deposit records
+      const m1Record = await program.account.memberRecord.fetch(m1Pda);
+      assert.equal(m1Record.depositsMade, 4); // all periods
+      assert.equal(m1Record.totalDeposited.toNumber(), 40_000_000);
+
+      const m2Record = await program.account.memberRecord.fetch(m2Pda);
+      assert.equal(m2Record.depositsMade, 3); // periods 0,1,2
+      assert.equal(m2Record.totalDeposited.toNumber(), 30_000_000);
+
+      const m3Record = await program.account.memberRecord.fetch(m3Pda);
+      assert.equal(m3Record.depositsMade, 1); // period 0 only
+      assert.equal(m3Record.totalDeposited.toNumber(), 10_000_000);
+
+      // Advance past cycle end (4 weeks total)
+      clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(7 * 86400 + 100))
+      );
+
+      // Record balances before distribute
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+
+      const m1BalBefore = await getTokenBalance(m1Ata);
+      const m2BalBefore = await getTokenBalance(m2Ata);
+      const m3BalBefore = await getTokenBalance(m3Ata);
+
+      // Total vault = 40M + 30M + 10M = 80M
+      const vaultAcct = await context.banksClient.getAccount(vPda);
+      const vaultData = AccountLayout.decode(vaultAcct!.data);
+      assert.equal(Number(vaultData.amount), 80_000_000);
+
+      // Distribute
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+          { pubkey: m3Pda, isWritable: false, isSigner: false },
+          { pubkey: m3Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m2BalAfter = await getTokenBalance(m2Ata);
+      const m3BalAfter = await getTokenBalance(m3Ata);
+
+      const m1Received = Number(m1BalAfter - m1BalBefore);
+      const m2Received = Number(m2BalAfter - m2BalBefore);
+      const m3Received = Number(m3BalAfter - m3BalBefore);
+
+      // Penalty math:
+      // m1: deposited 4/4, missed 0 → penalty 0, base 40M, compliant ✓
+      // m2: deposited 3/4, missed 1 → penalty 1*2M = 2M, base 30M-2M = 28M, not compliant
+      // m3: deposited 1/4, missed 3 → penalty 3*2M = 6M, base 10M-6M = 4M, not compliant
+      // total_penalties = 2M + 6M = 8M
+      // compliant_count = 1 (m1 only)
+      // bonus_per_compliant = 8M / 1 = 8M
+      // m1 final = 40M + 8M = 48M
+      // m2 final = 28M
+      // m3 final (last) = vault remainder = 80M - 48M - 28M = 4M
+
+      assert.equal(m1Received, 48_000_000);
+      assert.equal(m2Received, 28_000_000);
+      assert.equal(m3Received, 4_000_000);
+
+      // Conservation of funds: sum(payouts) == sum(deposits) == 80M
+      assert.equal(m1Received + m2Received + m3Received, 80_000_000);
+
+      // Verify status == Completed
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+
+      // Verify vault is closed (account no longer exists)
+      const vaultAfter = await context.banksClient.getAccount(vPda);
+      assert.isNull(vaultAfter);
     });
   });
 });
