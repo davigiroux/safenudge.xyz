@@ -118,13 +118,24 @@
     "paymentDay": "Dia de Pagamento",
     "endDate": "Data Final",
     "security": "Fundos protegidos por Cofre Colateralizado",
+    "statusOpen": "Aberto",
     "statusActive": "Ativo",
+    "statusCompleted": "Concluído",
+    "statusCancelled": "Cancelado",
+    "startCycle": "Iniciar Ciclo",
+    "depositAlready": "Já depositou",
+    "groupNotFound": "Grupo não encontrado",
     "missedDeposits": "depósitos atrasados",
     "everyDay": "Todo {{day}}",
     "quickStats": "Estatísticas",
     "compliance": "Conformidade",
     "membersCount": "Membros",
     "securityDetail": "Cofre controlado apenas por PDA. Sem chaves de admin."
+  },
+  "myGroups": {
+    "title": "Meus Grupos",
+    "progress": "{{current}} de {{total}} depósitos",
+    "viewGroup": "Ver Grupo"
   },
   "emptyState": {
     "noGroups": "Você ainda não participa de nenhum grupo",
