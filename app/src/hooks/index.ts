@@ -1,3 +1,5 @@
+export { useTransaction } from './useTransaction'
+export type { TxState } from './useTransaction'
 export { useAnchorProgram, useAnchorProvider } from './useAnchorProgram'
 export { useGroupConfig } from './useGroupConfig'
 export { useMemberRecord } from './useMemberRecord'
