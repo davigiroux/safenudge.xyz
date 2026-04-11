@@ -999,4 +999,267 @@ describe("safenudge", () => {
       }
     });
   });
+
+  // ─── emergency_cancel tests ──────────────────────────────
+
+  describe("emergency_cancel", () => {
+    it("creator cancels during open — full refund", async () => {
+      const code = "cancel-open";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      // Record balance before cancel
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+      const m1BalBefore = await getTokenBalance(m1Ata);
+
+      // Emergency cancel
+      await program.methods.emergencyCancel()
+        .accounts({
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Verify status == Cancelled (3)
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 3);
+
+      // Verify full refund
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m1Received = Number(m1BalAfter - m1BalBefore);
+      assert.equal(m1Received, depositAmount);
+    });
+
+    it("creator cancels during active — full refund", async () => {
+      const code = "cancel-active";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // 2 members join
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Record balances
+      const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
+        const acct = await context.banksClient.getAccount(ata);
+        const data = AccountLayout.decode(acct!.data);
+        return data.amount;
+      };
+      const m1BalBefore = await getTokenBalance(m1Ata);
+      const m2BalBefore = await getTokenBalance(m2Ata);
+
+      // Emergency cancel
+      await program.methods.emergencyCancel()
+        .accounts({
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Verify status == Cancelled (3)
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 3);
+
+      // Verify full refunds
+      const m1BalAfter = await getTokenBalance(m1Ata);
+      const m2BalAfter = await getTokenBalance(m2Ata);
+      assert.equal(Number(m1BalAfter - m1BalBefore), depositAmount);
+      assert.equal(Number(m2BalAfter - m2BalBefore), depositAmount);
+    });
+
+    it("fails when non-creator tries to cancel", async () => {
+      const code = "cancel-unauth";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      // Imposter tries to cancel
+      const imposter = Keypair.generate();
+      const fundTx = new Transaction().add(
+        SystemProgram.transfer({
+          fromPubkey: payer.publicKey, toPubkey: imposter.publicKey,
+          lamports: anchor.web3.LAMPORTS_PER_SOL,
+        })
+      );
+      await provider.sendAndConfirm(fundTx, [payer]);
+
+      try {
+        await program.methods.emergencyCancel()
+          .accounts({
+            creator: imposter.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+          ])
+          .signers([imposter])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        const errStr = e.message || e.toString();
+        assert.ok(
+          errStr.includes("UnauthorizedCreator") || errStr.includes("has_one"),
+          `Expected UnauthorizedCreator, got: ${errStr.substring(0, 200)}`
+        );
+      }
+    });
+
+    it("fails when group already cancelled", async () => {
+      const code = "cancel-twice";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      // First cancel
+      await program.methods.emergencyCancel()
+        .accounts({
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Second cancel should fail (status is Cancelled, vault is closed)
+      try {
+        await program.methods.emergencyCancel()
+          .accounts({
+            creator: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        const errStr = e.message || e.toString();
+        assert.ok(
+          errStr.includes("InvalidGroupStatus") ||
+          errStr.includes("AccountNotInitialized") ||
+          errStr.includes("0xbbd"),
+          `Expected error on double cancel, got: ${errStr.substring(0, 200)}`
+        );
+      }
+    });
+  });
 });

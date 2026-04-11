@@ -49,4 +49,8 @@ pub mod safenudge {
     pub fn distribute<'info>(ctx: Context<'_, '_, '_, 'info, Distribute<'info>>) -> Result<()> {
         Distribute::handler(ctx)
     }
+
+    pub fn emergency_cancel<'info>(ctx: Context<'_, '_, '_, 'info, EmergencyCancel<'info>>) -> Result<()> {
+        EmergencyCancel::handler(ctx)
+    }
 }
