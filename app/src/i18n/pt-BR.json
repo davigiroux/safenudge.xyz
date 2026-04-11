@@ -95,7 +95,11 @@
     "members": "{{current}} de {{max}} membros",
     "joinAndDeposit": "Entrar e Depositar",
     "pixOption": "Não tem saldo? Adicione via Pix",
-    "nudgeStat": "Grupos que mantêm consistência nas primeiras 4 semanas têm 85% mais chance de atingir a meta"
+    "nudgeStat": "Grupos que mantêm consistência nas primeiras 4 semanas têm 85% mais chance de atingir a meta",
+    "alreadyMember": "Você já é membro deste grupo",
+    "groupNotFound": "Grupo não encontrado",
+    "penaltyFixed": "{{value}} USDC por período perdido",
+    "penaltyPercent": "{{value}}% do depósito por período perdido"
   },
   "groupDashboard": {
     "codeLabel": "Código",
