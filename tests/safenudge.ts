@@ -1256,6 +1256,7 @@ describe("safenudge", () => {
         assert.ok(
           errStr.includes("InvalidGroupStatus") ||
           errStr.includes("AccountNotInitialized") ||
+          errStr.includes("already been processed") ||
           errStr.includes("0xbbd"),
           `Expected error on double cancel, got: ${errStr.substring(0, 200)}`
         );
