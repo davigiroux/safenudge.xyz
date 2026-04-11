@@ -4,3 +4,6 @@ test-ledger/
 .anchor/
 .env
 app/.env
+app/dist/
+*.png
+.playwright-mcp/
