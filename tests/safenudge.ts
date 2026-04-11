@@ -1147,6 +1147,10 @@ describe("safenudge", () => {
     });
 
     it("caps penalty at total_deposited (no negative balances)", async () => {
+      // Warp clock to avoid bankrun tx dedup with prior tests
+      const ck = await context.banksClient.getClock();
+      context.setClock(new Clock(ck.slot + BigInt(100), ck.epochStartTimestamp, ck.epoch, ck.leaderScheduleEpoch, ck.unixTimestamp + BigInt(100)));
+
       const code = "dist-cap-pen";
       const depositAmount = 5_000_000;  // 5 USDC
       const penaltyValue = 10_000_000;  // 10 USDC fixed (way more than deposit)
