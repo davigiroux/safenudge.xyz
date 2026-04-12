@@ -1,11 +1,6 @@
-import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import './index.css'
-import './i18n'
-import { App } from './App'
+// Polyfill Buffer before any Solana/Anchor imports
+import { Buffer } from 'buffer'
+globalThis.Buffer = Buffer
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
+// Dynamic import ensures all Solana libs see Buffer globally
+import('./bootstrap')
