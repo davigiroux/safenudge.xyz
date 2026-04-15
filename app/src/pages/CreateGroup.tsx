@@ -1,7 +1,15 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useNavigate } from 'react-router-dom'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { SystemProgram, PublicKey } from '@solana/web3.js'
+import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
+import { BN } from '@coral-xyz/anchor'
 import { PageLayout } from '../components/PageLayout'
-import { Button, Card, StatRow, Icon, TextInput, RadioGroup } from '../components'
+import { Button, Card, StatRow, Icon, TextInput, RadioGroup, TransactionStatus } from '../components'
+import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { useTransaction } from '../hooks/useTransaction'
+import { getGroupConfigPDA, getVaultPDA } from '../utils/pda'
 
 type Frequency = '0' | '1' | '2'
 
@@ -22,6 +30,12 @@ function estimateMonths(frequency: Frequency, periods: number): number {
 
 export default function CreateGroup() {
   const { t } = useTranslation()
+  const navigate = useNavigate()
+  const { publicKey } = useWallet()
+  const program = useAnchorProgram()
+  const { txState, errorDetail, execute, reset } = useTransaction()
+
+  const usdcMint = new PublicKey(import.meta.env.VITE_USDC_MINT || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
 
   const [groupCode, setGroupCode] = useState('')
   const [depositAmount, setDepositAmount] = useState('')
@@ -34,6 +48,46 @@ export default function CreateGroup() {
   const amount = parseFloat(depositAmount) || 0
   const individualGoal = amount * totalPeriods
   const groupTotal = individualGoal * maxMembers
+
+  async function handleSubmit() {
+    if (!program || !publicKey || !groupCode || amount <= 0) return
+
+    const depositAmountBN = new BN(Math.round(amount * 1_000_000))
+    const penaltyBN = penaltyType === '1'
+      ? new BN(Math.round(parseFloat(penaltyValue) * 100))
+      : new BN(Math.round(parseFloat(penaltyValue) * 1_000_000))
+
+    const [groupConfigPda] = getGroupConfigPDA(groupCode)
+    const [vaultPda] = getVaultPDA(groupConfigPda)
+
+    const sig = await execute(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const methods = program.methods as any
+      return await methods
+        .createGroup(
+          groupCode,
+          depositAmountBN,
+          parseInt(frequency),
+          totalPeriods,
+          maxMembers,
+          parseInt(penaltyType),
+          penaltyBN,
+        )
+        .accounts({
+          creator: publicKey,
+          groupConfig: groupConfigPda,
+          vault: vaultPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+          systemProgram: SystemProgram.programId,
+        })
+        .rpc() as string
+    })
+
+    if (sig) {
+      setTimeout(() => navigate(`/grupo/${groupCode}`), 1500)
+    }
+  }
 
   return (
     <PageLayout bgClass="bg-surface-container-low">
@@ -161,8 +215,15 @@ export default function CreateGroup() {
             </div>
 
             {/* Submit */}
-            <Button variant="primary" icon="group_add" className="w-full py-3">
-              {t('createGroup.submit')}
+            <Button
+              variant="primary"
+              icon="group_add"
+              className="w-full py-3"
+              onClick={handleSubmit}
+              disabled={!publicKey || !groupCode || amount <= 0}
+              loading={txState === 'signing' || txState === 'confirming'}
+            >
+              {publicKey ? t('createGroup.submit') : t('common.connectWallet')}
             </Button>
             <p className="font-body text-body-sm text-on-surface-variant text-center">
               {t('createGroup.disclaimer')}
@@ -238,6 +299,16 @@ export default function CreateGroup() {
           </div>
         </div>
       </div>
+
+      {txState !== 'idle' && (
+        <TransactionStatus
+          state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
+          groupCode={groupCode}
+          errorDetail={errorDetail || undefined}
+          onRetry={handleSubmit}
+          onClose={reset}
+        />
+      )}
     </PageLayout>
   )
 }

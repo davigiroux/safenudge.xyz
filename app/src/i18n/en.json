@@ -95,7 +95,11 @@
     "members": "{{current}} of {{max}} members",
     "joinAndDeposit": "Join and Deposit",
     "pixOption": "No balance? Add funds via Pix",
-    "nudgeStat": "Groups maintaining consistency in the first 4 weeks are 85% more likely to reach their goal"
+    "nudgeStat": "Groups maintaining consistency in the first 4 weeks are 85% more likely to reach their goal",
+    "alreadyMember": "You are already a member of this group",
+    "groupNotFound": "Group not found",
+    "penaltyFixed": "{{value}} USDC per missed period",
+    "penaltyPercent": "{{value}}% of deposit per missed period"
   },
   "groupDashboard": {
     "codeLabel": "Code",
@@ -114,13 +118,24 @@
     "paymentDay": "Payment Day",
     "endDate": "End Date",
     "security": "Funds protected by Collateralized Vault",
+    "statusOpen": "Open",
     "statusActive": "Active",
+    "statusCompleted": "Completed",
+    "statusCancelled": "Cancelled",
+    "startCycle": "Start Cycle",
+    "depositAlready": "Already deposited",
+    "groupNotFound": "Group not found",
     "missedDeposits": "missed deposits",
     "everyDay": "Every {{day}}",
     "quickStats": "Quick Stats",
     "compliance": "Compliance",
     "membersCount": "Members",
     "securityDetail": "PDA-only vault authority. No admin keys."
+  },
+  "myGroups": {
+    "title": "My Groups",
+    "progress": "{{current}} of {{total}} deposits",
+    "viewGroup": "View Group"
   },
   "emptyState": {
     "noGroups": "You're not part of any group yet",

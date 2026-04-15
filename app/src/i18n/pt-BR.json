@@ -95,7 +95,11 @@
     "members": "{{current}} de {{max}} membros",
     "joinAndDeposit": "Entrar e Depositar",
     "pixOption": "Não tem saldo? Adicione via Pix",
-    "nudgeStat": "Grupos que mantêm consistência nas primeiras 4 semanas têm 85% mais chance de atingir a meta"
+    "nudgeStat": "Grupos que mantêm consistência nas primeiras 4 semanas têm 85% mais chance de atingir a meta",
+    "alreadyMember": "Você já é membro deste grupo",
+    "groupNotFound": "Grupo não encontrado",
+    "penaltyFixed": "{{value}} USDC por período perdido",
+    "penaltyPercent": "{{value}}% do depósito por período perdido"
   },
   "groupDashboard": {
     "codeLabel": "Código",
@@ -114,13 +118,24 @@
     "paymentDay": "Dia de Pagamento",
     "endDate": "Data Final",
     "security": "Fundos protegidos por Cofre Colateralizado",
+    "statusOpen": "Aberto",
     "statusActive": "Ativo",
+    "statusCompleted": "Concluído",
+    "statusCancelled": "Cancelado",
+    "startCycle": "Iniciar Ciclo",
+    "depositAlready": "Já depositou",
+    "groupNotFound": "Grupo não encontrado",
     "missedDeposits": "depósitos atrasados",
     "everyDay": "Todo {{day}}",
     "quickStats": "Estatísticas",
     "compliance": "Conformidade",
     "membersCount": "Membros",
     "securityDetail": "Cofre controlado apenas por PDA. Sem chaves de admin."
+  },
+  "myGroups": {
+    "title": "Meus Grupos",
+    "progress": "{{current}} de {{total}} depósitos",
+    "viewGroup": "Ver Grupo"
   },
   "emptyState": {
     "noGroups": "Você ainda não participa de nenhum grupo",

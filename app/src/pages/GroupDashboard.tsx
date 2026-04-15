@@ -1,8 +1,17 @@
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
+import { useWallet } from '@solana/wallet-adapter-react'
+import { PublicKey } from '@solana/web3.js'
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PageLayout } from '../components/PageLayout'
-import { Button, Card, StatRow, Icon, NudgeToast } from '../components'
+import { Button, Card, StatRow, Icon, NudgeToast, TransactionStatus } from '../components'
+import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { useTransaction } from '../hooks/useTransaction'
+import { useGroupConfig } from '../hooks/useGroupConfig'
+import { useMemberRecord } from '../hooks/useMemberRecord'
+import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
+import { formatTokenAmount } from '../utils/formatToken'
 
 type MemberStatus = 'on_track' | 'behind' | 'missed'
 
@@ -15,6 +24,7 @@ type MockMember = {
   isYou?: boolean
 }
 
+// TODO: fetch member records from on-chain data instead of mock
 const MOCK_MEMBERS: MockMember[] = [
   { name: 'Ricardo S.', avatar: '🧑‍💼', streak: 3, totalDeposited: 1500, status: 'on_track', isYou: true },
   { name: 'Mariana L.', avatar: '👩‍🎨', streak: 3, totalDeposited: 1500, status: 'on_track' },
@@ -26,6 +36,19 @@ const statusConfig: Record<MemberStatus, { icon: string; color: string }> = {
   on_track: { icon: 'check_circle', color: 'text-secondary' },
   behind: { icon: 'warning', color: 'text-tertiary' },
   missed: { icon: 'cancel', color: 'text-error' },
+}
+
+const PERIOD_SECONDS: Record<string, number> = {
+  weekly: 7 * 86400,
+  biweekly: 14 * 86400,
+  monthly: 30 * 86400,
+}
+
+const STATUS_LABELS: Record<string, string> = {
+  open: 'groupDashboard.statusOpen',
+  active: 'groupDashboard.statusActive',
+  completed: 'groupDashboard.statusCompleted',
+  cancelled: 'groupDashboard.statusCancelled',
 }
 
 function MemberCard({ member }: { member: MockMember }) {
@@ -65,7 +88,7 @@ function MemberCard({ member }: { member: MockMember }) {
 }
 
 function ProgressBar({ current, total, label }: { current: number; total: number; label: string }) {
-  const pct = Math.round((current / total) * 100)
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-2">
@@ -93,9 +116,79 @@ function ProgressBar({ current, total, label }: { current: number; total: number
 export default function GroupDashboard() {
   const { t } = useTranslation()
   const { code } = useParams<{ code: string }>()
+  const { publicKey } = useWallet()
+  const program = useAnchorProgram()
+  const { txState, errorDetail, execute, reset } = useTransaction()
   const [showNudge, setShowNudge] = useState(true)
 
   const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
+  const { data: group, loading: groupLoading, error: groupError } = useGroupConfig(isValidCode ? code : undefined)
+  const { data: memberRecord, isMember } = useMemberRecord(isValidCode ? code : undefined)
+
+  const usdcMint = new PublicKey(import.meta.env.VITE_USDC_MINT || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+
+  // Calculate current period from real data
+  const periodDuration = group ? (PERIOD_SECONDS[group.frequency] || 7 * 86400) : 7 * 86400
+  const now = Math.floor(Date.now() / 1000)
+  const elapsed = group ? now - group.cycleStart : 0
+  const currentPeriod = group && group.status === 'active'
+    ? Math.min(Math.floor(elapsed / periodDuration), group.totalPeriods - 1)
+    : 0
+  const totalPeriods = group?.totalPeriods ?? 0
+
+  // Deposit eligibility
+  const canDeposit = group?.status === 'active'
+    && isMember
+    && memberRecord
+    && !memberRecord.periodsDeposited[currentPeriod]
+
+  // Start cycle eligibility (creator only, open status, >= 2 members)
+  const canStartCycle = group?.status === 'open'
+    && publicKey
+    && publicKey.toString() === group?.creator
+    && (group?.currentMembers ?? 0) >= 2
+
+  async function handleDeposit() {
+    if (!program || !publicKey || !code) return
+    const [groupPda] = getGroupConfigPDA(code)
+    const [memberPda] = getMemberRecordPDA(groupPda, publicKey)
+    const [vaultPda] = getVaultPDA(groupPda)
+    const memberAta = getAssociatedTokenAddressSync(usdcMint, publicKey)
+
+    await execute(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const methods = program.methods as any
+      return await methods
+        .deposit()
+        .accounts({
+          member: publicKey,
+          groupConfig: groupPda,
+          memberRecord: memberPda,
+          memberTokenAccount: memberAta,
+          vault: vaultPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .rpc() as string
+    })
+  }
+
+  async function handleStartCycle() {
+    if (!program || !publicKey || !code) return
+    const [groupPda] = getGroupConfigPDA(code)
+
+    await execute(async () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const methods = program.methods as any
+      return await methods
+        .startCycle()
+        .accounts({
+          creator: publicKey,
+          groupConfig: groupPda,
+        })
+        .rpc() as string
+    })
+  }
 
   if (!isValidCode) {
     return (
@@ -110,8 +203,36 @@ export default function GroupDashboard() {
     )
   }
 
-  const currentPeriod = 3
-  const totalPeriods = 12
+  if (groupLoading) {
+    return (
+      <PageLayout>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
+          <div className="animate-spin mb-4">
+            <Icon name="progress_activity" size={48} className="text-primary" />
+          </div>
+          <p className="font-body text-body-lg text-on-surface-variant">
+            {t('common.loading')}
+          </p>
+        </div>
+      </PageLayout>
+    )
+  }
+
+  if (groupError || !group) {
+    return (
+      <PageLayout>
+        <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
+          <Icon name="search_off" size={48} className="text-error mb-4" />
+          <p className="font-body text-body-lg text-error">
+            {t('groupDashboard.groupNotFound')}
+          </p>
+        </div>
+      </PageLayout>
+    )
+  }
+
+  const statusLabel = STATUS_LABELS[group.status] || STATUS_LABELS.open
+  const depositAmountFormatted = `${formatTokenAmount(group.depositAmount)} USDC`
 
   return (
     <PageLayout bgClass="bg-surface-container-low">
@@ -124,7 +245,7 @@ export default function GroupDashboard() {
                 {code}
               </h1>
               <span className="font-label text-label-sm text-on-primary bg-secondary px-2 py-0.5 rounded-full">
-                {t('groupDashboard.statusActive')}
+                {t(statusLabel)}
               </span>
             </div>
             <div className="flex items-center gap-1 font-label text-label-md text-on-surface-variant">
@@ -132,9 +253,35 @@ export default function GroupDashboard() {
               <span>{t('groupDashboard.codeLabel')}: {code}</span>
             </div>
           </div>
-          <Button variant="primary" icon="payments" className="w-full sm:w-auto">
-            {t('groupDashboard.deposit')}
-          </Button>
+
+          {/* Conditional action buttons */}
+          {canDeposit && (
+            <Button
+              variant="primary"
+              icon="payments"
+              className="w-full sm:w-auto"
+              onClick={handleDeposit}
+              loading={txState === 'signing' || txState === 'confirming'}
+            >
+              {t('groupDashboard.deposit')}
+            </Button>
+          )}
+          {group.status === 'active' && isMember && memberRecord?.periodsDeposited[currentPeriod] && (
+            <Button variant="primary" icon="check_circle" className="w-full sm:w-auto" disabled>
+              {t('groupDashboard.depositAlready')}
+            </Button>
+          )}
+          {canStartCycle && (
+            <Button
+              variant="primary"
+              icon="play_arrow"
+              className="w-full sm:w-auto"
+              onClick={handleStartCycle}
+              loading={txState === 'signing' || txState === 'confirming'}
+            >
+              {t('groupDashboard.startCycle')}
+            </Button>
+          )}
         </div>
 
         {/* Desktop: 2-column layout. Mobile: single stack */}
@@ -145,31 +292,31 @@ export default function GroupDashboard() {
             <Card variant="featured" className="shadow-nudge mb-4">
               <div className="flex items-center justify-between mb-4">
                 <span className="font-headline text-title-lg text-on-surface">
-                  {t('groupDashboard.cycleProgress', { current: currentPeriod, total: totalPeriods })}
+                  {t('groupDashboard.cycleProgress', { current: currentPeriod + 1, total: totalPeriods })}
                 </span>
                 <div className="flex items-center gap-1 font-label text-label-md text-on-surface-variant">
-                  <Icon name="schedule" size={16} />
-                  <span>2d 14h</span>
+                  <Icon name="group" size={16} />
+                  <span>{group.currentMembers} {t('groupDashboard.membersCount')}</span>
                 </div>
               </div>
 
-              <ProgressBar current={currentPeriod} total={totalPeriods} label={t('groupDashboard.cycleProgress', { current: currentPeriod, total: totalPeriods })} />
+              <ProgressBar current={currentPeriod + 1} total={totalPeriods} label={t('groupDashboard.cycleProgress', { current: currentPeriod + 1, total: totalPeriods })} />
 
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div>
                   <span className="font-label text-label-sm text-on-surface-variant block">
-                    {t('groupDashboard.nextDeposit')}
+                    {t('groupDashboard.weeklyAmount')}
                   </span>
                   <span className="font-body text-title-sm text-on-surface">
-                    2d 14h
+                    {depositAmountFormatted}
                   </span>
                 </div>
                 <div className="text-right">
                   <span className="font-label text-label-sm text-on-surface-variant block">
-                    {t('groupDashboard.estimatedReceive')}
+                    {t('groupDashboard.totalDeposited')}
                   </span>
                   <span className="font-headline text-title-lg lg:text-headline-sm text-secondary">
-                    R$ 4.250,00
+                    {memberRecord ? `${formatTokenAmount(memberRecord.totalDeposited)} USDC` : '—'}
                   </span>
                 </div>
               </div>
@@ -217,9 +364,9 @@ export default function GroupDashboard() {
                 <h3 className="font-headline text-title-md text-on-surface mb-3">
                   {t('groupDashboard.planDetails')}
                 </h3>
-                <StatRow label={t('groupDashboard.weeklyAmount')} value="500 USDC" />
-                <StatRow label={t('groupDashboard.paymentDay')} value={t('groupDashboard.everyDay', { day: 'Domingo' })} />
-                <StatRow label={t('groupDashboard.endDate')} value="12 Out 2026" />
+                <StatRow label={t('groupDashboard.weeklyAmount')} value={depositAmountFormatted} />
+                <StatRow label={t('createGroup.frequency')} value={t(`createGroup.${group.frequency}`)} />
+                <StatRow label={t('createGroup.memberLimit')} value={`${group.currentMembers} / ${group.maxMembers}`} />
               </Card>
 
               <Card variant="surface">
@@ -241,9 +388,9 @@ export default function GroupDashboard() {
                 <h3 className="font-headline text-title-lg text-on-surface mb-4">
                   {t('groupDashboard.planDetails')}
                 </h3>
-                <StatRow label={t('groupDashboard.weeklyAmount')} value="500 USDC" />
-                <StatRow label={t('groupDashboard.paymentDay')} value={t('groupDashboard.everyDay', { day: 'Domingo' })} />
-                <StatRow label={t('groupDashboard.endDate')} value="12 Out 2026" />
+                <StatRow label={t('groupDashboard.weeklyAmount')} value={depositAmountFormatted} />
+                <StatRow label={t('createGroup.frequency')} value={t(`createGroup.${group.frequency}`)} />
+                <StatRow label={t('createGroup.memberLimit')} value={`${group.currentMembers} / ${group.maxMembers}`} />
               </Card>
 
               <Card variant="surface">
@@ -270,11 +417,13 @@ export default function GroupDashboard() {
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div>
-                    <span className="font-headline text-headline-sm text-on-surface block">75%</span>
+                    <span className="font-headline text-headline-sm text-on-surface block">
+                      {memberRecord ? `${memberRecord.depositsMade}/${totalPeriods}` : '—'}
+                    </span>
                     <span className="font-label text-label-sm text-on-surface-variant">{t('groupDashboard.compliance')}</span>
                   </div>
                   <div>
-                    <span className="font-headline text-headline-sm text-on-surface block">4</span>
+                    <span className="font-headline text-headline-sm text-on-surface block">{group.currentMembers}</span>
                     <span className="font-label text-label-sm text-on-surface-variant">{t('groupDashboard.membersCount')}</span>
                   </div>
                 </div>
@@ -297,6 +446,17 @@ export default function GroupDashboard() {
         >
           {t('createGroup.penaltyHint')}
         </NudgeToast>
+      )}
+
+      {/* Transaction Status Modal */}
+      {txState !== 'idle' && (
+        <TransactionStatus
+          state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
+          groupCode={code}
+          errorDetail={errorDetail || undefined}
+          onRetry={canDeposit ? handleDeposit : handleStartCycle}
+          onClose={reset}
+        />
       )}
     </PageLayout>
   )

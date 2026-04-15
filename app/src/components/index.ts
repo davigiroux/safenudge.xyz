@@ -1,3 +1,4 @@
+export { ErrorBoundary } from './ErrorBoundary'
 export { Icon } from './Icon'
 export { Button } from './Button'
 export { Card, StatRow } from './Card'
