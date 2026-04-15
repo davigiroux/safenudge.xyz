@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useConnection } from '@solana/wallet-adapter-react'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getGroupConfigPDA } from '../utils/pda'
+import type { PublicKey } from '@solana/web3.js'
+import type { BN } from '@coral-xyz/anchor'
 
 export type GroupStatus = 'open' | 'active' | 'completed' | 'cancelled'
 
@@ -35,6 +37,24 @@ export type GroupConfigData = {
   pda: string
 }
 
+/** Shape returned by program.account.groupConfig.fetch() */
+type GroupConfigAccount = {
+  groupCode: string
+  creator: PublicKey
+  mint: PublicKey
+  depositAmount: BN
+  frequency: number
+  totalPeriods: number
+  maxMembers: number
+  currentMembers: number
+  penaltyType: number
+  penaltyValue: BN
+  status: number
+  cycleStart: BN
+  currentPeriod: number
+  bump: number
+}
+
 export function useGroupConfig(groupCode: string | undefined) {
   const program = useAnchorProgram()
   const { connection } = useConnection()
@@ -50,29 +70,29 @@ export function useGroupConfig(groupCode: string | undefined) {
 
     let cancelled = false
 
-    async function fetch() {
+    async function fetchGroup() {
       if (!program) return
       setLoading(true)
       setError(null)
       try {
         const [pda] = getGroupConfigPDA(groupCode!)
-        const account = await (program.account as Record<string, { fetch: (key: unknown) => Promise<Record<string, unknown>> }>)['groupConfig'].fetch(pda)
+        const account = await program.account.groupConfig.fetch(pda) as unknown as GroupConfigAccount
 
         if (!cancelled) {
           setData({
-            groupCode: account.groupCode as string,
-            creator: (account.creator as { toString: () => string }).toString(),
-            mint: (account.mint as { toString: () => string }).toString(),
-            depositAmount: (account.depositAmount as { toNumber: () => number }).toNumber(),
-            frequency: FREQUENCY_MAP[(account.frequency as number)] || 'unknown',
-            totalPeriods: account.totalPeriods as number,
-            maxMembers: account.maxMembers as number,
-            currentMembers: account.currentMembers as number,
-            penaltyType: account.penaltyType as number,
-            penaltyValue: (account.penaltyValue as { toNumber: () => number }).toNumber(),
-            status: STATUS_MAP[(account.status as number)] || 'open',
-            cycleStart: (account.cycleStart as { toNumber: () => number }).toNumber(),
-            currentPeriod: account.currentPeriod as number,
+            groupCode: account.groupCode,
+            creator: account.creator.toString(),
+            mint: account.mint.toString(),
+            depositAmount: account.depositAmount.toNumber(),
+            frequency: FREQUENCY_MAP[account.frequency] || 'unknown',
+            totalPeriods: account.totalPeriods,
+            maxMembers: account.maxMembers,
+            currentMembers: account.currentMembers,
+            penaltyType: account.penaltyType,
+            penaltyValue: account.penaltyValue.toNumber(),
+            status: STATUS_MAP[account.status] || 'open',
+            cycleStart: account.cycleStart.toNumber(),
+            currentPeriod: account.currentPeriod,
             pda: pda.toString(),
           })
         }
@@ -86,7 +106,7 @@ export function useGroupConfig(groupCode: string | undefined) {
       }
     }
 
-    fetch()
+    fetchGroup()
     return () => { cancelled = true }
   }, [groupCode, program, connection])
 

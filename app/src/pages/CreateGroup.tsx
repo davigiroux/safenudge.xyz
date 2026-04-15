@@ -61,9 +61,7 @@ export default function CreateGroup() {
     const [vaultPda] = getVaultPDA(groupConfigPda)
 
     const sig = await execute(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const methods = program.methods as any
-      return await methods
+      return await program.methods
         .createGroup(
           groupCode,
           depositAmountBN,
@@ -73,7 +71,7 @@ export default function CreateGroup() {
           parseInt(penaltyType),
           penaltyBN,
         )
-        .accounts({
+        .accountsPartial({
           creator: publicKey,
           groupConfig: groupConfigPda,
           vault: vaultPda,
@@ -81,7 +79,7 @@ export default function CreateGroup() {
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .rpc() as string
+        .rpc()
     })
 
     if (sig) {

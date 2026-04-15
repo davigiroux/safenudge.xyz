@@ -1,10 +1,10 @@
 import { useMemo } from 'react'
 import { useConnection, useAnchorWallet } from '@solana/wallet-adapter-react'
-import { AnchorProvider, type Idl, Program } from '@coral-xyz/anchor'
+import { AnchorProvider, Program } from '@coral-xyz/anchor'
+import type { Safenudge } from '../idl/safenudge-types'
 import idl from '../idl/safenudge.json'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type SafeNudgeProgram = Program<any>
+export type SafeNudgeProgram = Program<Safenudge>
 
 export function useAnchorProgram(): SafeNudgeProgram | null {
   const { connection } = useConnection()
@@ -17,7 +17,7 @@ export function useAnchorProgram(): SafeNudgeProgram | null {
       commitment: 'confirmed',
     })
 
-    return new Program(idl as Idl, provider)
+    return new Program(idl as Safenudge, provider) as SafeNudgeProgram
   }, [connection, wallet])
 }
 

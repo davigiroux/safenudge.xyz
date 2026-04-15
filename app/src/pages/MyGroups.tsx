@@ -60,8 +60,7 @@ export default function MyGroups() {
         // Fetch all member records where member == connected wallet
         // MemberRecord layout: discriminator(8) + group(32) + member(32)
         // member field starts at offset 40
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const memberRecords = await (program!.account as any).memberRecord.all([
+        const memberRecords = await program!.account.memberRecord.all([
           { memcmp: { offset: 40, bytes: publicKey!.toBase58() } }
         ])
 
@@ -70,14 +69,13 @@ export default function MyGroups() {
         const groupInfos: GroupInfo[] = []
         for (const record of memberRecords) {
           try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const groupAccount = await (program!.account as any).groupConfig.fetch(record.account.group)
+            const groupAccount = await program!.account.groupConfig.fetch(record.account.group)
             groupInfos.push({
-              groupCode: groupAccount.groupCode as string,
-              status: STATUS_MAP[groupAccount.status as number] || 'unknown',
-              depositsMade: record.account.depositsMade as number,
-              totalPeriods: groupAccount.totalPeriods as number,
-              depositAmount: (groupAccount.depositAmount as { toNumber: () => number }).toNumber(),
+              groupCode: groupAccount.groupCode,
+              status: STATUS_MAP[groupAccount.status] || 'unknown',
+              depositsMade: record.account.depositsMade,
+              totalPeriods: groupAccount.totalPeriods,
+              depositAmount: groupAccount.depositAmount.toNumber(),
             })
           } catch {
             // Skip groups that can't be fetched

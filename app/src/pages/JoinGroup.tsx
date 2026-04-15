@@ -49,11 +49,9 @@ export default function JoinGroup() {
     const memberAta = getAssociatedTokenAddressSync(usdcMint, publicKey)
 
     const sig = await execute(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const methods = program.methods as any
-      return await methods
+      return await program.methods
         .joinGroup()
-        .accounts({
+        .accountsPartial({
           member: publicKey,
           groupConfig: groupPda,
           memberRecord: memberPda,
@@ -63,7 +61,7 @@ export default function JoinGroup() {
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
         })
-        .rpc() as string
+        .rpc()
     })
 
     if (sig) {

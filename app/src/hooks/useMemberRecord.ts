@@ -2,6 +2,8 @@ import { useState, useEffect } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getMemberRecordPDA, getGroupConfigPDA } from '../utils/pda'
+import type { PublicKey } from '@solana/web3.js'
+import type { BN } from '@coral-xyz/anchor'
 
 export type MemberRecordData = {
   group: string
@@ -11,6 +13,17 @@ export type MemberRecordData = {
   periodsDeposited: boolean[]
   hasClaimed: boolean
   pda: string
+}
+
+/** Shape returned by program.account.memberRecord.fetch() */
+type MemberRecordAccount = {
+  group: PublicKey
+  member: PublicKey
+  totalDeposited: BN
+  depositsMade: number
+  periodsDeposited: boolean[]
+  hasClaimed: boolean
+  bump: number
 }
 
 export function useMemberRecord(groupCode: string | undefined) {
@@ -29,29 +42,28 @@ export function useMemberRecord(groupCode: string | undefined) {
 
     let cancelled = false
 
-    async function fetch() {
+    async function fetchMember() {
       if (!program || !publicKey) return
       setLoading(true)
       setError(null)
       try {
         const [groupPda] = getGroupConfigPDA(groupCode!)
         const [memberPda] = getMemberRecordPDA(groupPda, publicKey)
-        const account = await (program.account as Record<string, { fetch: (key: unknown) => Promise<Record<string, unknown>> }>)['memberRecord'].fetch(memberPda)
+        const account = await program.account.memberRecord.fetch(memberPda) as unknown as MemberRecordAccount
 
         if (!cancelled) {
           setData({
-            group: (account.group as { toString: () => string }).toString(),
-            member: (account.member as { toString: () => string }).toString(),
-            totalDeposited: (account.totalDeposited as { toNumber: () => number }).toNumber(),
-            depositsMade: account.depositsMade as number,
-            periodsDeposited: account.periodsDeposited as boolean[],
-            hasClaimed: account.hasClaimed as boolean,
+            group: account.group.toString(),
+            member: account.member.toString(),
+            totalDeposited: account.totalDeposited.toNumber(),
+            depositsMade: account.depositsMade,
+            periodsDeposited: account.periodsDeposited,
+            hasClaimed: account.hasClaimed,
             pda: memberPda.toString(),
           })
         }
       } catch (err) {
         if (!cancelled) {
-          // Member record not found is expected for non-members
           setError(err instanceof Error ? err.message : 'Failed to fetch member record')
           setData(null)
         }
@@ -60,7 +72,7 @@ export function useMemberRecord(groupCode: string | undefined) {
       }
     }
 
-    fetch()
+    fetchMember()
     return () => { cancelled = true }
   }, [groupCode, program, publicKey, connection])
 
