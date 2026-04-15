@@ -156,11 +156,9 @@ export default function GroupDashboard() {
     const memberAta = getAssociatedTokenAddressSync(usdcMint, publicKey)
 
     await execute(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const methods = program.methods as any
-      return await methods
+      return await program.methods
         .deposit()
-        .accounts({
+        .accountsPartial({
           member: publicKey,
           groupConfig: groupPda,
           memberRecord: memberPda,
@@ -169,7 +167,7 @@ export default function GroupDashboard() {
           mint: usdcMint,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
-        .rpc() as string
+        .rpc()
     })
   }
 
@@ -178,15 +176,13 @@ export default function GroupDashboard() {
     const [groupPda] = getGroupConfigPDA(code)
 
     await execute(async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const methods = program.methods as any
-      return await methods
+      return await program.methods
         .startCycle()
-        .accounts({
+        .accountsPartial({
           creator: publicKey,
           groupConfig: groupPda,
         })
-        .rpc() as string
+        .rpc()
     })
   }
 
