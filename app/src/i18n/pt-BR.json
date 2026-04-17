@@ -3,6 +3,7 @@
     "appName": "SafeNudge",
     "tagline": "Poupança Colaborativa",
     "connectWallet": "Conectar Carteira",
+    "connectWalletShort": "Conectar",
     "loading": "Carregando...",
     "confirm": "Confirmar",
     "cancel": "Cancelar",
@@ -14,7 +15,10 @@
   },
   "nav": {
     "home": "Início",
+    "groups": "Grupos",
     "myGroups": "Meus Grupos",
+    "howItWorks": "Como funciona",
+    "security": "Segurança",
     "profile": "Perfil",
     "settings": "Configurações",
     "logout": "Sair"

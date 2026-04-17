@@ -3,6 +3,7 @@
     "appName": "SafeNudge",
     "tagline": "Collaborative Savings",
     "connectWallet": "Connect Wallet",
+    "connectWalletShort": "Connect",
     "loading": "Loading...",
     "confirm": "Confirm",
     "cancel": "Cancel",
@@ -14,7 +15,10 @@
   },
   "nav": {
     "home": "Home",
+    "groups": "Groups",
     "myGroups": "My Groups",
+    "howItWorks": "How it works",
+    "security": "Security",
     "profile": "Profile",
     "settings": "Settings",
     "logout": "Log Out"
