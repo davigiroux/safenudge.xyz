@@ -184,6 +184,77 @@
     "tryAgain": "Try Again",
     "securityNote": "Never share your recovery phrase. SafeNudge never asks for your password outside the wallet."
   },
+  "comoFunciona": {
+    "kicker": "How it works",
+    "h1line1": "Three moments.",
+    "h1line2": "One vault. One group.",
+    "sub": "Every SafeNudge group moves through the same three tempos: first you agree, then you deliver together, then you receive. The vault only releases money when each part happens at the rhythm you chose.",
+    "pillars": [
+      {
+        "num": "01",
+        "name": "Agree",
+        "verb": "you decide",
+        "kicker": "Rules born at the table",
+        "lede": "Before the first cent, the group decides everything — together, in plain words. After that, the contract remembers.",
+        "points": [
+          { "title": "Who's in", "body": "Only people you invite. Groups are private — no one discovers them, no one asks to join. Max 20, min 3." },
+          { "title": "How much, when", "body": "Monthly amount, deposit day, cycle length. The group picks — R$100 or R$5,000, 3 months or 24." },
+          { "title": "Late penalty rate", "body": "The group sets a percentage (e.g. 5%) deducted from anyone who's late. That deduction becomes a bonus for members who followed through — and that's the only place SafeNudge earns (small fraction)." },
+          { "title": "It all becomes contract", "body": "The rules become Anchor code on Solana. No one — not us, not the creator — can change them later without a vote." }
+        ]
+      },
+      {
+        "num": "02",
+        "name": "Deliver",
+        "verb": "the group holds the line",
+        "kicker": "Where commitment lives",
+        "lede": "Month by month, each person deposits. The money sits in the vault until cycle end. When someone forgets, the group reminds — no drama, no collection calls.",
+        "points": [
+          { "title": "Nudge before", "body": "The app nudges 3 days before, 1 day before, morning of. Gentle. No red letters, no scare tactics." },
+          { "title": "Group heads-up", "body": "If the day passes, any member can send a heads-up. A notification arrives — no amount, no demand, just a human reminder." },
+          { "title": "Automatic penalty", "body": "48h after the delay, the contract deducts the percentage the group agreed to. That amount goes into the bonus for members who followed through — and SafeNudge keeps a small fraction." },
+          { "title": "All visible", "body": "Who's deposited, who's missing, how much is saved. No ranking, no shame — just transparency so no one gets lost." }
+        ]
+      },
+      {
+        "num": "03",
+        "name": "Receive",
+        "verb": "everyone together, at the end",
+        "kicker": "The good part",
+        "lede": "In the final month, the vault releases to everyone at once. No order, no draw, no \"who goes first\" — you started together, you finish together.",
+        "points": [
+          { "title": "Everyone in the same moment", "body": "It's not a rotating caixinha. Each person receives the total they deposited plus their share of the group's accumulated penalty bonus." },
+          { "title": "Instant", "body": "The transaction happens in seconds on Solana. No business days, no clearing, no manual release — just the contract executing." },
+          { "title": "No fees for people who follow through", "body": "You get back 100% of what you deposited. The only deductions are Solana network fees (fractions of a cent) — and only latecomers pay the penalty." },
+          { "title": "And it cycles again", "body": "At cycle end, the group decides: run again with the same crew, change the amount, or wrap. It's a caixinha, not a prison." }
+        ]
+      }
+    ],
+    "defaultsEyebrow": "Safety net",
+    "defaultsTitle": "What if someone doesn't deposit?",
+    "defaultsSub": "We designed the worst case first. Here's what the contract does — automatically — when a deposit doesn't land.",
+    "defaults": [
+      { "when": "Day 0", "what": "Silent reminder", "body": "Only the missing person sees it. No one else is notified. Most late deposits are just forgetfulness." },
+      { "when": "+24h", "what": "Group heads-up", "body": "Any member can send a heads-up. Gentle notification, no amount, no demand." },
+      { "when": "+48h", "what": "Penalty triggered", "body": "Agreed percentage (e.g. 5%) is deducted from the next deposit. Becomes a bonus for members who followed through. SafeNudge keeps a small fraction." },
+      { "when": "+7 days", "what": "Optional replacement", "body": "The group votes on replacing. Penalty bonus already deducted accrues to those who stayed." }
+    ],
+    "defaultsFoot": "In 94% of cycles, only Day 0 happens. The rest exists for when you need it.",
+    "faqTitle": "Honest questions",
+    "faq": [
+      { "q": "Do I have to trust everyone in the group?", "a": "You need to trust the vault. The escrow and automatic rules cover the moments when human trust fails — because it does sometimes." },
+      { "q": "Who holds the money while it waits?", "a": "The contract. Not SafeNudge, not the group creator, not a partner bank. The balance is visible on-chain the whole time." },
+      { "q": "Are there fees?", "a": "Zero if you follow through. The only costs are Solana network fees — fractions of a cent per transaction, just to keep the network running. SafeNudge only earns when someone's late: we take a small slice of the penalty that the group itself set. If no one's late, we don't charge anything." },
+      { "q": "Can I leave mid-cycle?", "a": "You can, but your deposits already in the vault stay there until cycle end — everyone receives together at the end. If you leave without completing, the agreed penalty kicks in and becomes a bonus for the rest of the group." },
+      { "q": "What if SafeNudge goes out of business?", "a": "The vault keeps working. It's an open contract on the blockchain — you can recover everything directly, even without the app. We make things easier, but we don't lock you in." },
+      { "q": "Does the money earn yield while it waits?", "a": "If the group wants, yes — there's a stablecoin yield option with treasury-rate returns. Opt-in, with a visible button to turn it off." }
+    ],
+    "ctaTitle": "Ready to start?",
+    "ctaSub": "Create a group with people who already trust you. Or join one with an open seat.",
+    "ctaCreate": "Create a group",
+    "ctaJoin": "Join a group",
+    "footCTA": "Read about security"
+  },
   "errors": {
     "generic": "Something went wrong. Shall we try again?",
     "walletNotConnected": "Connect your wallet to continue",
