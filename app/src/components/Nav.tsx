@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { Icon } from './Icon'
+import { Logo } from './Logo'
 
 export function TopNav() {
   const { t, i18n } = useTranslation()
@@ -19,8 +20,9 @@ export function TopNav() {
 
   return (
     <nav className="bg-surface px-4 py-3 md:px-8 lg:px-32 flex items-center justify-between">
-      <Link to="/" className="flex items-center gap-2 no-underline">
-        <span className="font-headline text-headline-sm text-primary font-bold">
+      <Link to="/" className="flex items-center gap-2.5 no-underline">
+        <Logo size={28} />
+        <span className="font-headline text-headline-sm text-on-surface font-extrabold tracking-tight">
           {t('common.appName')}
         </span>
       </Link>
