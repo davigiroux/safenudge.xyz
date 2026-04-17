@@ -1,4 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
+import { Analytics } from '@vercel/analytics/react'
 import { WalletProvider } from './components/WalletProvider'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import Landing from './pages/Landing'
@@ -23,6 +24,7 @@ export function App() {
           </Routes>
         </BrowserRouter>
       </WalletProvider>
+      <Analytics />
     </ErrorBoundary>
   )
 }
