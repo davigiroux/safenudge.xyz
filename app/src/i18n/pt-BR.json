@@ -184,6 +184,77 @@
     "tryAgain": "Tentar Novamente",
     "securityNote": "Nunca compartilhe sua frase de recuperação. SafeNudge nunca solicita sua senha fora da carteira."
   },
+  "comoFunciona": {
+    "kicker": "Como funciona",
+    "h1line1": "Três momentos.",
+    "h1line2": "Um cofre. Um grupo.",
+    "sub": "Todo grupo SafeNudge passa pelos mesmos três tempos: primeiro vocês combinam, depois cumprem juntos, depois recebem. O cofre só libera o dinheiro quando cada parte acontece no ritmo que vocês escolheram.",
+    "pillars": [
+      {
+        "num": "01",
+        "name": "Combinar",
+        "verb": "vocês decidem",
+        "kicker": "As regras nascem na mesa",
+        "lede": "Antes do primeiro centavo, o grupo decide tudo — juntos, em português. Depois disso, é o contrato que lembra.",
+        "points": [
+          { "title": "Quem entra", "body": "Só quem vocês convidarem. Grupos são privados — ninguém descobre, ninguém pede pra entrar. Máximo de 20 pessoas, mínimo de 3." },
+          { "title": "Quanto e quando", "body": "Valor mensal, dia do depósito, duração do ciclo. O grupo escolhe — R$100 ou R$5.000, 3 meses ou 24." },
+          { "title": "Penalidade por falta", "body": "O grupo define uma porcentagem (ex: 5%) que é descontada de quem atrasa. Esse desconto vira bônus pra quem cumpriu — e é só dali que a SafeNudge ganha (fração pequena)." },
+          { "title": "Tudo vira contrato", "body": "As regras viram código Anchor no Solana. Ninguém — nem nós, nem o criador do grupo — pode mudar depois sem votação." }
+        ]
+      },
+      {
+        "num": "02",
+        "name": "Cumprir",
+        "verb": "o grupo segura a barra",
+        "kicker": "Onde o compromisso mora",
+        "lede": "Mês a mês, cada um deposita. O valor fica guardado no cofre até o fim do ciclo. Quando alguém esquece, o grupo lembra — sem drama, sem cobrança.",
+        "points": [
+          { "title": "Toque antes", "body": "O app avisa 3 dias antes, 1 dia antes, e na manhã do dia. Gentil. Sem letras vermelhas, sem susto." },
+          { "title": "Toque do grupo", "body": "Se passar do dia, qualquer membro pode mandar um toque. Chega uma notificação — sem valor, sem cobrança, só lembrete humano." },
+          { "title": "Penalidade automática", "body": "48h após o atraso, o contrato desconta a porcentagem que o grupo combinou. O valor vai pro bônus de quem cumpriu — e a SafeNudge fica com uma fração pequena." },
+          { "title": "Tudo à vista", "body": "Quem já depositou, quem falta, quanto já foi poupado. Sem ranking, sem vergonha — só transparência pra ninguém se perder." }
+        ]
+      },
+      {
+        "num": "03",
+        "name": "Receber",
+        "verb": "todo mundo junto, no fim",
+        "kicker": "A parte gostosa",
+        "lede": "No último mês, o cofre libera pra todo mundo ao mesmo tempo. Sem ordem, sem sorteio, sem quem vai primeiro — vocês começaram juntos, terminam juntos.",
+        "points": [
+          { "title": "Todos no mesmo instante", "body": "Não é caixinha rotativa. Cada pessoa recebe o total que depositou mais a sua fatia do bônus de penalidades acumulado pelo grupo." },
+          { "title": "Na hora", "body": "A transação acontece em segundos na Solana. Não tem dia útil, não tem compensação, não tem liberação manual — só o contrato executando." },
+          { "title": "Sem taxa pra quem cumpre", "body": "O valor que você depositou volta 100%. As únicas deduções são as taxas de rede da Solana (frações de centavo) — e só quem atrasou paga penalidade." },
+          { "title": "E recomeça", "body": "No fim do ciclo, o grupo decide: roda de novo com o mesmo pessoal, muda o valor, ou fecha. É caixinha, não prisão." }
+        ]
+      }
+    ],
+    "defaultsEyebrow": "Rede de segurança",
+    "defaultsTitle": "E se alguém não depositar?",
+    "defaultsSub": "A gente desenhou o pior cenário primeiro. Aqui está o que o contrato faz — automaticamente — quando um depósito não chega.",
+    "defaults": [
+      { "when": "Dia 0", "what": "Lembrete silencioso", "body": "Só a pessoa que falta vê. Ninguém mais é notificado. A maioria dos atrasos é esquecimento." },
+      { "when": "+24h", "what": "Toque do grupo", "body": "Qualquer membro pode dar um toque. Notificação gentil, sem valor, sem cobrança." },
+      { "when": "+48h", "what": "Penalidade acionada", "body": "Porcentagem combinada (ex: 5%) é descontada do próximo depósito. Vira bônus pra quem cumpriu. SafeNudge fica com uma fração pequena." },
+      { "when": "+7 dias", "what": "Substituição opcional", "body": "O grupo vota se quer substituir. Bônus de penalidade já descontada acumula pra quem ficou." }
+    ],
+    "defaultsFoot": "Em 94% dos ciclos, só o Dia 0 acontece. O resto existe pra quando precisar.",
+    "faqTitle": "Perguntas honestas",
+    "faq": [
+      { "q": "Preciso confiar em todo mundo do grupo?", "a": "Você precisa confiar no cofre. A caução e as regras automáticas cobrem quando a confiança humana falha — e ela às vezes falha." },
+      { "q": "Quem fica com o dinheiro enquanto espera?", "a": "O contrato. Não a SafeNudge, nem o criador do grupo, nem um banco parceiro. O saldo é visível on-chain o tempo todo." },
+      { "q": "Tem taxa?", "a": "Pra quem cumpre, zero. Os únicos custos são as taxas de rede da Solana — frações de centavo por transação, só pra manter a rede. A SafeNudge ganha dinheiro só quando alguém atrasa: ficamos com uma fração pequena da penalidade que o próprio grupo definiu. Se ninguém atrasa, a gente não cobra nada." },
+      { "q": "Posso sair no meio?", "a": "Pode, mas os depósitos já feitos ficam no cofre até o fim do ciclo — todo mundo recebe junto no final. Se você sair sem cumprir, a penalidade combinada é acionada e vira bônus pro resto do grupo." },
+      { "q": "E se a SafeNudge quebrar?", "a": "O cofre continua funcionando. É um contrato aberto na blockchain — você consegue resgatar tudo direto, mesmo sem o app. A gente facilita, mas não tranca." },
+      { "q": "O dinheiro rende enquanto espera?", "a": "Se o grupo quiser, sim — tem uma opção de render em stablecoin com rendimento de tesouraria. Opt-in, com botão visível pra desligar." }
+    ],
+    "ctaTitle": "Pronto pra começar?",
+    "ctaSub": "Crie um grupo com as pessoas que já confiam em você. Ou entre num grupo com vaga aberta.",
+    "ctaCreate": "Criar grupo",
+    "ctaJoin": "Entrar em grupo",
+    "footCTA": "Ler sobre segurança"
+  },
   "errors": {
     "generic": "Algo não deu certo. Vamos tentar de novo?",
     "walletNotConnected": "Conecte sua carteira para continuar",
