@@ -48,7 +48,7 @@ function Moment({
       <div className="font-mono text-label-sm text-on-surface-variant tracking-widest mb-5">
         {step}
       </div>
-      <div className={`w-13 h-13 rounded-2xl flex items-center justify-center mb-5 ${accentClass}`}
+      <div className={`rounded-2xl flex items-center justify-center mb-5 ${accentClass}`}
            style={{ width: 52, height: 52 }}>
         <Icon name={icon} size={28} />
       </div>
@@ -110,8 +110,8 @@ export default function Landing() {
     const id = setInterval(() => {
       setBurst(true)
       setPct((p) => (p >= 88 ? 62 : p + 3))
-      const t = setTimeout(() => setBurst(false), 1600)
-      return () => clearTimeout(t)
+      const tmr = setTimeout(() => setBurst(false), 1600)
+      return () => clearTimeout(tmr)
     }, 3200)
     return () => clearInterval(id)
   }, [])
@@ -121,13 +121,13 @@ export default function Landing() {
   return (
     <PageLayout bgClass="bg-surface">
       {/* ─── Hero ──────────────────────────────────────────────────────── */}
-      <section className="relative overflow-hidden">
+      <section className="full-bleed relative overflow-hidden bg-surface">
         <div className="absolute -top-24 -right-32 w-[620px] h-[620px] rounded-full pointer-events-none hidden lg:block"
              style={{ background: 'rgba(107,254,156,0.16)', filter: 'blur(120px)' }} />
         <div className="absolute -bottom-32 -left-32 w-[560px] h-[560px] rounded-full pointer-events-none hidden lg:block"
              style={{ background: 'rgba(147,242,242,0.22)', filter: 'blur(110px)' }} />
 
-        <div className="relative px-4 pt-10 pb-16 md:px-8 lg:px-16 lg:pt-16 lg:pb-32">
+        <div className="relative mx-auto max-w-[1400px] px-4 pt-10 pb-16 md:px-8 lg:px-10 lg:pt-16 lg:pb-32">
           <div className="lg:grid lg:grid-cols-2 lg:gap-10 lg:items-center">
             {/* Copy column */}
             <div className="text-center lg:text-left">
@@ -173,14 +173,14 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Floating stack */}
-            <div className="hidden lg:block relative" style={{ height: 620 }}>
+            {/* Floating stack — constrained, right-justified */}
+            <div className="hidden lg:block relative ml-auto w-full" style={{ height: 620, maxWidth: 560 }}>
               {/* Group card — main */}
               <div
                 className="absolute bg-surface-container-lowest rounded-2xl p-6 animate-float1"
                 style={{
                   top: 80,
-                  right: 20,
+                  right: 0,
                   width: 340,
                   boxShadow: '0 20px 60px -10px rgba(0,101,101,0.2)',
                 }}
@@ -251,7 +251,7 @@ export default function Landing() {
                 className="absolute glass-nudge rounded-2xl p-4 flex gap-3 items-start animate-float3"
                 style={{
                   bottom: 60,
-                  left: -10,
+                  left: 0,
                   width: 300,
                   boxShadow: '0 12px 40px -8px rgba(128,79,0,0.18), 0 0 0 1px rgba(189,201,200,0.25)',
                 }}
@@ -277,7 +277,7 @@ export default function Landing() {
                 className="absolute inline-flex items-center gap-2 rounded-full px-4 py-2.5 font-headline font-semibold text-body-sm animate-float2"
                 style={{
                   bottom: 200,
-                  right: -20,
+                  right: 0,
                   background: '#1a1c1a',
                   color: '#faf9f5',
                   boxShadow: '0 12px 32px -6px rgba(0,0,0,0.25)',
@@ -291,7 +291,7 @@ export default function Landing() {
                 className="absolute inline-flex items-center gap-2.5 bg-surface-container-lowest rounded-full pl-2 pr-4 py-2 animate-float1"
                 style={{
                   top: 360,
-                  right: 60,
+                  right: 40,
                   boxShadow: '0 12px 32px -6px rgba(0,101,101,0.1)',
                 }}
               >
@@ -315,48 +315,50 @@ export default function Landing() {
       </section>
 
       {/* ─── §01 — Three moments ──────────────────────────────────────── */}
-      <section className="full-bleed bg-surface-container-low px-4 py-14 md:px-8 lg:px-16 lg:py-24">
-        <div className="max-w-2xl mb-12">
-          <div className="font-mono text-label-sm uppercase tracking-widest text-primary mb-3.5">
-            {t('landing.momentsEyebrow')}
+      <section className="full-bleed bg-surface-container-low">
+        <div className="mx-auto max-w-7xl px-4 py-14 md:px-8 lg:px-10 lg:py-24">
+          <div className="max-w-2xl mb-12">
+            <div className="font-mono text-label-sm uppercase tracking-widest text-primary mb-3.5">
+              {t('landing.momentsEyebrow')}
+            </div>
+            <h2 className="font-headline font-bold text-on-surface tracking-tight"
+                style={{ fontSize: 'clamp(28px, 4vw, 44px)', lineHeight: 1.1 }}>
+              {t('landing.momentsTitle')}
+            </h2>
           </div>
-          <h2 className="font-headline font-bold text-on-surface tracking-tight"
-              style={{ fontSize: 'clamp(28px, 4vw, 44px)', lineHeight: 1.1 }}>
-            {t('landing.momentsTitle')}
-          </h2>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          <Moment
-            step={t('landing.moment1Step')}
-            title={t('landing.moment1Title')}
-            body={t('landing.moment1Body')}
-            icon="payments"
-            accentClass="bg-secondary/10 text-secondary"
-          />
-          <Moment
-            step={t('landing.moment2Step')}
-            title={t('landing.moment2Title')}
-            body={t('landing.moment2Body')}
-            icon="notifications_active"
-            accentClass="bg-tertiary/10 text-tertiary"
-          />
-          <Moment
-            step={t('landing.moment3Step')}
-            title={t('landing.moment3Title')}
-            body={t('landing.moment3Body')}
-            icon="celebration"
-            accentClass="bg-primary/10 text-primary"
-          />
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <Moment
+              step={t('landing.moment1Step')}
+              title={t('landing.moment1Title')}
+              body={t('landing.moment1Body')}
+              icon="payments"
+              accentClass="bg-secondary/10 text-secondary"
+            />
+            <Moment
+              step={t('landing.moment2Step')}
+              title={t('landing.moment2Title')}
+              body={t('landing.moment2Body')}
+              icon="notifications_active"
+              accentClass="bg-tertiary/10 text-tertiary"
+            />
+            <Moment
+              step={t('landing.moment3Step')}
+              title={t('landing.moment3Title')}
+              body={t('landing.moment3Body')}
+              icon="celebration"
+              accentClass="bg-primary/10 text-primary"
+            />
+          </div>
         </div>
       </section>
 
       {/* ─── §02 — Why this works (dark slab) ─────────────────────────── */}
-      <section className="full-bleed relative overflow-hidden px-4 py-20 md:px-8 lg:px-16 lg:py-28"
+      <section className="full-bleed relative overflow-hidden"
                style={{ background: '#1a1c1a', color: '#faf9f5' }}>
         <div className="absolute -top-40 -right-40 w-[500px] h-[500px] rounded-full pointer-events-none"
              style={{ background: 'rgba(107,254,156,0.08)', filter: 'blur(140px)' }} />
 
-        <div className="relative">
+        <div className="relative mx-auto max-w-7xl px-4 py-20 md:px-8 lg:px-10 lg:py-28">
           <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-12 lg:gap-20 items-start mb-16 lg:mb-20">
             <div>
               <div className="font-mono text-label-sm uppercase tracking-widest mb-4" style={{ color: '#6bfe9c' }}>
@@ -381,49 +383,12 @@ export default function Landing() {
           {/* Stats grid */}
           <div className="grid grid-cols-1 md:grid-cols-3"
                style={{ borderTop: '1px solid rgba(189,201,200,0.18)' }}>
-            <Stat
-              big={t('landing.stat1Big')}
-              label={t('landing.stat1Label')}
-              cite={t('landing.stat1Cite')}
-              bigColorClass="text-[#6bfe9c]"
-            />
-            <Stat
-              big={t('landing.stat2Big')}
-              label={t('landing.stat2Label')}
-              cite={t('landing.stat2Cite')}
-              bigColorClass="text-[#93f2f2]"
-              divider
-            />
-            <Stat
-              big={t('landing.stat3Big')}
-              label={t('landing.stat3Label')}
-              cite={t('landing.stat3Cite')}
-              bigColorClass="text-[#ffddb9]"
-              divider
-            />
-            <Stat
-              big={t('landing.stat4Big')}
-              label={t('landing.stat4Label')}
-              cite={t('landing.stat4Cite')}
-              bigColorClass="text-[#6bfe9c]"
-              borderTop
-            />
-            <Stat
-              big={t('landing.stat5Big')}
-              label={t('landing.stat5Label')}
-              cite={t('landing.stat5Cite')}
-              bigColorClass="text-[#93f2f2]"
-              borderTop
-              divider
-            />
-            <Stat
-              big={t('landing.stat6Big')}
-              label={t('landing.stat6Label')}
-              cite={t('landing.stat6Cite')}
-              bigColorClass="text-[#ffddb9]"
-              borderTop
-              divider
-            />
+            <Stat big={t('landing.stat1Big')} label={t('landing.stat1Label')} cite={t('landing.stat1Cite')} bigColorClass="text-[#6bfe9c]" />
+            <Stat big={t('landing.stat2Big')} label={t('landing.stat2Label')} cite={t('landing.stat2Cite')} bigColorClass="text-[#93f2f2]" divider />
+            <Stat big={t('landing.stat3Big')} label={t('landing.stat3Label')} cite={t('landing.stat3Cite')} bigColorClass="text-[#ffddb9]" divider />
+            <Stat big={t('landing.stat4Big')} label={t('landing.stat4Label')} cite={t('landing.stat4Cite')} bigColorClass="text-[#6bfe9c]" borderTop />
+            <Stat big={t('landing.stat5Big')} label={t('landing.stat5Label')} cite={t('landing.stat5Cite')} bigColorClass="text-[#93f2f2]" borderTop divider />
+            <Stat big={t('landing.stat6Big')} label={t('landing.stat6Label')} cite={t('landing.stat6Cite')} bigColorClass="text-[#ffddb9]" borderTop divider />
           </div>
 
           {/* Quote band */}
@@ -455,8 +420,8 @@ export default function Landing() {
       </section>
 
       {/* ─── Final CTA ────────────────────────────────────────────────── */}
-      <section className="px-4 py-20 md:px-8 lg:px-16 lg:py-28 bg-surface">
-        <div className="max-w-3xl mx-auto text-center">
+      <section className="full-bleed bg-surface">
+        <div className="mx-auto max-w-3xl px-4 py-20 md:px-8 lg:px-10 lg:py-28 text-center">
           <h2 className="font-headline font-extrabold text-on-surface tracking-tight mb-7"
               style={{ fontSize: 'clamp(36px, 6vw, 80px)', lineHeight: 1.02, letterSpacing: '-0.03em' }}>
             {t('landing.ctaHeadlineA')}
@@ -477,7 +442,6 @@ export default function Landing() {
           </div>
         </div>
       </section>
-
     </PageLayout>
   )
 }
