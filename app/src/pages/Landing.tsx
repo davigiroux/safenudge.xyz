@@ -315,7 +315,7 @@ export default function Landing() {
       </section>
 
       {/* ─── §01 — Three moments ──────────────────────────────────────── */}
-      <section className="bg-surface-container-low px-4 py-14 md:px-8 lg:px-16 lg:py-24">
+      <section className="full-bleed bg-surface-container-low px-4 py-14 md:px-8 lg:px-16 lg:py-24">
         <div className="max-w-2xl mb-12">
           <div className="font-mono text-label-sm uppercase tracking-widest text-primary mb-3.5">
             {t('landing.momentsEyebrow')}
@@ -351,7 +351,7 @@ export default function Landing() {
       </section>
 
       {/* ─── §02 — Why this works (dark slab) ─────────────────────────── */}
-      <section className="relative overflow-hidden px-4 py-20 md:px-8 lg:px-16 lg:py-28"
+      <section className="full-bleed relative overflow-hidden px-4 py-20 md:px-8 lg:px-16 lg:py-28"
                style={{ background: '#1a1c1a', color: '#faf9f5' }}>
         <div className="absolute -top-40 -right-40 w-[500px] h-[500px] rounded-full pointer-events-none"
              style={{ background: 'rgba(107,254,156,0.08)', filter: 'blur(140px)' }} />
@@ -363,7 +363,7 @@ export default function Landing() {
                 {t('landing.whyEyebrow')}
               </div>
               <h2 className="font-headline font-extrabold tracking-tight"
-                  style={{ fontSize: 'clamp(36px, 5.2vw, 72px)', lineHeight: 1.0, letterSpacing: '-0.03em' }}>
+                  style={{ fontSize: 'clamp(36px, 5.2vw, 72px)', lineHeight: 1.0, letterSpacing: '-0.03em', color: '#faf9f5' }}>
                 {t('landing.whyTitleLead')}{' '}
                 <span style={{ fontStyle: 'italic', fontWeight: 400, color: '#bdc9c8' }}>
                   {t('landing.whyTitleEm')}
@@ -478,13 +478,6 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ─── Footer ───────────────────────────────────────────────────── */}
-      <footer className="bg-surface-container-low px-4 py-6 md:px-8 lg:px-16">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          <span className="font-headline text-title-md font-extrabold text-primary">SafeNudge</span>
-          <p className="font-body text-body-sm text-on-surface-variant">{t('landing.footer')}</p>
-        </div>
-      </footer>
     </PageLayout>
   )
 }

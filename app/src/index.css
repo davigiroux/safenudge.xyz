@@ -35,6 +35,13 @@
     background: rgba(250, 249, 245, 0.8);
     backdrop-filter: blur(12px);
   }
+
+  /* Break out of a capped parent container to the full viewport width. */
+  .full-bleed {
+    width: 100vw;
+    margin-left: calc(50% - 50vw);
+    margin-right: calc(50% - 50vw);
+  }
 }
 
 /* Material Symbols Outlined */
