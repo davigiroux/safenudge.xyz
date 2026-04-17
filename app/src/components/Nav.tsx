@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { useWalletModal } from '@solana/wallet-adapter-react-ui'
 import { Icon } from './Icon'
+import { Logo } from './Logo'
 
 export function TopNav() {
   const { t, i18n } = useTranslation()
@@ -18,57 +19,68 @@ export function TopNav() {
     : ''
 
   return (
-    <nav className="bg-surface px-4 py-3 md:px-8 lg:px-32 flex items-center justify-between">
-      <Link to="/" className="flex items-center gap-2 no-underline">
-        <span className="font-headline text-headline-sm text-primary font-bold">
-          {t('common.appName')}
-        </span>
-      </Link>
-
-      <div className="hidden md:flex items-center gap-6">
-        <Link
-          to="/"
-          className="font-label text-label-lg text-on-surface-variant hover:text-on-surface transition-colors no-underline"
-        >
-          {t('nav.home')}
+    <nav className="full-bleed bg-surface/75 sticky top-0 z-40 backdrop-blur-md">
+      <div className="mx-auto max-w-[1440px] px-4 py-3 md:px-8 lg:px-10 flex items-center justify-between">
+        <Link to="/" className="flex items-center gap-2.5 no-underline">
+          <Logo size={28} />
+          <span className="font-headline text-headline-sm text-on-surface font-extrabold tracking-tight">
+            {t('common.appName')}
+          </span>
         </Link>
-        <Link
-          to="/grupos"
-          className="font-label text-label-lg text-on-surface-variant hover:text-on-surface transition-colors no-underline"
-        >
-          {t('nav.myGroups')}
-        </Link>
-      </div>
 
-      <div className="flex items-center gap-3">
-        <button
-          onClick={toggleLang}
-          aria-label={i18n.language === 'pt-BR' ? 'Switch to English' : 'Mudar para Português'}
-          className="flex items-center gap-1 px-3 py-2.5 min-h-[44px] rounded-xl bg-surface-container-low text-on-surface-variant font-label text-label-md hover:bg-surface-container-high transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-        >
-          <Icon name="language" size={18} />
-          {i18n.language === 'pt-BR' ? 'EN' : 'PT'}
-        </button>
+        <div className="flex items-center gap-6 lg:gap-8">
+          <div className="hidden md:flex items-center gap-6 lg:gap-8">
+            <Link
+              to="/grupos"
+              className="font-label text-label-lg text-on-surface-variant hover:text-on-surface transition-colors no-underline"
+            >
+              {t('nav.groups')}
+            </Link>
+            <Link
+              to="/como-funciona"
+              className="font-label text-label-lg text-on-surface-variant hover:text-on-surface transition-colors no-underline"
+            >
+              {t('nav.howItWorks')}
+            </Link>
+            <Link
+              to="/seguranca"
+              className="font-label text-label-lg text-on-surface-variant hover:text-on-surface transition-colors no-underline"
+            >
+              {t('nav.security')}
+            </Link>
+          </div>
 
-        {connected ? (
-          <button
-            onClick={() => disconnect()}
-            aria-label={`${shortAddress} — disconnect wallet`}
-            className="flex items-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl bg-primary-fixed/20 text-primary font-label text-label-md hover:bg-primary-fixed/30 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          >
-            <Icon name="account_balance_wallet" size={18} />
-            {shortAddress}
-          </button>
-        ) : (
-          <button
-            onClick={() => setVisible(true)}
-            aria-label={t('common.connectWallet')}
-            className="flex items-center gap-2 px-3 sm:px-4 py-2.5 min-h-[44px] rounded-xl btn-primary-gradient text-on-primary font-label text-label-lg hover:shadow-active-glow transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-fixed whitespace-nowrap"
-          >
-            <Icon name="account_balance_wallet" size={18} />
-            <span className="hidden sm:inline">{t('common.connectWallet')}</span>
-          </button>
-        )}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleLang}
+              aria-label={i18n.language === 'pt-BR' ? 'Switch to English' : 'Mudar para Português'}
+              className="flex items-center gap-1 px-3 py-2.5 min-h-[44px] rounded-xl bg-surface-container-low text-on-surface-variant font-label text-label-md hover:bg-surface-container-high transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+            >
+              <Icon name="language" size={18} />
+              {i18n.language === 'pt-BR' ? 'EN' : 'PT'}
+            </button>
+
+            {connected ? (
+              <button
+                onClick={() => disconnect()}
+                aria-label={`${shortAddress} — disconnect wallet`}
+                className="flex items-center gap-2 px-3 py-2.5 min-h-[44px] rounded-xl bg-primary-fixed/20 text-primary font-label text-label-md hover:bg-primary-fixed/30 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              >
+                <Icon name="account_balance_wallet" size={18} />
+                {shortAddress}
+              </button>
+            ) : (
+              <button
+                onClick={() => setVisible(true)}
+                aria-label={t('common.connectWallet')}
+                className="flex items-center gap-2 px-3 sm:px-4 py-2.5 min-h-[44px] rounded-xl btn-primary-gradient text-on-primary font-label text-label-lg hover:shadow-active-glow transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-fixed whitespace-nowrap"
+              >
+                <Icon name="account_balance_wallet" size={18} />
+                <span className="hidden sm:inline">{t('common.connectWalletShort')}</span>
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     </nav>
   )

@@ -1,301 +1,447 @@
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Icon, Button, Card } from '../components'
+import { Icon, Button } from '../components'
 import { PageLayout } from '../components/PageLayout'
 
-function StatCard({ icon, label, value }: { icon: string; label: string; value: string }) {
+const AVATAR_BG = ['#ffddb9', '#6bfe9c', '#93f2f2', '#ffb961']
+const AVATAR_FG = ['#663e00', '#00290f', '#002020', '#2b1700']
+
+function Avatar({ name, idx, size = 26 }: { name: string; idx: number; size?: number }) {
+  const initials = name
+    .split(' ')
+    .map((s) => s[0])
+    .join('')
+    .slice(0, 2)
+    .toUpperCase()
+  const i = idx % AVATAR_BG.length
   return (
-    <div className="flex items-center gap-4 lg:flex-col lg:items-center lg:text-center px-4 py-4 lg:py-6">
-      <div className="w-10 h-10 lg:w-12 lg:h-12 rounded-2xl bg-primary-fixed/30 flex items-center justify-center flex-shrink-0">
-        <Icon name={icon} size={24} className="text-primary" />
-      </div>
-      <div>
-        <span className="font-headline text-title-lg lg:text-headline-sm text-on-surface block">{value}</span>
-        <span className="font-label text-label-md text-on-surface-variant">{label}</span>
-      </div>
+    <div
+      className="inline-flex items-center justify-center rounded-full font-body font-bold flex-shrink-0"
+      style={{
+        width: size,
+        height: size,
+        background: AVATAR_BG[i],
+        color: AVATAR_FG[i],
+        fontSize: size * 0.38,
+      }}
+    >
+      {initials}
     </div>
   )
 }
 
-function FeatureCard({ icon, title, description, accent }: { icon: string; title: string; description: string; accent: string }) {
+function Moment({
+  step,
+  title,
+  body,
+  icon,
+  accentClass,
+}: {
+  step: string
+  title: string
+  body: string
+  icon: string
+  accentClass: string
+}) {
   return (
-    <Card variant="surface" hover className="shadow-nudge group">
-      <div className="flex items-start gap-4">
-        <div className={`flex-shrink-0 w-12 h-12 rounded-2xl ${accent} flex items-center justify-center transition-transform duration-300 group-hover:scale-110`}>
-          <Icon name={icon} size={22} className="text-on-primary" />
-        </div>
-        <div>
-          <h3 className="font-headline text-title-lg text-on-surface mb-1.5">{title}</h3>
-          <p className="font-body text-body-md text-on-surface-variant leading-relaxed">{description}</p>
-        </div>
+    <div className="relative bg-surface-container-lowest rounded-2xl p-7 shadow-ghost-border overflow-hidden">
+      <div className="font-mono text-label-sm text-on-surface-variant tracking-widest mb-5">
+        {step}
       </div>
-    </Card>
+      <div className={`rounded-2xl flex items-center justify-center mb-5 ${accentClass}`}
+           style={{ width: 52, height: 52 }}>
+        <Icon name={icon} size={28} />
+      </div>
+      <h3 className="font-headline text-title-lg text-on-surface mb-2.5 tracking-tight">{title}</h3>
+      <p className="font-body text-body-md text-on-surface-variant leading-relaxed">{body}</p>
+    </div>
+  )
+}
+
+function Stat({
+  big,
+  label,
+  cite,
+  bigColorClass,
+  divider,
+  borderTop,
+}: {
+  big: string
+  label: string
+  cite: string
+  bigColorClass: string
+  divider?: boolean
+  borderTop?: boolean
+}) {
+  return (
+    <div
+      className="px-6 py-9 lg:px-8 lg:pt-10 lg:pb-8 relative"
+      style={{
+        borderLeft: divider ? '1px solid rgba(189,201,200,0.18)' : 'none',
+        borderTop: borderTop ? '1px solid rgba(189,201,200,0.18)' : 'none',
+      }}
+    >
+      <div
+        className={`font-headline font-extrabold tracking-tight tabular-nums mb-5 ${bigColorClass}`}
+        style={{ fontSize: 'clamp(48px, 5.5vw, 84px)', lineHeight: 0.95, letterSpacing: '-0.04em' }}
+      >
+        {big}
+      </div>
+      <div className="font-body text-body-md leading-relaxed mb-5 max-w-[280px]" style={{ color: '#e8ebe8' }}>
+        {label}
+      </div>
+      <div
+        className="font-mono text-label-sm tracking-widest uppercase pt-4"
+        style={{ color: '#7a8585', borderTop: '1px solid rgba(189,201,200,0.12)' }}
+      >
+        {cite}
+      </div>
+    </div>
   )
 }
 
 export default function Landing() {
   const { t } = useTranslation()
 
+  const [pct, setPct] = useState(62)
+  const [burst, setBurst] = useState(false)
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setBurst(true)
+      setPct((p) => (p >= 88 ? 62 : p + 3))
+      const tmr = setTimeout(() => setBurst(false), 1600)
+      return () => clearTimeout(tmr)
+    }, 3200)
+    return () => clearInterval(id)
+  }, [])
+
+  const balance = 15500 + (pct - 62) * 200
+
   return (
     <PageLayout bgClass="bg-surface">
-      {/* Hero — gradient background, editorial asymmetry */}
-      <section className="relative overflow-hidden">
-        {/* Background: warm gradient with teal accent */}
-        <div className="absolute inset-0 bg-gradient-to-br from-surface via-surface-container-low to-primary-fixed/20" />
-        {/* Decorative circles — desktop only */}
-        <div className="absolute -right-32 -top-32 w-[500px] h-[500px] rounded-full bg-primary/5 blur-3xl hidden lg:block" />
-        <div className="absolute right-20 bottom-0 w-[300px] h-[300px] rounded-full bg-secondary-fixed/10 blur-2xl hidden lg:block" />
+      {/* ─── Hero ──────────────────────────────────────────────────────── */}
+      <section className="full-bleed relative overflow-hidden bg-surface">
+        <div className="absolute -top-24 -right-32 w-[620px] h-[620px] rounded-full pointer-events-none hidden lg:block"
+             style={{ background: 'rgba(107,254,156,0.16)', filter: 'blur(120px)' }} />
+        <div className="absolute -bottom-32 -left-32 w-[560px] h-[560px] rounded-full pointer-events-none hidden lg:block"
+             style={{ background: 'rgba(147,242,242,0.22)', filter: 'blur(110px)' }} />
 
-        <div className="relative px-4 pt-12 pb-10 md:px-8 lg:px-32 lg:pt-28 lg:pb-24">
-          <div className="lg:grid lg:grid-cols-5 lg:gap-16 lg:items-center">
-            {/* Left: text content */}
-            <div className="text-center lg:text-left lg:col-span-3">
-              <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-surface-container-lowest shadow-ghost-border mb-6">
-                <Icon name="verified" size={16} className="text-primary" />
-                <span className="font-label text-label-md text-primary">
-                  {t('landing.stat2Value')}
-                </span>
+        <div className="relative mx-auto max-w-[1400px] px-4 pt-10 pb-16 md:px-8 lg:px-10 lg:pt-16 lg:pb-32">
+          <div className="lg:grid lg:grid-cols-2 lg:gap-10 lg:items-center">
+            {/* Copy column */}
+            <div className="text-center lg:text-left">
+              <div className="inline-flex items-center gap-2 font-mono text-label-sm uppercase tracking-widest text-primary mb-6">
+                <span
+                  className="w-2 h-2 rounded-full bg-secondary-fixed-dim"
+                  style={{ animation: 'pulse 2s infinite' }}
+                  aria-hidden="true"
+                />
+                {t('landing.heroEyebrow')} · {t('landing.live')}
               </div>
 
-              <h1 className="font-headline text-display-sm md:text-display-md lg:text-display-lg text-on-surface mb-6 leading-tight tracking-tight">
-                {t('landing.hero')}
+              <h1
+                className="font-headline font-extrabold text-on-surface mb-7"
+                style={{
+                  fontSize: 'clamp(56px, 9vw, 120px)',
+                  letterSpacing: '-0.04em',
+                  lineHeight: 0.92,
+                }}
+              >
+                {t('landing.heroL1')}
+                <br />
+                <span
+                  className="bg-clip-text text-transparent"
+                  style={{ backgroundImage: 'linear-gradient(135deg, #006565, #4ae183)' }}
+                >
+                  {t('landing.heroL2')}
+                </span>
               </h1>
 
-              <p className="font-body text-body-lg text-on-surface-variant mb-10 max-w-xl lg:max-w-lg leading-relaxed">
+              <p className="font-body text-body-lg text-on-surface-variant max-w-md mx-auto lg:mx-0 leading-relaxed mb-8"
+                 style={{ fontSize: '1.1875rem' }}>
                 {t('landing.subtitle')}
               </p>
 
-              <div className="flex flex-col sm:flex-row items-center lg:items-start gap-4">
-                <Button variant="primary" icon="group_add" to="/criar" className="px-6 py-3 text-label-lg shadow-nudge">
+              <div className="flex flex-col sm:flex-row items-center lg:items-start gap-3">
+                <Button variant="primary" icon="group_add" to="/criar" className="px-7 py-4 text-label-lg shadow-nudge">
                   {t('landing.cta')}
                 </Button>
-                <Button variant="tertiary" icon="login" to="/grupos">
+                <Button variant="tertiary" icon="login" to="/grupos" className="px-7 py-4 text-label-lg shadow-ghost-border !text-on-surface">
                   {t('landing.joinCta')}
                 </Button>
               </div>
             </div>
 
-            {/* Right: floating dashboard preview */}
-            <div className="hidden lg:flex lg:col-span-2 lg:justify-end">
-              <div className="relative w-full max-w-[340px]">
-                {/* Main preview card */}
-                <div className="bg-surface-container-lowest rounded-2xl p-6 shadow-nudge">
-                  <div className="flex items-center gap-3 mb-5">
-                    <div className="w-10 h-10 rounded-xl btn-primary-gradient flex items-center justify-center">
-                      <Icon name="shield" size={20} className="text-on-primary" />
-                    </div>
-                    <div>
-                      <span className="font-headline text-title-md text-on-surface block">{t('landing.previewGroup')}</span>
-                      <span className="font-label text-label-sm text-on-surface-variant">{t('landing.previewMembers')}</span>
-                    </div>
-                  </div>
-                  {/* Mini progress bar */}
-                  <div className="mb-4">
-                    <div className="flex justify-between mb-1.5">
-                      <span className="font-label text-label-sm text-on-surface-variant">Semana 3/12</span>
-                      <span className="font-label text-label-sm text-primary">25%</span>
-                    </div>
-                    <div className="h-2 rounded-full bg-surface-container-high overflow-hidden">
-                      <div className="h-full w-1/4 rounded-full btn-primary-gradient" />
-                    </div>
-                  </div>
-                  {/* Mini stat rows */}
-                  <div className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="font-label text-label-md text-on-surface-variant">Meta Individual</span>
-                      <span className="font-headline text-title-sm text-on-surface">6.000 USDC</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="font-label text-label-md text-on-surface-variant">Recebimento</span>
-                      <span className="font-headline text-title-sm text-secondary">R$ 4.250</span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Floating accent card — offset top-right */}
-                <div className="absolute -top-4 -right-6 bg-surface-container-lowest rounded-xl px-4 py-3 shadow-nudge flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-secondary-fixed flex items-center justify-center">
-                    <Icon name="trending_up" size={18} className="text-on-secondary-container" />
+            {/* Floating stack — constrained, right-justified */}
+            <div className="hidden lg:block relative ml-auto w-full" style={{ height: 620, maxWidth: 560 }}>
+              {/* Group card — main */}
+              <div
+                className="absolute bg-surface-container-lowest rounded-2xl p-6 animate-float1"
+                style={{
+                  top: 80,
+                  right: 0,
+                  width: 340,
+                  boxShadow: '0 20px 60px -10px rgba(0,101,101,0.2)',
+                }}
+              >
+                <div className="flex items-center gap-2.5 mb-3.5">
+                  <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+                       style={{ background: 'rgba(0,101,101,0.13)', color: '#006565' }}>
+                    <Icon name="savings" size={18} />
                   </div>
                   <div>
-                    <span className="font-headline text-title-sm text-on-surface block">{t('landing.stat1Value')}</span>
-                    <span className="font-label text-label-sm text-on-surface-variant">{t('landing.stat1Label')}</span>
+                    <div className="font-headline text-title-sm font-bold text-on-surface">{t('landing.previewGroup')}</div>
+                    <div className="font-body text-label-sm text-on-surface-variant">{t('landing.previewMembers')}</div>
                   </div>
                 </div>
+                <div className="font-headline font-extrabold text-on-surface tabular-nums"
+                     style={{ fontSize: 40, letterSpacing: '-0.02em', lineHeight: 1 }}>
+                  R$ {balance.toLocaleString('pt-BR')}
+                </div>
+                <div className="font-body text-body-sm text-on-surface-variant mb-3.5">
+                  {pct}% {t('landing.previewOfTarget')} · R$ 25.000
+                </div>
+                <div className="h-1.5 rounded-full bg-surface-variant overflow-hidden">
+                  <div
+                    className="h-full rounded-full btn-primary-gradient"
+                    style={{ width: `${pct}%`, transition: 'width 500ms ease-out' }}
+                  />
+                </div>
+                <div className="flex justify-between mt-2.5 font-body text-label-sm text-on-surface-variant">
+                  <span>{pct}%</span>
+                  <span className="text-secondary font-semibold inline-flex items-center gap-1">
+                    <Icon name="trending_up" size={14} />
+                    26 🔥
+                  </span>
+                </div>
+              </div>
 
-                {/* Floating nudge card — offset bottom-left */}
-                <div className="absolute -bottom-5 -left-8 bg-surface-container-lowest rounded-xl px-4 py-3 shadow-nudge flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-tertiary-fixed flex items-center justify-center">
-                    <Icon name="notifications_active" size={18} className="text-on-tertiary-fixed-variant" />
+              {/* Deposit burst */}
+              <div
+                className="absolute bg-surface-container-lowest rounded-[20px] p-4 animate-float2"
+                style={{
+                  top: 10,
+                  left: 10,
+                  width: 260,
+                  boxShadow: '0 16px 48px -8px rgba(0,109,55,0.2)',
+                  opacity: burst ? 1 : 0.65,
+                  transition: 'opacity 500ms ease-out',
+                }}
+              >
+                <div className="flex items-center gap-2.5">
+                  <div
+                    className="rounded-xl flex items-center justify-center"
+                    style={{ width: 40, height: 40, background: '#6bfe9c', color: '#00290f' }}
+                  >
+                    <Icon name="payments" size={22} />
                   </div>
                   <div>
-                    <span className="font-headline text-title-sm text-on-surface block">{t('landing.previewOnTrack')}</span>
-                    <span className="font-label text-label-sm text-on-surface-variant">{t('landing.previewBehind')}</span>
+                    <div className="font-headline text-title-sm font-bold text-on-surface">
+                      {t('landing.previewDeposit')}
+                    </div>
+                    <div className="font-body text-label-sm text-on-surface-variant">Mariana · R$ 520,00</div>
+                  </div>
+                  <Icon name="check_circle" size={20} className="text-secondary ml-auto" />
+                </div>
+              </div>
+
+              {/* Nudge card (glass) */}
+              <div
+                className="absolute glass-nudge rounded-2xl p-4 flex gap-3 items-start animate-float3"
+                style={{
+                  bottom: 60,
+                  left: 0,
+                  width: 300,
+                  boxShadow: '0 12px 40px -8px rgba(128,79,0,0.18), 0 0 0 1px rgba(189,201,200,0.25)',
+                }}
+              >
+                <div
+                  className="rounded-2xl flex items-center justify-center flex-shrink-0"
+                  style={{ width: 40, height: 40, background: '#ffddb9', color: '#663e00' }}
+                >
+                  <Icon name="lightbulb" size={20} />
+                </div>
+                <div className="flex-1">
+                  <div className="font-headline text-title-sm font-bold text-on-surface">
+                    {t('landing.previewNudgeTitle')}
+                  </div>
+                  <div className="font-body text-on-surface-variant leading-snug mt-0.5" style={{ fontSize: '0.71875rem' }}>
+                    {t('landing.previewNudgeBody')}
                   </div>
                 </div>
+              </div>
+
+              {/* Streak chip */}
+              <div
+                className="absolute inline-flex items-center gap-2 rounded-full px-4 py-2.5 font-headline font-semibold text-body-sm animate-float2"
+                style={{
+                  bottom: 200,
+                  right: 0,
+                  background: '#1a1c1a',
+                  color: '#faf9f5',
+                  boxShadow: '0 12px 32px -6px rgba(0,0,0,0.25)',
+                }}
+              >
+                🔥 38 {t('landing.previewStreak')} · Ana
+              </div>
+
+              {/* Avatar cluster */}
+              <div
+                className="absolute inline-flex items-center gap-2.5 bg-surface-container-lowest rounded-full pl-2 pr-4 py-2 animate-float1"
+                style={{
+                  top: 360,
+                  right: 40,
+                  boxShadow: '0 12px 32px -6px rgba(0,101,101,0.1)',
+                }}
+              >
+                <div className="flex">
+                  {['Mariana', 'Pedro', 'Beatriz'].map((name, i) => (
+                    <div
+                      key={name}
+                      style={{ marginLeft: i ? -8 : 0, boxShadow: '0 0 0 2px #fff', borderRadius: '50%' }}
+                    >
+                      <Avatar name={name} idx={i + 1} size={26} />
+                    </div>
+                  ))}
+                </div>
+                <span className="font-body text-body-sm font-semibold text-on-surface">
+                  4/4 {t('landing.previewOnTime')}
+                </span>
               </div>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Stats — overlap into hero on desktop */}
-      <section className="bg-surface-container-low">
-        <div className="px-4 py-6 md:px-8 lg:px-32 lg:py-0">
-          <div className="lg:-mt-10 lg:relative lg:z-10">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 lg:gap-5">
-              {[
-                { icon: 'trending_up', label: t('landing.stat1Label'), value: t('landing.stat1Value') },
-                { icon: 'shield', label: t('landing.stat2Label'), value: t('landing.stat2Value') },
-                { icon: 'group', label: t('landing.stat3Label'), value: t('landing.stat3Value') },
-              ].map((stat) => (
-                <Card key={stat.icon} variant="surface" className="lg:shadow-nudge">
-                  <StatCard {...stat} />
-                </Card>
-              ))}
+      {/* ─── §01 — Three moments ──────────────────────────────────────── */}
+      <section className="full-bleed bg-surface-container-low">
+        <div className="mx-auto max-w-7xl px-4 py-14 md:px-8 lg:px-10 lg:py-24">
+          <div className="max-w-2xl mb-12">
+            <div className="font-mono text-label-sm uppercase tracking-widest text-primary mb-3.5">
+              {t('landing.momentsEyebrow')}
             </div>
-          </div>
-        </div>
-      </section>
-
-      {/* How It Works — editorial 2-column */}
-      <section className="px-4 py-10 md:px-8 lg:px-32 lg:py-24">
-        <div className="lg:grid lg:grid-cols-5 lg:gap-16 lg:items-start">
-          <div className="lg:col-span-2 mb-8 lg:mb-0 lg:sticky lg:top-24 text-center lg:text-left">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary-fixed/15 mb-4">
-              <Icon name="auto_awesome" size={14} className="text-primary" />
-              <span className="font-label text-label-sm text-primary">3 passos</span>
-            </div>
-            <h2 className="font-headline text-headline-sm lg:text-headline-md text-on-surface mb-3">
-              {t('landing.howItWorks')}
+            <h2 className="font-headline font-bold text-on-surface tracking-tight"
+                style={{ fontSize: 'clamp(28px, 4vw, 44px)', lineHeight: 1.1 }}>
+              {t('landing.momentsTitle')}
             </h2>
-            <p className="font-body text-body-lg text-on-surface-variant max-w-sm mx-auto lg:mx-0 leading-relaxed">
-              {t('landing.howItWorksSubtitle')}
-            </p>
           </div>
-
-          <div className="lg:col-span-3 flex flex-col gap-4">
-            {[
-              { n: 1, title: t('landing.step1Title'), desc: t('landing.step1Desc'), icon: 'edit_note', bg: 'btn-primary-gradient' },
-              { n: 2, title: t('landing.step2Title'), desc: t('landing.step2Desc'), icon: 'group_add', bg: 'bg-secondary' },
-              { n: 3, title: t('landing.step3Title'), desc: t('landing.step3Desc'), icon: 'savings', bg: 'bg-tertiary' },
-            ].map((step) => (
-              <Card key={step.n} variant="surface" hover className="shadow-ghost-border">
-                <div className="flex items-start gap-4">
-                  <div className={`flex-shrink-0 w-11 h-11 rounded-xl ${step.bg} flex items-center justify-center`}>
-                    <span className="font-headline text-label-lg text-on-primary">{step.n}</span>
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-headline text-title-lg text-on-surface mb-1">{step.title}</h4>
-                    <p className="font-body text-body-md text-on-surface-variant leading-relaxed">{step.desc}</p>
-                  </div>
-                  <Icon name={step.icon} size={22} className="text-outline/40 hidden lg:block flex-shrink-0 mt-1" />
-                </div>
-              </Card>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      {/* Features — staggered with colored accents */}
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-surface-container-low" />
-        <div className="absolute -left-40 top-1/2 w-[400px] h-[400px] rounded-full bg-primary-fixed/8 blur-3xl hidden lg:block" />
-
-        <div className="relative px-4 py-10 md:px-8 lg:px-32 lg:py-24">
-          <div className="text-center lg:text-left mb-8 lg:mb-14">
-            <h2 className="font-headline text-headline-sm lg:text-headline-md text-on-surface mb-2">
-              {t('landing.whySafeNudge')}
-            </h2>
-            <p className="font-body text-body-lg text-on-surface-variant max-w-lg mx-auto lg:mx-0">
-              {t('landing.whySafeNudgeSubtitle')}
-            </p>
-          </div>
-
-          <div className="flex flex-col lg:grid lg:grid-cols-2 gap-4 lg:gap-6">
-            <div className="flex flex-col gap-4 lg:gap-6">
-              <FeatureCard
-                icon="lock"
-                title={t('landing.feature1Title')}
-                description={t('landing.feature1Desc')}
-                accent="btn-primary-gradient"
-              />
-              <FeatureCard
-                icon="bolt"
-                title={t('landing.feature3Title')}
-                description={t('landing.feature3Desc')}
-                accent="bg-tertiary"
-              />
-            </div>
-            <div className="flex flex-col gap-4 lg:gap-6 lg:mt-10">
-              <FeatureCard
-                icon="gavel"
-                title={t('landing.feature2Title')}
-                description={t('landing.feature2Desc')}
-                accent="bg-secondary"
-              />
-              <FeatureCard
-                icon="visibility"
-                title={t('landing.feature4Title')}
-                description={t('landing.feature4Desc')}
-                accent="bg-primary"
-              />
-            </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <Moment
+              step={t('landing.moment1Step')}
+              title={t('landing.moment1Title')}
+              body={t('landing.moment1Body')}
+              icon="payments"
+              accentClass="bg-secondary/10 text-secondary"
+            />
+            <Moment
+              step={t('landing.moment2Step')}
+              title={t('landing.moment2Title')}
+              body={t('landing.moment2Body')}
+              icon="notifications_active"
+              accentClass="bg-tertiary/10 text-tertiary"
+            />
+            <Moment
+              step={t('landing.moment3Step')}
+              title={t('landing.moment3Title')}
+              body={t('landing.moment3Body')}
+              icon="celebration"
+              accentClass="bg-primary/10 text-primary"
+            />
           </div>
         </div>
       </section>
 
-      {/* Final CTA — rich background */}
-      <section className="relative overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-surface to-secondary-fixed/10" />
-        <div className="absolute right-0 bottom-0 w-[300px] h-[300px] rounded-full bg-primary-fixed/10 blur-3xl hidden lg:block" />
+      {/* ─── §02 — Why this works (dark slab) ─────────────────────────── */}
+      <section className="full-bleed relative overflow-hidden"
+               style={{ background: '#1a1c1a', color: '#faf9f5' }}>
+        <div className="absolute -top-40 -right-40 w-[500px] h-[500px] rounded-full pointer-events-none"
+             style={{ background: 'rgba(107,254,156,0.08)', filter: 'blur(140px)' }} />
 
-        <div className="relative px-4 py-14 md:px-8 lg:px-32 lg:py-28">
-          <div className="lg:grid lg:grid-cols-5 lg:gap-16 lg:items-center">
-            <div className="hidden lg:flex lg:col-span-2 lg:justify-center">
-              <div className="relative">
-                <div className="w-40 h-40 rounded-[2.5rem] bg-primary/10 -rotate-6 flex items-center justify-center">
-                  <div className="w-28 h-28 rounded-[2rem] bg-primary/20 rotate-3 flex items-center justify-center">
-                    <Icon name="savings" size={48} className="text-primary -rotate-3" />
-                  </div>
-                </div>
-                {/* Floating pill */}
-                <div className="absolute -bottom-3 -right-4 bg-surface-container-lowest rounded-full px-4 py-2 shadow-nudge flex items-center gap-2">
-                  <div className="w-2 h-2 rounded-full bg-secondary animate-pulse" />
-                  <span className="font-label text-label-sm text-on-surface">2 min</span>
-                </div>
+        <div className="relative mx-auto max-w-7xl px-4 py-20 md:px-8 lg:px-10 lg:py-28">
+          <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_1fr] gap-12 lg:gap-20 items-start mb-16 lg:mb-20">
+            <div>
+              <div className="font-mono text-label-sm uppercase tracking-widest mb-4" style={{ color: '#6bfe9c' }}>
+                {t('landing.whyEyebrow')}
               </div>
-            </div>
-            <div className="text-center lg:text-left lg:col-span-3">
-              <div className="w-14 h-14 rounded-2xl btn-primary-gradient flex items-center justify-center mx-auto lg:mx-0 mb-5 lg:hidden">
-                <Icon name="savings" size={28} className="text-on-primary" />
-              </div>
-              <h2 className="font-headline text-headline-md lg:text-headline-lg text-on-surface mb-3">
-                {t('landing.readyToStart')}
+              <h2 className="font-headline font-extrabold tracking-tight"
+                  style={{ fontSize: 'clamp(36px, 5.2vw, 72px)', lineHeight: 1.0, letterSpacing: '-0.03em', color: '#faf9f5' }}>
+                {t('landing.whyTitleLead')}{' '}
+                <span style={{ fontStyle: 'italic', fontWeight: 400, color: '#bdc9c8' }}>
+                  {t('landing.whyTitleEm')}
+                </span>
+                <br />
+                {t('landing.whyTitleTail')}
               </h2>
-              <p className="font-body text-body-lg text-on-surface-variant mb-8 max-w-md mx-auto lg:mx-0 leading-relaxed">
-                {t('landing.readyToStartDesc')}
-              </p>
-              <div className="flex justify-center lg:justify-start">
-                <Button variant="primary" icon="arrow_forward" iconPosition="right" to="/criar" className="px-6 py-3 shadow-nudge">
-                  {t('landing.cta')}
-                </Button>
+            </div>
+            <p className="font-body leading-relaxed pt-2"
+               style={{ fontSize: 17, color: '#bdc9c8' }}>
+              {t('landing.whyIntro')}
+            </p>
+          </div>
+
+          {/* Stats grid */}
+          <div className="grid grid-cols-1 md:grid-cols-3"
+               style={{ borderTop: '1px solid rgba(189,201,200,0.18)' }}>
+            <Stat big={t('landing.stat1Big')} label={t('landing.stat1Label')} cite={t('landing.stat1Cite')} bigColorClass="text-[#6bfe9c]" />
+            <Stat big={t('landing.stat2Big')} label={t('landing.stat2Label')} cite={t('landing.stat2Cite')} bigColorClass="text-[#93f2f2]" divider />
+            <Stat big={t('landing.stat3Big')} label={t('landing.stat3Label')} cite={t('landing.stat3Cite')} bigColorClass="text-[#ffddb9]" divider />
+            <Stat big={t('landing.stat4Big')} label={t('landing.stat4Label')} cite={t('landing.stat4Cite')} bigColorClass="text-[#6bfe9c]" borderTop />
+            <Stat big={t('landing.stat5Big')} label={t('landing.stat5Label')} cite={t('landing.stat5Cite')} bigColorClass="text-[#93f2f2]" borderTop divider />
+            <Stat big={t('landing.stat6Big')} label={t('landing.stat6Label')} cite={t('landing.stat6Cite')} bigColorClass="text-[#ffddb9]" borderTop divider />
+          </div>
+
+          {/* Quote band */}
+          <div className="mt-20 pt-14 grid grid-cols-[auto_1fr] gap-8 lg:gap-12 items-start"
+               style={{ borderTop: '1px solid rgba(189,201,200,0.18)' }}>
+            <div className="font-headline font-extrabold select-none"
+                 style={{ fontSize: 'clamp(96px, 14vw, 180px)', color: '#6bfe9c', lineHeight: 0.7, letterSpacing: '-0.08em' }}
+                 aria-hidden="true">
+              &ldquo;
+            </div>
+            <div>
+              <blockquote className="font-headline font-medium m-0"
+                          style={{ fontSize: 'clamp(24px, 3vw, 44px)', lineHeight: 1.15, letterSpacing: '-0.02em', color: '#faf9f5' }}>
+                {t('landing.quoteText')}{' '}
+                <em style={{ color: '#6bfe9c', fontStyle: 'normal' }}>{t('landing.quoteEm')}</em>{' '}
+                {t('landing.quoteTail')}
+              </blockquote>
+              <div className="font-mono text-label-sm uppercase tracking-widest mt-5"
+                   style={{ color: '#bdc9c8' }}>
+                {t('landing.quoteCite')}
               </div>
+              <p className="font-body leading-relaxed mt-7 max-w-[620px]"
+                 style={{ fontSize: 15.5, color: '#bdc9c8' }}>
+                {t('landing.quoteExplainer')}
+              </p>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="bg-surface-container-low px-4 py-6 md:px-8 lg:px-32">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-          <span className="font-headline text-title-md text-primary font-bold">
-            SafeNudge
-          </span>
-          <p className="font-body text-body-sm text-on-surface-variant">
-            {t('landing.footer')}
-          </p>
+      {/* ─── Final CTA ────────────────────────────────────────────────── */}
+      <section className="full-bleed bg-surface">
+        <div className="mx-auto max-w-3xl px-4 py-20 md:px-8 lg:px-10 lg:py-28 text-center">
+          <h2 className="font-headline font-extrabold text-on-surface tracking-tight mb-7"
+              style={{ fontSize: 'clamp(36px, 6vw, 80px)', lineHeight: 1.02, letterSpacing: '-0.03em' }}>
+            {t('landing.ctaHeadlineA')}
+            <br />
+            <span className="text-primary">{t('landing.ctaHeadlineB')}</span>
+          </h2>
+          <div className="inline-flex flex-col sm:flex-row gap-3 justify-center">
+            <Button variant="primary" icon="group_add" to="/criar" className="px-7 py-4 text-label-lg shadow-nudge">
+              {t('landing.cta')}
+            </Button>
+            <Button variant="tertiary" icon="login" to="/grupos" className="px-7 py-4 text-label-lg shadow-ghost-border !text-on-surface">
+              {t('landing.joinCta')}
+            </Button>
+          </div>
+          <div className="mt-7 inline-flex items-center gap-2 font-body text-body-sm text-on-surface-variant">
+            <Icon name="shield" size={16} className="text-primary" />
+            {t('landing.trustLine')}
+          </div>
         </div>
-      </footer>
+      </section>
     </PageLayout>
   )
 }

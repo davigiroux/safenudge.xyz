@@ -1,5 +1,6 @@
 export { ErrorBoundary } from './ErrorBoundary'
 export { Icon } from './Icon'
+export { Logo } from './Logo'
 export { Button } from './Button'
 export { Card, StatRow } from './Card'
 export { TextInput, RadioGroup } from './Input'

@@ -107,6 +107,26 @@ export default {
       },
       backgroundImage: {
         'cta-gradient': 'linear-gradient(135deg, #006565, #008080)',
+        'hero-text-gradient': 'linear-gradient(135deg, #006565, #4ae183)',
+      },
+      keyframes: {
+        float1: {
+          '0%, 100%': { transform: 'translateY(0) rotate(-2deg)' },
+          '50%': { transform: 'translateY(-10px) rotate(-2deg)' },
+        },
+        float2: {
+          '0%, 100%': { transform: 'translateY(0) rotate(3deg)' },
+          '50%': { transform: 'translateY(-14px) rotate(3deg)' },
+        },
+        float3: {
+          '0%, 100%': { transform: 'translateY(0) rotate(-1deg)' },
+          '50%': { transform: 'translateY(-12px) rotate(-1deg)' },
+        },
+      },
+      animation: {
+        float1: 'float1 6s ease-in-out infinite',
+        float2: 'float2 7s ease-in-out infinite',
+        float3: 'float3 8s ease-in-out infinite',
       },
     },
   },
