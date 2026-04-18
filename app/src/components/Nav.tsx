@@ -95,6 +95,7 @@ type NavItem = {
 const navItems: NavItem[] = [
   { icon: 'home', labelKey: 'nav.home', to: '/' },
   { icon: 'group', labelKey: 'nav.myGroups', to: '/grupos' },
+  { icon: 'lightbulb', labelKey: 'nav.howItWorks', to: '/como-funciona' },
   { icon: 'person', labelKey: 'nav.profile', to: '/' },
 ]
 
@@ -106,7 +107,12 @@ export function BottomNav() {
     <nav className="fixed bottom-0 left-0 right-0 bg-surface-container-low px-4 py-2 md:hidden z-50">
       <div className="flex items-center justify-around">
         {navItems.map((item) => {
-          const isActive = location.pathname === item.to && item.icon === 'home'
+          const isActive =
+            item.icon === 'person'
+              ? false
+              : item.to === '/'
+                ? location.pathname === '/'
+                : location.pathname.startsWith(item.to)
           return (
             <Link
               key={item.icon}
