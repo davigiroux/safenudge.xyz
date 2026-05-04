@@ -1128,16 +1128,14 @@ describe("safenudge", () => {
       const m1BalAfter = await getTokenBalance(m1Ata);
       const m2BalAfter = await getTokenBalance(m2Ata);
 
-      // Both missed 1 period each: penalty = 1M each
-      // No compliant members → bonus_per_compliant = 0
-      // m1 base = 5M - 1M = 4M (paid as calculated, not last)
+      // No compliant members → there is no one to redistribute penalties to.
+      // The protocol refunds each member their full deposited amount, exactly
+      // like emergency_cancel. This avoids the prior order-dependent windfall
+      // where whoever was passed last received the entire penalty pool.
       const m1Received = Number(m1BalAfter - m1BalBefore);
-      assert.equal(m1Received, 4_000_000);
-
-      // m2 is last → gets vault remainder = 10M - 4M = 6M
-      // (includes 2M undistributed penalties since no compliant members)
       const m2Received = Number(m2BalAfter - m2BalBefore);
-      assert.equal(m2Received, 6_000_000);
+      assert.equal(m1Received, depositAmount);
+      assert.equal(m2Received, depositAmount);
 
       // Conservation: total == vault (10M)
       assert.equal(m1Received + m2Received, 10_000_000);
@@ -1321,6 +1319,209 @@ describe("safenudge", () => {
         assert.fail("should have failed");
       } catch (e: any) {
         assert.include(e.message, "CycleNotEnded");
+      }
+    });
+
+    it("fails when destination ATA does not belong to the member (vault drain attempt)", async () => {
+      const code = "dist-bad-ata";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(5_000_000), 0, 1, 5, 0, new anchor.BN(0))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Attacker controls a wallet with their own USDC ATA.
+      const { tokenAccount: attackerAta } = await createFundedMember(0);
+
+      // Advance past cycle end (1 week + slack)
+      const clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Substitute the attacker's ATA for m1's payout destination.
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: attackerAta, isWritable: true, isSigner: false },
+            { pubkey: m2Pda, isWritable: false, isSigner: false },
+            { pubkey: m2Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidTokenAccountOwner");
+      }
+    });
+
+    it("fails when the same member_record is passed more than once (lockout attempt)", async () => {
+      const code = "dist-dup-rec";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(5_000_000), 0, 1, 5, 0, new anchor.BN(0))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      const clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Pass m1's record twice; m2 is omitted entirely.
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "DuplicateMemberRecord");
+      }
+    });
+
+    it("fails when a member_record account is not program-owned (forged record)", async () => {
+      const code = "dist-bad-own";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(5_000_000), 0, 1, 5, 0, new anchor.BN(0))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      const clk = await context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // Substitute a system-owned wallet (the payer) for m2's record. The
+      // account is owned by the system program, not by safenudge.
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+            { pubkey: payer.publicKey, isWritable: false, isSigner: false },
+            { pubkey: m2Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidAccountOwner");
       }
     });
   });
@@ -1585,6 +1786,60 @@ describe("safenudge", () => {
           errStr.includes("0xbbd"),
           `Expected error on double cancel, got: ${errStr.substring(0, 200)}`
         );
+      }
+    });
+
+    it("fails when destination ATA does not belong to the member (creator drain attempt)", async () => {
+      const code = "cancel-bad-ata";
+      const depositAmount = 10_000_000;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new anchor.BN(depositAmount), 0, 4, 5, 0, new anchor.BN(0))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      // Creator's own ATA — would receive m1's refund if the program failed
+      // to validate destination ownership.
+      const creatorAta = getAssociatedTokenAddressSync(usdcMint, payer.publicKey);
+      const creatorAtaTx = new Transaction().add(
+        createAssociatedTokenAccountInstruction(
+          payer.publicKey, creatorAta, payer.publicKey, usdcMint
+        )
+      );
+      await provider.sendAndConfirm(creatorAtaTx, [payer]);
+
+      try {
+        await program.methods.emergencyCancel()
+          .accounts({
+            creator: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: creatorAta, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidTokenAccountOwner");
       }
     });
   });

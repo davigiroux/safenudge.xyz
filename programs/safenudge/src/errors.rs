@@ -34,4 +34,12 @@ pub enum SafeNudgeError {
     InvalidMint,
     #[msg("Member count mismatch in distribution")]
     MemberCountMismatch,
+    #[msg("Account is not owned by this program")]
+    InvalidAccountOwner,
+    #[msg("Member record does not match the canonical PDA for its member")]
+    InvalidMemberRecord,
+    #[msg("Destination token account does not belong to the expected member")]
+    InvalidTokenAccountOwner,
+    #[msg("The same member record was passed more than once")]
+    DuplicateMemberRecord,
 }

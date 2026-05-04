@@ -37,7 +37,7 @@ pub struct EmergencyCancel<'info> {
 }
 
 impl<'info> EmergencyCancel<'info> {
-    pub fn handler(ctx: Context<'_, '_, '_, 'info, EmergencyCancel<'info>>) -> Result<()> {
+    pub fn handler(ctx: Context<'_, '_, 'info, 'info, EmergencyCancel<'info>>) -> Result<()> {
         let group = &ctx.accounts.group_config;
 
         // ── Checks ──────────────────────────────────────────
@@ -58,10 +58,24 @@ impl<'info> EmergencyCancel<'info> {
         // ── Pass 1: Read each member's total_deposited ──────
 
         let mut refund_amounts: Vec<u64> = Vec::with_capacity(member_count);
+        let mut seen_records: Vec<Pubkey> = Vec::with_capacity(member_count);
+        let mint_key = ctx.accounts.mint.key();
 
         for i in 0..member_count {
             let record_idx = i.checked_mul(2).ok_or(SafeNudgeError::ArithmeticOverflow)?;
+            let token_idx = record_idx
+                .checked_add(1)
+                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
             let record_info = &ctx.remaining_accounts[record_idx];
+            let token_info = &ctx.remaining_accounts[token_idx];
+
+            // The member_record must be owned by this program; otherwise an
+            // attacker could craft a fake account with arbitrary contents.
+            require_keys_eq!(
+                *record_info.owner,
+                crate::ID,
+                SafeNudgeError::InvalidAccountOwner
+            );
 
             // Deserialize member record
             let data = record_info.try_borrow_data()?;
@@ -74,6 +88,36 @@ impl<'info> EmergencyCancel<'info> {
                 member_record.group == group_key,
                 SafeNudgeError::MemberCountMismatch
             );
+
+            // Validate the account key matches the canonical member PDA so
+            // a caller cannot pass a forged record with arbitrary contents.
+            let (expected_record, _) = Pubkey::find_program_address(
+                &[b"member", group_key.as_ref(), member_record.member.as_ref()],
+                &crate::ID,
+            );
+            require_keys_eq!(
+                *record_info.key,
+                expected_record,
+                SafeNudgeError::InvalidMemberRecord
+            );
+
+            // Reject duplicate records.
+            require!(
+                !seen_records.contains(record_info.key),
+                SafeNudgeError::DuplicateMemberRecord
+            );
+            seen_records.push(*record_info.key);
+
+            // Destination token account must belong to the member and use
+            // the configured mint.
+            let token_account =
+                InterfaceAccount::<TokenAccount>::try_from(token_info)?;
+            require_keys_eq!(
+                token_account.owner,
+                member_record.member,
+                SafeNudgeError::InvalidTokenAccountOwner
+            );
+            require_keys_eq!(token_account.mint, mint_key, SafeNudgeError::InvalidMint);
 
             refund_amounts.push(member_record.total_deposited);
         }

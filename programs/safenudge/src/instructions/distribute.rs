@@ -36,7 +36,7 @@ pub struct Distribute<'info> {
 }
 
 impl<'info> Distribute<'info> {
-    pub fn handler(ctx: Context<'_, '_, '_, 'info, Distribute<'info>>) -> Result<()> {
+    pub fn handler(ctx: Context<'_, '_, 'info, 'info, Distribute<'info>>) -> Result<()> {
         let clock = Clock::get()?;
         let group = &ctx.accounts.group_config;
 
@@ -85,15 +85,30 @@ impl<'info> Distribute<'info> {
         struct MemberPayout {
             payout: u64,
             is_compliant: bool,
+            total_deposited: u64,
         }
 
         let mut member_payouts: Vec<MemberPayout> = Vec::with_capacity(member_count);
         let mut total_penalties: u64 = 0;
         let mut compliant_count: u64 = 0;
+        let mut seen_records: Vec<Pubkey> = Vec::with_capacity(member_count);
+        let mint_key = ctx.accounts.mint.key();
 
         for i in 0..member_count {
             let record_idx = i.checked_mul(2).ok_or(SafeNudgeError::ArithmeticOverflow)?;
+            let token_idx = record_idx
+                .checked_add(1)
+                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
             let record_info = &ctx.remaining_accounts[record_idx];
+            let token_info = &ctx.remaining_accounts[token_idx];
+
+            // The member_record must be owned by this program; otherwise an
+            // attacker could craft a fake account with arbitrary contents.
+            require_keys_eq!(
+                *record_info.owner,
+                crate::ID,
+                SafeNudgeError::InvalidAccountOwner
+            );
 
             // Deserialize member record
             let data = record_info.try_borrow_data()?;
@@ -106,6 +121,39 @@ impl<'info> Distribute<'info> {
                 member_record.group == group_key,
                 SafeNudgeError::MemberCountMismatch
             );
+
+            // Validate the account key matches the canonical member PDA so
+            // a caller cannot pass a forged record with arbitrary contents.
+            let (expected_record, _) = Pubkey::find_program_address(
+                &[b"member", group_key.as_ref(), member_record.member.as_ref()],
+                &crate::ID,
+            );
+            require_keys_eq!(
+                *record_info.key,
+                expected_record,
+                SafeNudgeError::InvalidMemberRecord
+            );
+
+            // Reject duplicate records — without this, a caller could pass
+            // the same member_record N times with their own ATA each time.
+            require!(
+                !seen_records.contains(record_info.key),
+                SafeNudgeError::DuplicateMemberRecord
+            );
+            seen_records.push(*record_info.key);
+
+            // Destination token account must belong to the member and use
+            // the configured mint. transfer_checked validates the mint at
+            // CPI time, but only an explicit owner check prevents payouts
+            // being routed to an arbitrary ATA.
+            let token_account =
+                InterfaceAccount::<TokenAccount>::try_from(token_info)?;
+            require_keys_eq!(
+                token_account.owner,
+                member_record.member,
+                SafeNudgeError::InvalidTokenAccountOwner
+            );
+            require_keys_eq!(token_account.mint, mint_key, SafeNudgeError::InvalidMint);
 
             let deposits_made = member_record.deposits_made as u64;
             let missed = (total_periods as u64)
@@ -160,10 +208,14 @@ impl<'info> Distribute<'info> {
             member_payouts.push(MemberPayout {
                 payout: base_payout,
                 is_compliant,
+                total_deposited: member_record.total_deposited,
             });
         }
 
-        // Calculate bonus per compliant member
+        // When no one is compliant there is no one to redistribute penalties
+        // to. Refund each member their full deposit (same semantics as
+        // emergency_cancel) so the outcome doesn't depend on the order the
+        // caller placed members in remaining_accounts.
         let bonus_per_compliant = if compliant_count > 0 {
             total_penalties
                 .checked_div(compliant_count)
@@ -172,10 +224,11 @@ impl<'info> Distribute<'info> {
             0
         };
 
-        // Calculate final payouts with bonus
         let mut final_payouts: Vec<u64> = Vec::with_capacity(member_count);
         for mp in &member_payouts {
-            let final_payout = if mp.is_compliant {
+            let final_payout = if compliant_count == 0 {
+                mp.total_deposited
+            } else if mp.is_compliant {
                 mp.payout
                     .checked_add(bonus_per_compliant)
                     .ok_or(SafeNudgeError::ArithmeticOverflow)?
