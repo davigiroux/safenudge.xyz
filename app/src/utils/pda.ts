@@ -1,8 +1,5 @@
 import { PublicKey } from '@solana/web3.js'
-
-const PROGRAM_ID = new PublicKey(
-  import.meta.env.VITE_PROGRAM_ID || '88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB'
-)
+import { PROGRAM_ID } from './constants'
 
 export function getGroupConfigPDA(groupCode: string): [PublicKey, number] {
   return PublicKey.findProgramAddressSync(
@@ -28,4 +25,3 @@ export function getVaultPDA(groupConfigKey: PublicKey): [PublicKey, number] {
   )
 }
 
-export { PROGRAM_ID }

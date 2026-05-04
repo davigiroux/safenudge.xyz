@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { PublicKey, SystemProgram } from '@solana/web3.js'
+import { SystemProgram } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, TransactionStatus } from '../components'
@@ -12,6 +12,7 @@ import { useGroupConfig } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
 import { formatTokenAmount } from '../utils/formatToken'
+import { USDC_MINT } from '../utils/constants'
 
 const FREQUENCY_LABELS: Record<string, string> = {
   weekly: 'createGroup.weekly',
@@ -31,7 +32,7 @@ export default function JoinGroup() {
   const { data: group, loading: groupLoading, error: groupError } = useGroupConfig(isValidCode ? code : undefined)
   const { isMember } = useMemberRecord(isValidCode ? code : undefined)
 
-  const usdcMint = new PublicKey(import.meta.env.VITE_USDC_MINT || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+  const usdcMint = USDC_MINT
 
   // Redirect if already a member
   useEffect(() => {

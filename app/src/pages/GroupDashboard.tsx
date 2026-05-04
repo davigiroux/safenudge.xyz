@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { PublicKey } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, NudgeToast, TransactionStatus } from '../components'
@@ -13,6 +12,7 @@ import { useMemberRecord } from '../hooks/useMemberRecord'
 import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
 import { formatTokenAmount } from '../utils/formatToken'
+import { USDC_MINT } from '../utils/constants'
 
 type MemberStatus = 'on_track' | 'behind' | 'missed'
 
@@ -151,7 +151,7 @@ export default function GroupDashboard() {
     refetchMembers()
   }
 
-  const usdcMint = new PublicKey(import.meta.env.VITE_USDC_MINT || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+  const usdcMint = USDC_MINT
 
   // Calculate current period from real data
   const periodDuration = group ? (PERIOD_SECONDS[group.frequency] || 7 * 86400) : 7 * 86400
