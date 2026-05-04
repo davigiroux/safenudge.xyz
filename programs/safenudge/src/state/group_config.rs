@@ -28,8 +28,6 @@ pub struct GroupConfig {
     pub status: u8,
     /// Unix timestamp when cycle started
     pub cycle_start: i64,
-    /// Current period number (0-indexed)
-    pub current_period: u8,
     /// PDA bump for group_config
     pub bump: u8,
 }

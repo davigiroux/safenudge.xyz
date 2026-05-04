@@ -62,7 +62,6 @@ impl<'info> JoinGroup<'info> {
         member_record.deposits_made = 1;
         member_record.periods_deposited = [false; 52];
         member_record.periods_deposited[0] = true;
-        member_record.has_claimed = false;
         member_record.bump = bumps.member_record;
 
         self.group_config.current_members = self
