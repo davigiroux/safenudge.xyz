@@ -10,32 +10,33 @@ import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { useGroupConfig } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
+import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
 import { formatTokenAmount } from '../utils/formatToken'
 
 type MemberStatus = 'on_track' | 'behind' | 'missed'
 
-type MockMember = {
-  name: string
-  avatar: string
-  streak: number
-  totalDeposited: number
-  status: MemberStatus
-  isYou?: boolean
-}
-
-// TODO: fetch member records from on-chain data instead of mock
-const MOCK_MEMBERS: MockMember[] = [
-  { name: 'Ricardo S.', avatar: '🧑‍💼', streak: 3, totalDeposited: 1500, status: 'on_track', isYou: true },
-  { name: 'Mariana L.', avatar: '👩‍🎨', streak: 3, totalDeposited: 1500, status: 'on_track' },
-  { name: 'Bruno C.', avatar: '👨‍💻', streak: 1, totalDeposited: 500, status: 'behind' },
-  { name: 'Ana P.', avatar: '👩‍🔬', streak: 3, totalDeposited: 1500, status: 'on_track' },
-]
-
 const statusConfig: Record<MemberStatus, { icon: string; color: string }> = {
   on_track: { icon: 'check_circle', color: 'text-secondary' },
   behind: { icon: 'warning', color: 'text-tertiary' },
   missed: { icon: 'cancel', color: 'text-error' },
+}
+
+/** A short, deterministic display label for a wallet pubkey. */
+function shortPubkey(pubkey: string): string {
+  return `${pubkey.slice(0, 4)}…${pubkey.slice(-4)}`
+}
+
+/** Compute member status given how many of the elapsed periods they covered. */
+function deriveStatus(member: GroupMemberData, currentPeriod: number, groupActive: boolean): MemberStatus {
+  if (!groupActive) return 'on_track'
+  // expectedDepositsByNow includes period 0 (the join deposit) plus any
+  // additional periods that have started.
+  const expected = currentPeriod + 1
+  const missed = Math.max(0, expected - member.depositsMade)
+  if (missed === 0) return 'on_track'
+  if (missed <= 2) return 'behind'
+  return 'missed'
 }
 
 const PERIOD_SECONDS: Record<string, number> = {
@@ -51,33 +52,40 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: 'groupDashboard.statusCancelled',
 }
 
-function MemberCard({ member }: { member: MockMember }) {
+type MemberCardProps = {
+  member: GroupMemberData
+  status: MemberStatus
+  isYou: boolean
+}
+
+function MemberCard({ member, status, isYou }: MemberCardProps) {
   const { t } = useTranslation()
-  const config = statusConfig[member.status]
+  const config = statusConfig[status]
+  const initial = member.member.slice(0, 1).toUpperCase()
 
   return (
     <div className="bg-surface-container-lowest rounded-xl p-4 flex items-center gap-4">
-      <div className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center text-lg flex-shrink-0">
-        {member.avatar}
+      <div className="w-10 h-10 rounded-full bg-surface-container-highest flex items-center justify-center font-headline text-title-sm text-on-surface flex-shrink-0">
+        {initial}
       </div>
 
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2">
           <span className="font-body text-title-sm text-on-surface truncate">
-            {member.name}
+            {shortPubkey(member.member)}
           </span>
-          {member.isYou && (
+          {isYou && (
             <span className="font-label text-label-sm text-primary bg-primary-fixed/20 px-2 py-0.5 rounded-full">
-              You
+              {t('groupDashboard.you')}
             </span>
           )}
         </div>
         <div className="flex items-center gap-3 mt-1">
           <span className="font-label text-label-sm text-on-surface-variant">
-            {member.streak} {t('groupDashboard.streak')} 🔥
+            {member.depositsMade} {t('groupDashboard.streak')}
           </span>
           <span className="font-label text-label-sm text-on-surface-variant">
-            {member.totalDeposited} USDC
+            {formatTokenAmount(member.totalDeposited)} USDC
           </span>
         </div>
       </div>
@@ -122,8 +130,26 @@ export default function GroupDashboard() {
   const [showNudge, setShowNudge] = useState(true)
 
   const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
-  const { data: group, loading: groupLoading, error: groupError } = useGroupConfig(isValidCode ? code : undefined)
-  const { data: memberRecord, isMember } = useMemberRecord(isValidCode ? code : undefined)
+  const {
+    data: group,
+    loading: groupLoading,
+    error: groupError,
+    refetch: refetchGroup,
+  } = useGroupConfig(isValidCode ? code : undefined)
+  const {
+    data: memberRecord,
+    isMember,
+    refetch: refetchMember,
+  } = useMemberRecord(isValidCode ? code : undefined)
+  const { data: members, refetch: refetchMembers } = useGroupMembers(
+    isValidCode ? code : undefined,
+  )
+
+  const refetchAll = () => {
+    refetchGroup()
+    refetchMember()
+    refetchMembers()
+  }
 
   const usdcMint = new PublicKey(import.meta.env.VITE_USDC_MINT || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
 
@@ -155,7 +181,7 @@ export default function GroupDashboard() {
     const [vaultPda] = getVaultPDA(groupPda)
     const memberAta = getAssociatedTokenAddressSync(usdcMint, publicKey)
 
-    await execute(async () => {
+    const sig = await execute(async () => {
       return await program.methods
         .deposit()
         .accountsPartial({
@@ -169,13 +195,14 @@ export default function GroupDashboard() {
         })
         .rpc()
     })
+    if (sig) refetchAll()
   }
 
   async function handleStartCycle() {
     if (!program || !publicKey || !code) return
     const [groupPda] = getGroupConfigPDA(code)
 
-    await execute(async () => {
+    const sig = await execute(async () => {
       return await program.methods
         .startCycle()
         .accountsPartial({
@@ -184,6 +211,7 @@ export default function GroupDashboard() {
         })
         .rpc()
     })
+    if (sig) refetchAll()
   }
 
   if (!isValidCode) {
@@ -324,35 +352,47 @@ export default function GroupDashboard() {
                 {t('groupDashboard.membersList')}
               </h2>
               <div className="flex flex-col gap-3">
-                {MOCK_MEMBERS.map((member) => (
-                  <MemberCard key={member.name} member={member} />
-                ))}
+                {members.map((m) => {
+                  const status = deriveStatus(m, currentPeriod, group.status === 'active')
+                  const isYou = !!publicKey && publicKey.toString() === m.member
+                  return (
+                    <MemberCard key={m.member} member={m} status={status} isYou={isYou} />
+                  )
+                })}
               </div>
             </div>
 
-            {/* Send Nudge */}
-            {MOCK_MEMBERS.some((m) => m.status === 'behind') && (
-              <Card variant="surface" className="mb-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-xl bg-tertiary-fixed flex items-center justify-center">
-                      <Icon name="notifications_active" size={18} className="text-on-tertiary-fixed-variant" />
+            {/* Send Nudge — first behind/missed member who isn't you */}
+            {(() => {
+              const atRisk = members.find((m) => {
+                if (publicKey && publicKey.toString() === m.member) return false
+                const s = deriveStatus(m, currentPeriod, group.status === 'active')
+                return s === 'behind' || s === 'missed'
+              })
+              if (!atRisk) return null
+              return (
+                <Card variant="surface" className="mb-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-xl bg-tertiary-fixed flex items-center justify-center">
+                        <Icon name="notifications_active" size={18} className="text-on-tertiary-fixed-variant" />
+                      </div>
+                      <div>
+                        <span className="font-body text-body-md text-on-surface">
+                          {shortPubkey(atRisk.member)}
+                        </span>
+                        <span className="font-body text-body-sm text-on-surface-variant block">
+                          {atRisk.depositsMade} {t('groupDashboard.streak')}
+                        </span>
+                      </div>
                     </div>
-                    <div>
-                      <span className="font-body text-body-md text-on-surface">
-                        Bruno C.
-                      </span>
-                      <span className="font-body text-body-sm text-on-surface-variant block">
-                        2 {t('groupDashboard.streak')}
-                      </span>
-                    </div>
+                    <Button variant="tertiary" icon="arrow_forward" iconPosition="right">
+                      {t('groupDashboard.sendNudge')}
+                    </Button>
                   </div>
-                  <Button variant="tertiary" icon="arrow_forward" iconPosition="right">
-                    {t('groupDashboard.sendNudge')}
-                  </Button>
-                </div>
-              </Card>
-            )}
+                </Card>
+              )
+            })()}
 
             {/* Plan Details — shown inline on mobile, moves to sidebar on desktop */}
             <div className="lg:hidden">

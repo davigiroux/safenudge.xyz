@@ -158,7 +158,8 @@
     "quickStats": "Estatísticas",
     "compliance": "Conformidade",
     "membersCount": "Membros",
-    "securityDetail": "Cofre controlado apenas por PDA. Sem chaves de admin."
+    "securityDetail": "Cofre controlado apenas por PDA. Sem chaves de admin.",
+    "you": "Você"
   },
   "myGroups": {
     "title": "Meus Grupos",
