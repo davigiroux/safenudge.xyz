@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { PageLayout } from '../components/PageLayout'
 import { Button, Card, Icon } from '../components'
@@ -40,6 +40,7 @@ const STATUS_COLORS: Record<string, string> = {
 export default function MyGroups() {
   const { t } = useTranslation()
   const { publicKey } = useWallet()
+  const navigate = useNavigate()
   const program = useAnchorProgram()
   const [showJoinInput, setShowJoinInput] = useState(false)
   const [joinCode, setJoinCode] = useState('')
@@ -95,10 +96,11 @@ export default function MyGroups() {
   }, [program, publicKey])
 
   const handleJoin = () => {
-    const sanitized = joinCode.trim().toLowerCase().replace(/[^a-z0-9-]/g, '')
-    if (sanitized && /^[a-zA-Z0-9-]{1,32}$/.test(sanitized)) {
-      window.location.href = `/entrar/${sanitized}`
-    }
+    // Strip out anything outside [a-z0-9-]; the resulting string is, by
+    // construction, already valid for the route param so no second
+    // regex check is needed.
+    const sanitized = joinCode.trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32)
+    if (sanitized) navigate(`/entrar/${sanitized}`)
   }
 
   const showEmpty = !loading && groups.length === 0

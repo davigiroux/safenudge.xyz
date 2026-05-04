@@ -121,6 +121,8 @@
     "members": "{{current}} de {{max}} membros",
     "joinAndDeposit": "Entrar e Depositar",
     "pixOption": "Não tem saldo? Adicione via Pix",
+    "pixComingSoon": "On-ramp via Pix em breve",
+    "pixComingSoonTag": "em breve",
     "nudgeStat": "Grupos que mantêm consistência nas primeiras 4 semanas têm 85% mais chance de atingir a meta",
     "alreadyMember": "Você já é membro deste grupo",
     "groupNotFound": "Grupo não encontrado",
