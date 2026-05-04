@@ -110,8 +110,7 @@
     "months": "{{count}} Meses",
     "submit": "Criar Grupo Agora",
     "disclaimer": "Ao criar, você concorda com os termos do smart contract auditado",
-    "impact": "Impacto",
-    "estimatedYield": "+ R$ {{value}} estimado"
+    "impact": "Impacto"
   },
   "joinGroup": {
     "title": "Convite Exclusivo",

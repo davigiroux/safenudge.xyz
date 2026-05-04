@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
-import { SystemProgram, PublicKey } from '@solana/web3.js'
+import { SystemProgram } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID } from '@solana/spl-token'
 import { BN } from '@coral-xyz/anchor'
 import { PageLayout } from '../components/PageLayout'
@@ -10,6 +10,7 @@ import { Button, Card, StatRow, Icon, TextInput, RadioGroup, TransactionStatus }
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { getGroupConfigPDA, getVaultPDA } from '../utils/pda'
+import { USDC_MINT } from '../utils/constants'
 
 type Frequency = '0' | '1' | '2'
 
@@ -35,7 +36,7 @@ export default function CreateGroup() {
   const program = useAnchorProgram()
   const { txState, errorDetail, execute, reset } = useTransaction()
 
-  const usdcMint = new PublicKey(import.meta.env.VITE_USDC_MINT || '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU')
+  const usdcMint = USDC_MINT
 
   const [groupCode, setGroupCode] = useState('')
   const [depositAmount, setDepositAmount] = useState('')
@@ -275,11 +276,8 @@ export default function CreateGroup() {
                     {t('createGroup.impact')}
                   </span>
                 </div>
-                <p className="font-body text-body-md text-on-surface-variant mb-2">
+                <p className="font-body text-body-md text-on-surface-variant">
                   {t('createGroup.estimatedBrl', { value: (individualGoal * 5.2).toFixed(2) })}
-                </p>
-                <p className="font-body text-body-sm text-secondary">
-                  {t('createGroup.estimatedYield', { value: (individualGoal * 5.2 * 0.12 * (estimateMonths(frequency, totalPeriods) / 12)).toFixed(2) })}
                 </p>
               </Card>
             )}
