@@ -11,7 +11,6 @@ export type MemberRecordData = {
   totalDeposited: number
   depositsMade: number
   periodsDeposited: boolean[]
-  hasClaimed: boolean
   pda: string
 }
 
@@ -22,7 +21,6 @@ type MemberRecordAccount = {
   totalDeposited: BN
   depositsMade: number
   periodsDeposited: boolean[]
-  hasClaimed: boolean
   bump: number
 }
 
@@ -58,7 +56,6 @@ export function useMemberRecord(groupCode: string | undefined) {
             totalDeposited: account.totalDeposited.toNumber(),
             depositsMade: account.depositsMade,
             periodsDeposited: account.periodsDeposited,
-            hasClaimed: account.hasClaimed,
             pda: memberPda.toString(),
           })
         }

@@ -721,13 +721,6 @@ export type Safenudge = {
             "type": "i64"
           },
           {
-            "name": "currentPeriod",
-            "docs": [
-              "Current period number (0-indexed)"
-            ],
-            "type": "u8"
-          },
-          {
             "name": "bump",
             "docs": [
               "PDA bump for group_config"
@@ -781,13 +774,6 @@ export type Safenudge = {
                 52
               ]
             }
-          },
-          {
-            "name": "hasClaimed",
-            "docs": [
-              "Whether member has claimed distribution payout"
-            ],
-            "type": "bool"
           },
           {
             "name": "bump",

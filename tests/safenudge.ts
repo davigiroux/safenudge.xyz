@@ -811,6 +811,7 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
+          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -908,6 +909,7 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
+          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -1017,6 +1019,7 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
+          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -1112,6 +1115,7 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
+          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -1227,6 +1231,7 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
+          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -1304,6 +1309,7 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
+            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -1374,6 +1380,7 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
+            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -1440,6 +1447,7 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
+            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -1507,6 +1515,7 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
+            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -2012,6 +2021,7 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
+          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,

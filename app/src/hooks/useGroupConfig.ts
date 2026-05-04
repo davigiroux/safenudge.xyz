@@ -33,7 +33,6 @@ export type GroupConfigData = {
   penaltyValue: number
   status: GroupStatus
   cycleStart: number
-  currentPeriod: number
   pda: string
 }
 
@@ -51,7 +50,6 @@ type GroupConfigAccount = {
   penaltyValue: BN
   status: number
   cycleStart: BN
-  currentPeriod: number
   bump: number
 }
 
@@ -92,7 +90,6 @@ export function useGroupConfig(groupCode: string | undefined) {
             penaltyValue: account.penaltyValue.toNumber(),
             status: STATUS_MAP[account.status] || 'open',
             cycleStart: account.cycleStart.toNumber(),
-            currentPeriod: account.currentPeriod,
             pda: pda.toString(),
           })
         }

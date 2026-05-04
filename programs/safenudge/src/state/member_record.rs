@@ -13,8 +13,6 @@ pub struct MemberRecord {
     pub deposits_made: u8,
     /// Per-period deposit tracking (max 52 periods)
     pub periods_deposited: [bool; 52],
-    /// Whether member has claimed distribution payout
-    pub has_claimed: bool,
     /// PDA bump for member_record
     pub bump: u8,
 }

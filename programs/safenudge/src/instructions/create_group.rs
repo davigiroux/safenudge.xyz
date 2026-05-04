@@ -85,7 +85,6 @@ impl<'info> CreateGroup<'info> {
         group.penalty_value = penalty_value;
         group.status = STATUS_OPEN;
         group.cycle_start = 0;
-        group.current_period = 0;
         group.bump = bumps.group_config;
 
         Ok(())

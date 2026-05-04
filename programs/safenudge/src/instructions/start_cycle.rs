@@ -25,7 +25,6 @@ impl<'info> StartCycle<'info> {
         // ── Effects ─────────────────────────────────────────
         self.group_config.status = STATUS_ACTIVE;
         self.group_config.cycle_start = clock.unix_timestamp;
-        self.group_config.current_period = 0;
 
         Ok(())
     }
