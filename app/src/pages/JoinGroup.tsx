@@ -240,11 +240,16 @@ export default function JoinGroup() {
         </Button>
 
         <button
-          className="w-full flex items-center justify-center gap-2 py-3 min-h-[44px] font-label text-label-lg text-tertiary hover:text-tertiary-container transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
-          onClick={() => alert('Ramp Network integration coming soon')}
+          className="w-full flex items-center justify-center gap-2 py-3 min-h-[44px] font-label text-label-lg text-tertiary hover:text-tertiary-container transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary disabled:opacity-50 disabled:cursor-not-allowed"
+          disabled
+          aria-label={t('joinGroup.pixComingSoon')}
+          title={t('joinGroup.pixComingSoon')}
         >
           <Icon name="bolt" size={18} />
           {t('joinGroup.pixOption')}
+          <span className="font-label text-label-sm text-on-surface-variant">
+            ({t('joinGroup.pixComingSoonTag')})
+          </span>
         </button>
 
         {/* Nudge Stat */}

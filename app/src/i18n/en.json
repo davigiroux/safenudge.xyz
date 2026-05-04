@@ -121,6 +121,8 @@
     "members": "{{current}} of {{max}} members",
     "joinAndDeposit": "Join and Deposit",
     "pixOption": "No balance? Add funds via Pix",
+    "pixComingSoon": "Pix on-ramp coming soon",
+    "pixComingSoonTag": "coming soon",
     "nudgeStat": "Groups maintaining consistency in the first 4 weeks are 85% more likely to reach their goal",
     "alreadyMember": "You are already a member of this group",
     "groupNotFound": "Group not found",
