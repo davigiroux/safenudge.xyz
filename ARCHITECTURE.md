@@ -69,15 +69,29 @@ pub struct MemberRecord {
 
 #### GroupVault
 
-Not a custom account. This is a standard SPL Token Account owned by a PDA.
+Not a custom account. This is a standard SPL Token Account whose address
+*is itself* a PDA, and whose authority *is itself* (self-as-authority pattern).
 
 ```
 // Seeds: [b"vault", group_config.key().as_ref()]
-// This is an Associated Token Account (or init'd token account) 
-// owned by the vault PDA, holding the group's pooled USDC.
+// The token account's address is derived at these seeds, and
+// `token::authority` on the same `init` constraint also points at this
+// address — so the vault signs its own transfers via CPI with the same
+// seeds.
 ```
 
-The vault PDA is the authority over the token account. Only the program can move tokens in and out via CPI with PDA signer seeds.
+There is no separate `vault_authority` account. Only the program can move
+tokens in and out via CPI with PDA signer seeds; no human wallet has
+authority over the vault. The trade-off vs. a separate authority PDA is
+simpler accounts (one PDA, one constraint) at the cost of slightly less
+flexibility for future programs that might want to grant the authority
+to a different account — for SafeNudge's MVP, the vault never needs a
+non-self authority.
+
+When integrating with a yield protocol in v2, the same self-as-authority
+PDA can sign CPIs to deposit / withdraw idle funds; the integration adds
+the yield program's accounts but does not change the vault's authority
+model.
 
 ### Instruction Set
 
@@ -216,9 +230,9 @@ Settles the cycle. Calculates penalties and distributes funds. Anyone can trigge
 
 **Accounts:**
 - `payer` (signer) — pays for transaction fees
+- `creator` (mut, validated against `group_config.creator` via `has_one`) — receives vault rent on close
 - `group_config` (mut)
-- `vault` (mut) — source of all distributions
-- `vault_authority` — PDA that owns the vault
+- `vault` (mut) — source of all distributions; signs its own transfers (self-as-authority)
 - `mint`
 - `token_program`
 - Plus: remaining accounts are pairs of `[member_record, member_token_account]` for each member
@@ -230,6 +244,9 @@ Settles the cycle. Calculates penalties and distributes funds. Anyone can trigge
 - Cycle has ended: `Clock::get().unix_timestamp >= cycle_start + (total_periods * period_duration)`
 - All member records are passed in remaining accounts
 - Number of member records matches `group_config.current_members`
+- Each `member_record` account is owned by this program and matches the canonical `["member", group, member]` PDA
+- No `member_record` is passed twice
+- Each paired `member_token_account` is owned by `member_record.member` and uses `group_config.mint`
 
 **Distribution logic:**
 ```
@@ -263,7 +280,6 @@ for each member:
 **Effects:**
 - Transfers calculated amounts from vault to each member
 - Sets `group_config.status = Completed (2)`
-- Marks all member records as claimed
 - Closes vault account, returns rent to creator
 
 ---
@@ -275,11 +291,12 @@ Creator cancels the cycle. All deposits returned without penalties.
 **Accounts:**
 - `creator` (signer) — must match `group_config.creator`
 - `group_config` (mut)
-- `vault` (mut)
-- `vault_authority`
+- `vault` (mut) — signs its own transfers (self-as-authority)
 - `mint`
 - `token_program`
 - Plus: remaining accounts are pairs of `[member_record, member_token_account]` for each member
+
+The same canonical-PDA + ATA-owner + uniqueness validations as `distribute` apply to every member pair.
 
 **Args:** None
 
@@ -300,7 +317,7 @@ Creator cancels the cycle. All deposits returned without penalties.
 |---------|-------|---------|
 | GroupConfig | `["group", group_code]` | Group parameters and state |
 | MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking |
-| Vault Authority | `["vault", group_config_key]` | PDA authority over the token account |
+| Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority) |
 
 ### Error Codes
 
@@ -595,23 +612,18 @@ pub struct ExampleInstruction<'info> {
     )]
     pub member_record: Account<'info, MemberRecord>,
     
-    // 4. Vault with mint validation
+    // 4. Vault with mint validation. Self-as-authority: the token
+    //    account's address and authority are both the same PDA.
     #[account(
         mut,
-        token::mint = mint,
-        token::authority = vault_authority,
-    )]
-    pub vault: Account<'info, TokenAccount>,
-    
-    // 5. Vault authority PDA (never a human wallet)
-    /// CHECK: PDA authority, validated by seeds
-    #[account(
         seeds = [b"vault", group_config.key().as_ref()],
         bump,
+        token::mint = mint,
+        token::authority = vault,
     )]
-    pub vault_authority: UncheckedAccount<'info>,
-    
-    // 6. Mint must match group config
+    pub vault: InterfaceAccount<'info, TokenAccount>,
+
+    // 5. Mint must match group config
     #[account(
         constraint = mint.key() == group_config.mint @ SafeNudgeError::InvalidMint,
     )]
