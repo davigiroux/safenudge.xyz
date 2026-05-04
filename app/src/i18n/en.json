@@ -156,7 +156,8 @@
     "quickStats": "Quick Stats",
     "compliance": "Compliance",
     "membersCount": "Members",
-    "securityDetail": "PDA-only vault authority. No admin keys."
+    "securityDetail": "PDA-only vault authority. No admin keys.",
+    "you": "You"
   },
   "myGroups": {
     "title": "My Groups",

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getMemberRecordPDA, getGroupConfigPDA } from '../utils/pda'
@@ -33,6 +33,8 @@ export function useMemberRecord(groupCode: string | undefined) {
   const [data, setData] = useState<MemberRecordData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const refetch = useCallback(() => setReloadKey((k) => k + 1), [])
 
   useEffect(() => {
     if (!groupCode || !program || !publicKey) {
@@ -74,7 +76,7 @@ export function useMemberRecord(groupCode: string | undefined) {
 
     fetchMember()
     return () => { cancelled = true }
-  }, [groupCode, program, publicKey, connection])
+  }, [groupCode, program, publicKey, connection, reloadKey])
 
-  return { data, loading, error, isMember: !!data }
+  return { data, loading, error, isMember: !!data, refetch }
 }

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useConnection } from '@solana/wallet-adapter-react'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getGroupConfigPDA } from '../utils/pda'
@@ -61,6 +61,8 @@ export function useGroupConfig(groupCode: string | undefined) {
   const [data, setData] = useState<GroupConfigData | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const refetch = useCallback(() => setReloadKey((k) => k + 1), [])
 
   useEffect(() => {
     if (!groupCode || !program) {
@@ -108,7 +110,7 @@ export function useGroupConfig(groupCode: string | undefined) {
 
     fetchGroup()
     return () => { cancelled = true }
-  }, [groupCode, program, connection])
+  }, [groupCode, program, connection, reloadKey])
 
-  return { data, loading, error }
+  return { data, loading, error, refetch }
 }
