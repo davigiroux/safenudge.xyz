@@ -42,4 +42,6 @@ pub enum SafeNudgeError {
     InvalidTokenAccountOwner,
     #[msg("The same member record was passed more than once")]
     DuplicateMemberRecord,
+    #[msg("Recipient is not the configured FEE_RECIPIENT")]
+    UnauthorizedRecipient,
 }

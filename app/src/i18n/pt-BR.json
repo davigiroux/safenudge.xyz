@@ -28,7 +28,7 @@
     "live": "Ao vivo",
     "heroL1": "Poupe junto.",
     "heroL2": "Cresça junto.",
-    "subtitle": "Grupos de poupança com compromisso real. Sem taxas, sem intermediários — só você, seus amigos e um cofre inteligente.",
+    "subtitle": "Grupos de poupança com compromisso real. Uma única taxa de 5% sobre as penalidades sustenta o protocolo — o resto volta para quem cumpriu.",
     "cta": "Criar grupo",
     "joinCta": "Entrar em grupo",
     "trustLine": "Cofre protegido por contrato auditado. Sem chave de admin, sem custódia.",
@@ -227,7 +227,7 @@
         "points": [
           { "title": "Todos no mesmo instante", "body": "Não é caixinha rotativa. Cada pessoa recebe o total que depositou mais a sua fatia do bônus de penalidades acumulado pelo grupo." },
           { "title": "Na hora", "body": "A transação acontece em segundos na Solana. Não tem dia útil, não tem compensação, não tem liberação manual — só o contrato executando." },
-          { "title": "Sem taxa pra quem cumpre", "body": "O valor que você depositou volta 100%. As únicas deduções são as taxas de rede da Solana (frações de centavo) — e só quem atrasou paga penalidade." },
+          { "title": "Quase tudo volta pra quem cumpriu", "body": "Você recebe seu depósito de volta integralmente. As únicas deduções são as taxas de rede da Solana (frações de centavo) e os 5% das penalidades do ciclo que sustentam o protocolo — o restante das penalidades vira bônus pra quem cumpriu." },
           { "title": "E recomeça", "body": "No fim do ciclo, o grupo decide: roda de novo com o mesmo pessoal, muda o valor, ou fecha. É caixinha, não prisão." }
         ]
       }
@@ -238,7 +238,7 @@
     "defaults": [
       { "when": "Dia 0", "what": "Lembrete silencioso", "body": "Só a pessoa que falta vê. Ninguém mais é notificado. A maioria dos atrasos é esquecimento." },
       { "when": "+24h", "what": "Toque do grupo", "body": "Qualquer membro pode dar um toque. Notificação gentil, sem valor, sem cobrança." },
-      { "when": "+48h", "what": "Penalidade acionada", "body": "Porcentagem combinada (ex: 5%) é descontada do próximo depósito. Vira bônus pra quem cumpriu. SafeNudge fica com uma fração pequena." },
+      { "when": "+48h", "what": "Penalidade acionada", "body": "Porcentagem combinada (ex: 5%) é descontada do próximo depósito. 95% vira bônus pra quem cumpriu; os 5% restantes são a taxa do protocolo." },
       { "when": "+7 dias", "what": "Substituição opcional", "body": "O grupo vota se quer substituir. Bônus de penalidade já descontada acumula pra quem ficou." }
     ],
     "defaultsFoot": "Em 94% dos ciclos, só o Dia 0 acontece. O resto existe pra quando precisar.",
@@ -246,7 +246,7 @@
     "faq": [
       { "q": "Preciso confiar em todo mundo do grupo?", "a": "Você precisa confiar no cofre. A caução e as regras automáticas cobrem quando a confiança humana falha — e ela às vezes falha." },
       { "q": "Quem fica com o dinheiro enquanto espera?", "a": "O contrato. Não a SafeNudge, nem o criador do grupo, nem um banco parceiro. O saldo é visível on-chain o tempo todo." },
-      { "q": "Tem taxa?", "a": "Pra quem cumpre, zero. Os únicos custos são as taxas de rede da Solana — frações de centavo por transação, só pra manter a rede. A SafeNudge ganha dinheiro só quando alguém atrasa: ficamos com uma fração pequena da penalidade que o próprio grupo definiu. Se ninguém atrasa, a gente não cobra nada." },
+      { "q": "Tem taxa?", "a": "Sobre o seu depósito, não. A SafeNudge cobra 5% sobre o pool de penalidades — só sobre o que foi descontado de quem atrasou. Os outros 95% das penalidades viram bônus pra quem cumpriu. Se ninguém atrasou no ciclo, a gente não cobra nada. Você ainda paga as taxas de rede da Solana, que são frações de centavo por transação." },
       { "q": "Posso sair no meio?", "a": "Pode, mas os depósitos já feitos ficam no cofre até o fim do ciclo — todo mundo recebe junto no final. Se você sair sem cumprir, a penalidade combinada é acionada e vira bônus pro resto do grupo." },
       { "q": "E se a SafeNudge quebrar?", "a": "O cofre continua funcionando. É um contrato aberto na blockchain — você consegue resgatar tudo direto, mesmo sem o app. A gente facilita, mas não tranca." },
       { "q": "O dinheiro rende enquanto espera?", "a": "Se o grupo quiser, sim — tem uma opção de render em stablecoin com rendimento de tesouraria. Opt-in, com botão visível pra desligar." }

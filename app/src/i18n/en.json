@@ -28,7 +28,7 @@
     "live": "Live",
     "heroL1": "Save together.",
     "heroL2": "Grow together.",
-    "subtitle": "Savings groups with real commitment. No fees, no middlemen — just you, your friends, and a smart vault.",
+    "subtitle": "Savings groups with real commitment. A single 5% protocol fee on penalties keeps SafeNudge running — the rest goes to members who showed up.",
     "cta": "Create a group",
     "joinCta": "Join a group",
     "trustLine": "Vault protected by an audited contract. No admin key, no custody.",
@@ -227,7 +227,7 @@
         "points": [
           { "title": "Everyone in the same moment", "body": "It's not a rotating caixinha. Each person receives the total they deposited plus their share of the group's accumulated penalty bonus." },
           { "title": "Instant", "body": "The transaction happens in seconds on Solana. No business days, no clearing, no manual release — just the contract executing." },
-          { "title": "No fees for people who follow through", "body": "You get back 100% of what you deposited. The only deductions are Solana network fees (fractions of a cent) — and only latecomers pay the penalty." },
+          { "title": "Almost everything goes back to people who showed up", "body": "You get your full deposit back. The only deductions are Solana network fees (fractions of a cent) and the 5% protocol fee on the penalty pool — the other 95% of penalties becomes a bonus for compliant members." },
           { "title": "And it cycles again", "body": "At cycle end, the group decides: run again with the same crew, change the amount, or wrap. It's a caixinha, not a prison." }
         ]
       }
@@ -238,7 +238,7 @@
     "defaults": [
       { "when": "Day 0", "what": "Silent reminder", "body": "Only the missing person sees it. No one else is notified. Most late deposits are just forgetfulness." },
       { "when": "+24h", "what": "Group heads-up", "body": "Any member can send a heads-up. Gentle notification, no amount, no demand." },
-      { "when": "+48h", "what": "Penalty triggered", "body": "Agreed percentage (e.g. 5%) is deducted from the next deposit. Becomes a bonus for members who followed through. SafeNudge keeps a small fraction." },
+      { "when": "+48h", "what": "Penalty triggered", "body": "Agreed percentage (e.g. 5%) is deducted from the next deposit. 95% becomes a bonus for members who followed through; the remaining 5% is the protocol fee." },
       { "when": "+7 days", "what": "Optional replacement", "body": "The group votes on replacing. Penalty bonus already deducted accrues to those who stayed." }
     ],
     "defaultsFoot": "In 94% of cycles, only Day 0 happens. The rest exists for when you need it.",
@@ -246,7 +246,7 @@
     "faq": [
       { "q": "Do I have to trust everyone in the group?", "a": "You need to trust the vault. The escrow and automatic rules cover the moments when human trust fails — because it does sometimes." },
       { "q": "Who holds the money while it waits?", "a": "The contract. Not SafeNudge, not the group creator, not a partner bank. The balance is visible on-chain the whole time." },
-      { "q": "Are there fees?", "a": "Zero if you follow through. The only costs are Solana network fees — fractions of a cent per transaction, just to keep the network running. SafeNudge only earns when someone's late: we take a small slice of the penalty that the group itself set. If no one's late, we don't charge anything." },
+      { "q": "Are there fees?", "a": "Not on your deposit. SafeNudge takes 5% of the penalty pool — only on what gets deducted from latecomers. The other 95% becomes a bonus for members who followed through. If nobody is late in a cycle, we don't charge anything. You still pay Solana network fees, which are fractions of a cent per transaction." },
       { "q": "Can I leave mid-cycle?", "a": "You can, but your deposits already in the vault stay there until cycle end — everyone receives together at the end. If you leave without completing, the agreed penalty kicks in and becomes a bonus for the rest of the group." },
       { "q": "What if SafeNudge goes out of business?", "a": "The vault keeps working. It's an open contract on the blockchain — you can recover everything directly, even without the app. We make things easier, but we don't lock you in." },
       { "q": "Does the money earn yield while it waits?", "a": "If the group wants, yes — there's a stablecoin yield option with treasury-rate returns. Opt-in, with a visible button to turn it off." }

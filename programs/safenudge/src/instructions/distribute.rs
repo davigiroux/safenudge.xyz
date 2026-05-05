@@ -1,4 +1,5 @@
 use anchor_lang::prelude::*;
+use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{
     close_account, transfer_checked, CloseAccount, Mint, TokenAccount, TokenInterface,
     TransferChecked,
@@ -6,6 +7,7 @@ use anchor_spl::token_interface::{
 
 use crate::errors::SafeNudgeError;
 use crate::state::{GroupConfig, MemberRecord, STATUS_ACTIVE, STATUS_COMPLETED};
+use crate::PROTOCOL_FEE_BPS;
 
 #[derive(Accounts)]
 pub struct Distribute<'info> {
@@ -39,7 +41,28 @@ pub struct Distribute<'info> {
     )]
     pub mint: InterfaceAccount<'info, Mint>,
 
+    /// PDA that owns the protocol treasury ATA. Holds no data; SystemAccount
+    /// validates ownership and gives Anchor the seed/bump derivation it needs
+    /// to sign the withdraw_fees CPI later.
+    #[account(
+        seeds = [b"treasury"],
+        bump,
+    )]
+    pub treasury_authority: SystemAccount<'info>,
+
+    /// Treasury USDC ATA. Created on the first cycle that charges a fee and
+    /// reused thereafter. Authority is the treasury PDA above.
+    #[account(
+        init_if_needed,
+        payer = payer,
+        associated_token::mint = mint,
+        associated_token::authority = treasury_authority,
+    )]
+    pub treasury_token_account: InterfaceAccount<'info, TokenAccount>,
+
     pub token_program: Interface<'info, TokenInterface>,
+    pub associated_token_program: Program<'info, AssociatedToken>,
+    pub system_program: Program<'info, System>,
 }
 
 impl<'info> Distribute<'info> {
@@ -219,12 +242,25 @@ impl<'info> Distribute<'info> {
             });
         }
 
-        // When no one is compliant there is no one to redistribute penalties
-        // to. Refund each member their full deposit (same semantics as
-        // emergency_cancel) so the outcome doesn't depend on the order the
-        // caller placed members in remaining_accounts.
-        let bonus_per_compliant = if compliant_count > 0 {
+        // 5% protocol fee skimmed off the penalty pool before redistribution.
+        // When no one is compliant, the pro-rata refund branch (below) returns
+        // each member their full deposit and `total_penalties` is logically
+        // forgiven — fee must be zero so that branch is preserved.
+        let protocol_fee: u64 = if compliant_count == 0 {
+            0
+        } else {
             total_penalties
+                .checked_mul(PROTOCOL_FEE_BPS)
+                .and_then(|x| x.checked_div(10_000))
+                .ok_or(SafeNudgeError::ArithmeticOverflow)?
+        };
+
+        let redistributable = total_penalties
+            .checked_sub(protocol_fee)
+            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
+
+        let bonus_per_compliant = if compliant_count > 0 {
+            redistributable
                 .checked_div(compliant_count)
                 .ok_or(SafeNudgeError::ArithmeticOverflow)?
         } else {
@@ -249,12 +285,29 @@ impl<'info> Distribute<'info> {
 
         ctx.accounts.group_config.status = STATUS_COMPLETED;
 
-        // ── Interactions: Transfer payouts ───────────────────
+        // ── Interactions ────────────────────────────────────
 
         let vault_bump = ctx.bumps.vault;
         let bump_bytes = [vault_bump];
         let signer_seeds: &[&[u8]] = &[b"vault", group_key.as_ref(), &bump_bytes];
         let signer = &[signer_seeds];
+
+        // Fee transfer goes first so the last-member dust path naturally sees
+        // the post-fee remainder via vault.reload().
+        if protocol_fee > 0 {
+            let fee_cpi_accounts = TransferChecked {
+                from: ctx.accounts.vault.to_account_info(),
+                to: ctx.accounts.treasury_token_account.to_account_info(),
+                mint: ctx.accounts.mint.to_account_info(),
+                authority: ctx.accounts.vault.to_account_info(),
+            };
+            let fee_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.to_account_info(),
+                fee_cpi_accounts,
+                signer,
+            );
+            transfer_checked(fee_ctx, protocol_fee, decimals)?;
+        }
 
         for i in 0..member_count {
             let token_idx = i

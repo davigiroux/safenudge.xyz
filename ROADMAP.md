@@ -23,15 +23,15 @@ The minimum viable product targets the hackathon submission window.
 - [ ] Devnet deployment + post-deploy verification (program upgrade authority finalized via `set-upgrade-authority --final`)
 - [ ] README with setup instructions and devnet demo link
 
-### v1.1 — Protocol fee · planned
+### v1.1 — Protocol fee · in flight
 
 Adds the v1 revenue stream so the protocol can sustain itself without yield infrastructure.
 
 - 5% protocol fee on the penalty pool, charged at `distribute` time
-- PDA-controlled treasury USDC token account
-- `withdraw_fees` instruction restricted to a hardcoded founder pubkey
-- Fee disclosure in landing copy and Como Funciona, replacing the current "zero fees" framing
-- Clear migration path to a Squads / SPL multisig recipient when revenue justifies the operational overhead
+- PDA-controlled treasury USDC token account at seeds `[b"treasury"]`
+- `withdraw_fees` instruction restricted to a compile-time `FEE_RECIPIENT`, gated per cluster via cargo features
+- Fee disclosure in landing copy and Como Funciona, replacing the prior "zero fees" framing
+- Mainnet `FEE_RECIPIENT` placeholder + multisig migration tracked in issue #20
 
 ### v2 — Yield Integration
 
