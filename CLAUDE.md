@@ -487,6 +487,7 @@ Decisions that affect security or architecture. Do not change without explicit d
 | `transfer_checked` over `transfer` | Validates mint and decimals at CPI level; prevents token confusion attacks | Apr 2026 |
 | Distribution via remaining accounts (single tx) | Atomic settlement; no partial distribution state. May need per-member claims if 10-member groups hit account limits | Apr 2026 |
 | Simplified 30-day months | Acceptable for MVP; real calendar math adds complexity without proportional value | Apr 2026 |
+| 5% protocol fee on penalty pool, compile-time `FEE_RECIPIENT`, PDA-controlled treasury, no admin override | v1 revenue without runtime admin surface; per-cluster recipient via cargo features, multisig migration tracked in issue #20 | May 2026 |
 
 ---
 

@@ -238,6 +238,17 @@ export type Safenudge = {
           "signer": true
         },
         {
+          "name": "creator",
+          "docs": [
+            "must match the wallet stored at group creation time. distribute is",
+            "permissionless so the creator does not sign; we only need their pubkey."
+          ],
+          "writable": true,
+          "relations": [
+            "groupConfig"
+          ]
+        },
+        {
           "name": "groupConfig",
           "writable": true,
           "pda": {
@@ -286,7 +297,134 @@ export type Safenudge = {
           "name": "mint"
         },
         {
+          "name": "treasuryAuthority",
+          "docs": [
+            "PDA that owns the protocol treasury ATA. Holds no data; SystemAccount",
+            "validates ownership and gives Anchor the seed/bump derivation it needs",
+            "to sign the withdraw_fees CPI later."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasuryTokenAccount",
+          "docs": [
+            "Treasury USDC ATA. Created on the first cycle that charges a fee and",
+            "reused thereafter. Authority is the treasury PDA above."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "treasuryAuthority"
+              },
+              {
+                "kind": "const",
+                "value": [
+                  6,
+                  221,
+                  246,
+                  225,
+                  215,
+                  101,
+                  161,
+                  147,
+                  217,
+                  203,
+                  225,
+                  70,
+                  206,
+                  235,
+                  121,
+                  172,
+                  28,
+                  180,
+                  133,
+                  237,
+                  95,
+                  91,
+                  55,
+                  145,
+                  58,
+                  140,
+                  245,
+                  133,
+                  126,
+                  255,
+                  0,
+                  169
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
           "name": "tokenProgram"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -518,6 +656,61 @@ export type Safenudge = {
         }
       ],
       "args": []
+    },
+    {
+      "name": "withdrawFees",
+      "discriminator": [
+        198,
+        212,
+        171,
+        109,
+        144,
+        215,
+        174,
+        89
+      ],
+      "accounts": [
+        {
+          "name": "recipient",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "treasuryAuthority",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasuryTokenAccount",
+          "writable": true
+        },
+        {
+          "name": "recipientTokenAccount",
+          "writable": true
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
     }
   ],
   "accounts": [
@@ -628,6 +821,31 @@ export type Safenudge = {
       "code": 6015,
       "name": "memberCountMismatch",
       "msg": "Member count mismatch in distribution"
+    },
+    {
+      "code": 6016,
+      "name": "invalidAccountOwner",
+      "msg": "Account is not owned by this program"
+    },
+    {
+      "code": 6017,
+      "name": "invalidMemberRecord",
+      "msg": "Member record does not match the canonical PDA for its member"
+    },
+    {
+      "code": 6018,
+      "name": "invalidTokenAccountOwner",
+      "msg": "Destination token account does not belong to the expected member"
+    },
+    {
+      "code": 6019,
+      "name": "duplicateMemberRecord",
+      "msg": "The same member record was passed more than once"
+    },
+    {
+      "code": 6020,
+      "name": "unauthorizedRecipient",
+      "msg": "Recipient is not the configured FEE_RECIPIENT"
     }
   ],
   "types": [

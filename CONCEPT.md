@@ -170,7 +170,7 @@ That's just the regulated system. Informal caixinhas, vaquinhas, and friend-grou
 
 ### Web2 Equivalent
 
-**"SafeNudge is the digital MOAI — group savings with smart contract enforcement, zero fees, and yield on idle deposits."**
+**"SafeNudge is the digital MOAI — group savings with smart contract enforcement, a single 5% protocol fee on penalties, and yield on idle deposits (planned)."**
 
 For judges who need a quick anchor: "Think of SafeNudge as StickK meets Nubank, on Solana." StickK (commitment contracts with financial stakes) provides the behavioral mechanic. Nubank (accessible fintech for underbanked populations) provides the distribution model. Solana provides the trustless enforcement layer.
 
@@ -181,6 +181,20 @@ SafeNudge's moat is the combination: group social pressure + financial penalties
 ## Revenue Model
 
 Three revenue streams, layered over time:
+
+### Stream 0: Protocol Fee on Penalties (v1, ships first)
+
+A flat 5% protocol fee on the penalty pool, charged at `distribute` time. Routed to a PDA-controlled treasury USDC token account; withdrawn only by a hardcoded `FEE_RECIPIENT` (founder wallet now, Squads multisig before mainnet TVL becomes meaningful — tracked separately).
+
+Charged only when at least one member is compliant (the H1 pro-rata refund branch sets the fee to zero). Capped implicitly at `total_penalties × 500 / 10_000`. The remaining 95% of the penalty pool becomes the bonus for compliant members, exactly as before — the fee is skimmed off the redistribution, never off the principal of compliant members' deposits.
+
+**Unit economics at scale:**
+- 100,000 active users, $40 average deposit, 6-month cycles, conservative 8% per-member miss rate, 50% of cycles have at least one penalty
+- Penalty pool per cycle ≈ 0.5% of TVL ($60K on $12M TVL)
+- Annual penalty volume ≈ $720K (12 cycles × $60K)
+- 5% protocol fee ≈ $36K ARR
+
+This stream is small in absolute terms but operationally important: it lets the protocol cover its own costs without yield infrastructure, and demonstrates a working revenue pipe from day one.
 
 ### Stream 1: Protocol Fee on Yield (v2, primary revenue)
 
@@ -218,14 +232,14 @@ Brazilian fintechs (Nubank, Inter, PagBank, Mercado Pago) and neobanks could int
 
 The realistic path combines yield fees + premium subscriptions at scale:
 
-| Milestone | Users | TVL | Yield Fee | Premium | Total ARR |
-|-----------|-------|-----|-----------|---------|-----------|
-| Month 6 | 5,000 | $1M | $7.5K | $18K | ~$25K |
-| Month 12 | 25,000 | $5M | $37.5K | $90K | ~$128K |
-| Month 18 | 100,000 | $20M | $150K | $360K | ~$510K |
-| Month 24 | 250,000 | $50M | $375K | $900K | ~$1.275M |
+| Milestone | Users | TVL | Penalty Fee | Yield Fee | Premium | Total ARR |
+|-----------|-------|-----|-------------|-----------|---------|-----------|
+| Month 6 | 5,000 | $1M | $3K | $7.5K | $18K | ~$28K |
+| Month 12 | 25,000 | $5M | $15K | $37.5K | $90K | ~$143K |
+| Month 18 | 100,000 | $20M | $60K | $150K | $360K | ~$570K |
+| Month 24 | 250,000 | $50M | $150K | $375K | $900K | ~$1.425M |
 
-$1M ARR at ~250K active users and $50M TVL. For context, Nubank has 100M+ customers in Brazil. Capturing 0.25% of digitally active Brazilians who already save in groups is conservative if the product works.
+$1M ARR is reachable around 200K active users and $40M TVL with all three streams active. For context, Nubank has 100M+ customers in Brazil. Capturing 0.2% of digitally active Brazilians who already save in groups is conservative if the product works.
 
 ## Go-to-Market
 

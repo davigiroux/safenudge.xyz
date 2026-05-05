@@ -311,6 +311,78 @@ The same canonical-PDA + ATA-owner + uniqueness validations as `distribute` appl
 
 ---
 
+#### 7. `withdraw_fees`
+
+Drains the protocol treasury to the configured `FEE_RECIPIENT`. Permissionless to call signature-wise — the constraint is the recipient's pubkey.
+
+**Accounts:**
+- `recipient` (signer) — must equal compile-time `FEE_RECIPIENT`
+- `treasury_authority` (PDA, seeds `[b"treasury"]`)
+- `treasury_token_account` — must be owned by `treasury_authority` and use the configured mint
+- `recipient_token_account` — must be owned by `FEE_RECIPIENT` and use the same mint
+- `mint`
+- `token_program`
+
+**Args:** None
+
+**Validation:**
+- `recipient.key() == FEE_RECIPIENT`
+- `treasury_token_account.owner == treasury_authority.key()`
+- `recipient_token_account.owner == FEE_RECIPIENT`
+- Both token accounts use `mint`
+
+**Effects:**
+- Transfers `treasury_token_account.amount` to `recipient_token_account` via CPI signed by the treasury PDA
+- Treasury account stays open across withdrawals (cheaper than re-init each cycle)
+
+---
+
+### Treasury (protocol fee accumulator)
+
+**Pattern:** PDA-controlled SPL token account, no admin authority.
+
+```rust
+// Authority — holds no data, only seeds
+// Seeds: [b"treasury"]
+pub treasury_authority: SystemAccount<'info>
+
+// Token account — canonical ATA of (mint, treasury_authority)
+// Created lazily via `init_if_needed` in `distribute` on the first cycle
+// that charges a fee; reused on every subsequent cycle.
+pub treasury_token_account: InterfaceAccount<'info, TokenAccount>
+```
+
+**Fee math (in `distribute` after Pass 1):**
+
+```rust
+let protocol_fee = if compliant_count == 0 {
+    0  // Pro-rata refund branch — no penalty pool to skim from
+} else {
+    total_penalties.checked_mul(PROTOCOL_FEE_BPS)?.checked_div(10_000)?
+};
+let redistributable = total_penalties.checked_sub(protocol_fee)?;
+let bonus_per_compliant = redistributable.checked_div(compliant_count)?;
+```
+
+The fee CPI runs **before** any member-payout CPIs so the "last member gets vault remainder" dust path naturally sees the post-fee balance via `vault.reload()`.
+
+**Recipient is compile-time, per cluster.** No instruction can change `FEE_RECIPIENT` at runtime — preserves the no-admin-backdoor invariant. Cluster gating mirrors how Anchor handles per-cluster `declare_id!`:
+
+```rust
+#[cfg(feature = "mainnet")]
+pub const FEE_RECIPIENT: Pubkey = pubkey!("...");
+
+#[cfg(all(feature = "devnet", not(feature = "mainnet")))]
+pub const FEE_RECIPIENT: Pubkey = pubkey!("FobkDn4r...");
+
+#[cfg(not(any(feature = "mainnet", feature = "devnet")))]
+pub const FEE_RECIPIENT: Pubkey = pubkey!("FobkDn4r...");
+```
+
+Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor build -- --features mainnet`. Mainnet placeholder + multisig migration tracked in issue #20.
+
+---
+
 ### PDA Derivation Summary
 
 | Account | Seeds | Purpose |
@@ -318,6 +390,8 @@ The same canonical-PDA + ATA-owner + uniqueness validations as `distribute` appl
 | GroupConfig | `["group", group_code]` | Group parameters and state |
 | MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking |
 | Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority) |
+| TreasuryAuthority | `["treasury"]` | Authority over the protocol-fee ATA; holds no data |
+| TreasuryATA | canonical ATA of `(mint, TreasuryAuthority)` | Accumulates 5% of every penalty pool until `withdraw_fees` is called |
 
 ### Error Codes
 
@@ -332,6 +406,8 @@ pub enum SafeNudgeError {
     UnauthorizedCreator,
     #[msg("Group needs at least 2 members to start")]
     InsufficientMembers,
+    #[msg("Recipient is not the configured FEE_RECIPIENT")]
+    UnauthorizedRecipient,
     #[msg("Cycle has not ended yet")]
     CycleNotEnded,
     #[msg("Already deposited for this period")]
