@@ -8,9 +8,9 @@ Status is updated at the start of each weekly review (see issue tracker, label `
 
 ## Release roadmap
 
-### MVP — Colosseum Hackathon (May 2026) · in flight
+### MVP (May 2026) · in flight
 
-The minimum viable product targets the hackathon submission window.
+The minimum viable product: a complete savings-group lifecycle on devnet with bilingual UI.
 
 - [x] Anchor program: `create_group`, `join_group`, `start_cycle`, `deposit`, `distribute`, `emergency_cancel` (Phase 1 + Phase 2 of the task breakdown below)
 - [x] React frontend with wallet-adapter (Phantom / Backpack)
@@ -66,7 +66,7 @@ Variations on the savings-group primitive that target adjacent use cases.
 
 ## Task breakdown (engineering-level)
 
-The original Colosseum estimate was 18–25 hours total. Numbers below are the original sizing; status reflects the current state of the codebase as of this file's last update.
+The original sizing was 18–25 hours total. Numbers below are the original sizing; status reflects the current state of the codebase as of this file's last update.
 
 ### Phase 1 — Program Core · ✅ done
 

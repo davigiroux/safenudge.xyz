@@ -555,7 +555,7 @@ The vault token account is architecturally ready for this. The PDA authority can
 
 ## Deployment
 
-### Devnet (Hackathon)
+### Devnet
 
 ```
 anchor build
@@ -729,7 +729,7 @@ let payout = total_deposited - penalty;              // NEVER
 
 ### No Upgrade Authority
 
-After deploying to devnet, the program's upgrade authority should be explicitly set to `None` for the hackathon submission. This demonstrates that no individual can modify the program after deployment — the same property that makes Bitcoin's rules credible.
+Once a deployment is considered final, the program's upgrade authority should be explicitly set to `None`. This demonstrates that no individual can modify the program after deployment — the same property that makes Bitcoin's rules credible.
 
 ```bash
 solana program set-upgrade-authority <PROGRAM_ID> --final

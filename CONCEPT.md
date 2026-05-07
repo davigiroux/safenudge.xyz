@@ -48,7 +48,7 @@ The primary user is a Brazilian who has participated in or understands informal 
 
 They don't know what Solana is. They don't have a wallet. They've probably used Pix to split a dinner bill, and that's about as far as their fintech experience goes.
 
-For the hackathon demo, the judges are crypto-native, but the product story targets this non-crypto user. The MVP uses standard wallet connection (Phantom/Backpack), but the architecture is designed for embedded wallets and Pix on-ramp as the real onboarding path.
+The MVP uses standard wallet connection (Phantom/Backpack) — a deliberate compromise to ship the protocol mechanics first. The architecture is designed for embedded wallets and a Pix on-ramp as the real onboarding path for the non-crypto target user.
 
 ## How It Works
 
@@ -127,7 +127,7 @@ The UI defaults to Portuguese (PT-BR) with an English toggle. All user-facing co
 
 ## Roadmap
 
-### MVP (Colosseum Hackathon — May 2026)
+### MVP (May 2026)
 - Anchor program: create group, join, deposit, distribute, emergency cancel
 - React frontend with wallet-adapter (Phantom/Backpack)
 - Ramp Network widget for Pix-to-USDC on-ramp
@@ -245,8 +245,8 @@ $1M ARR is reachable around 200K active users and $40M TVL with all three stream
 
 ### Phase 1: Crypto-Native Launch (Months 1-3)
 
-**Who:** Solana community members, crypto-native Brazilians, hackathon network.
-**How:** Build in public on X, Superteam Brasil community, Colosseum network. First groups are friends-and-family: savings challenges among existing crypto users who understand wallets.
+**Who:** Solana community members, crypto-native Brazilians.
+**How:** Build in public on X and the Superteam Brasil community. First groups are friends-and-family: savings challenges among existing crypto users who understand wallets.
 **Goal:** 100 active users, 20 groups. Validate the core loop (do groups actually complete cycles?).
 
 ### Phase 2: Brazilian Crypto Community (Months 3-6)
@@ -275,5 +275,4 @@ The business case is grounded in real numbers: Brazil's formal consórcio system
 
 ---
 
-*SafeNudge — Colosseum Spring 2026 Hackathon*
-*Davi Giroux — April 2026*
+*SafeNudge — Davi Giroux — April 2026*
