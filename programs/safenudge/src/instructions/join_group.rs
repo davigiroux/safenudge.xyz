@@ -77,7 +77,7 @@ impl<'info> JoinGroup<'info> {
             authority: self.member.to_account_info(),
             mint: self.mint.to_account_info(),
         };
-        let cpi_ctx = CpiContext::new(self.token_program.to_account_info(), cpi_accounts);
+        let cpi_ctx = CpiContext::new(self.token_program.key(), cpi_accounts);
         transfer_checked(
             cpi_ctx,
             self.group_config.deposit_amount,
