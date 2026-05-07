@@ -314,8 +314,12 @@ Branch names: `feat/<scope>`, `fix/<scope>`, `test/<scope>`, `security/<scope>`.
 
 ## License
 
-No license file is checked in yet. Until one is added, treat this repository as **all rights reserved** by the author. Open-sourcing the protocol is on the table for v2 and will be tracked as a separate decision.
+Licensed under the [Apache License, Version 2.0](./LICENSE). You may use, modify, and redistribute this code, including for commercial purposes, subject to the conditions of the license — most notably, preserving copyright and license notices in derivative works. The Apache 2.0 patent grant is included.
+
+## Contributing
+
+This is a personal project, not actively seeking contributors. Forks and derivative works are welcome under the license. See [`CONTRIBUTING.md`](./CONTRIBUTING.md) for what to expect if you open an issue or PR.
 
 ## Author
 
-Davi Giroux — 2026.
+Davi Giroux — 2026. Copyright 2026 Davi Giroux, licensed under Apache-2.0.
