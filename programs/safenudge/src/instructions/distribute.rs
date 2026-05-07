@@ -66,7 +66,7 @@ pub struct Distribute<'info> {
 }
 
 impl<'info> Distribute<'info> {
-    pub fn handler(ctx: Context<'_, '_, 'info, 'info, Distribute<'info>>) -> Result<()> {
+    pub fn handler(ctx: Context<'info, Distribute<'info>>) -> Result<()> {
         let clock = Clock::get()?;
         let group = &ctx.accounts.group_config;
 
@@ -302,7 +302,7 @@ impl<'info> Distribute<'info> {
                 authority: ctx.accounts.vault.to_account_info(),
             };
             let fee_ctx = CpiContext::new_with_signer(
-                ctx.accounts.token_program.to_account_info(),
+                ctx.accounts.token_program.key(),
                 fee_cpi_accounts,
                 signer,
             );
@@ -333,7 +333,7 @@ impl<'info> Distribute<'info> {
                     authority: ctx.accounts.vault.to_account_info(),
                 };
                 let cpi_ctx = CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
+                    ctx.accounts.token_program.key(),
                     cpi_accounts,
                     signer,
                 );
@@ -350,7 +350,7 @@ impl<'info> Distribute<'info> {
             authority: ctx.accounts.vault.to_account_info(),
         };
         let close_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.token_program.key(),
             close_cpi,
             signer,
         );

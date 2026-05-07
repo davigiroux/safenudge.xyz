@@ -37,7 +37,7 @@ pub struct EmergencyCancel<'info> {
 }
 
 impl<'info> EmergencyCancel<'info> {
-    pub fn handler(ctx: Context<'_, '_, 'info, 'info, EmergencyCancel<'info>>) -> Result<()> {
+    pub fn handler(ctx: Context<'info, EmergencyCancel<'info>>) -> Result<()> {
         let group = &ctx.accounts.group_config;
 
         // ── Checks ──────────────────────────────────────────
@@ -157,7 +157,7 @@ impl<'info> EmergencyCancel<'info> {
                     authority: ctx.accounts.vault.to_account_info(),
                 };
                 let cpi_ctx = CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
+                    ctx.accounts.token_program.key(),
                     cpi_accounts,
                     signer,
                 );
@@ -172,7 +172,7 @@ impl<'info> EmergencyCancel<'info> {
             authority: ctx.accounts.vault.to_account_info(),
         };
         let close_ctx = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
+            ctx.accounts.token_program.key(),
             close_cpi,
             signer,
         );

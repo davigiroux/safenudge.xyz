@@ -58,7 +58,7 @@ impl<'info> WithdrawFees<'info> {
             authority: self.treasury_authority.to_account_info(),
         };
         let cpi_ctx = CpiContext::new_with_signer(
-            self.token_program.to_account_info(),
+            self.token_program.key(),
             cpi_accounts,
             signer,
         );

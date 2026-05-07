@@ -67,11 +67,11 @@ pub mod safenudge {
         ctx.accounts.handler()
     }
 
-    pub fn distribute<'info>(ctx: Context<'_, '_, 'info, 'info, Distribute<'info>>) -> Result<()> {
+    pub fn distribute<'info>(ctx: Context<'info, Distribute<'info>>) -> Result<()> {
         Distribute::handler(ctx)
     }
 
-    pub fn emergency_cancel<'info>(ctx: Context<'_, '_, 'info, 'info, EmergencyCancel<'info>>) -> Result<()> {
+    pub fn emergency_cancel<'info>(ctx: Context<'info, EmergencyCancel<'info>>) -> Result<()> {
         EmergencyCancel::handler(ctx)
     }
 
