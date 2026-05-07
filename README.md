@@ -47,16 +47,16 @@ A group moves through six lifecycle moments. The creator sets the rules; everyth
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Open: create_group
-    Open --> Open: join_group
-    Open --> Active: start_cycle
-    Active --> Active: deposit
-    Active --> Completed: distribute<br/>(after cycle ends)
-    Open --> Cancelled: emergency_cancel
-    Active --> Cancelled: emergency_cancel
+    [*] --> Open : create_group
+    Open --> Active : start_cycle
+    Active --> Completed : distribute
+    Open --> Cancelled : emergency_cancel
+    Active --> Cancelled : emergency_cancel
     Completed --> [*]
     Cancelled --> [*]
 ```
+
+`join_group` happens repeatedly while the group is `Open`; `deposit` happens repeatedly while the group is `Active`. Both keep the group in its current state, so they're not drawn as transitions. `distribute` can only fire once the cycle's full duration has elapsed.
 
 ### Penalty mechanics
 
