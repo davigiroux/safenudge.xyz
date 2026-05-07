@@ -5,7 +5,6 @@
 [![CI](https://github.com/davigiroux/safenudge.xyz/actions/workflows/ci.yml/badge.svg)](https://github.com/davigiroux/safenudge.xyz/actions/workflows/ci.yml)
 [![Solana](https://img.shields.io/badge/Solana-devnet-14F195)](https://explorer.solana.com/?cluster=devnet)
 [![Anchor](https://img.shields.io/badge/Anchor-1.0.2-blueviolet)](https://www.anchor-lang.com/)
-[![Hackathon](https://img.shields.io/badge/Colosseum-Spring%202026-orange)](https://www.colosseum.org/)
 
 SafeNudge is a digital MOAI with better rules: friends commit to recurring deposits in a shared on-chain vault, missed deposits trigger penalties, and those penalties get redistributed to the members who stayed consistent. No administrator, no trust required, no 15–20% consórcio fees. The blockchain handles the rules. The group handles the motivation.
 
@@ -292,7 +291,7 @@ Branch names: `feat/<scope>`, `fix/<scope>`, `test/<scope>`, `security/<scope>`.
 
 | Phase | Status | What ships |
 |---|---|---|
-| **MVP** — Colosseum hackathon (May 2026) | in flight | Core program, React frontend, PT-BR/EN i18n, devnet deploy, Ramp on-ramp |
+| **MVP** (May 2026) | in flight | Core program, React frontend, PT-BR/EN i18n, devnet deploy, Ramp on-ramp |
 | **v1.1** — Protocol fee | in flight | 5% fee on penalty pool, treasury PDA, `withdraw_fees` |
 | **v2** — Yield integration | planned | Kamino K-Lend during active cycles, performance fee, premium tier |
 | **v3** — Mainstream onboarding | planned | Embedded wallets, full Pix on/off-ramp, WhatsApp notifications |
@@ -319,4 +318,4 @@ No license file is checked in yet. Until one is added, treat this repository as 
 
 ## Author
 
-Davi Giroux — built for the Colosseum Spring 2026 hackathon.
+Davi Giroux — 2026.
