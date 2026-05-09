@@ -9,6 +9,7 @@ import CreateGroup from './pages/CreateGroup'
 import JoinGroup from './pages/JoinGroup'
 import GroupDashboard from './pages/GroupDashboard'
 import MyGroups from './pages/MyGroups'
+import Seguranca from './pages/Seguranca'
 
 export function App() {
   return (
@@ -22,6 +23,7 @@ export function App() {
             <Route path="/entrar/:code" element={<JoinGroup />} />
             <Route path="/grupo/:code" element={<GroupDashboard />} />
             <Route path="/grupos" element={<MyGroups />} />
+            <Route path="/seguranca" element={<Seguranca />} />
           </Routes>
         </BrowserRouter>
       </WalletProvider>

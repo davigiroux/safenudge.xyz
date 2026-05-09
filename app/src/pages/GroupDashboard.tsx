@@ -1,10 +1,14 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
+import { PublicKey } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, NudgeToast, TransactionStatus } from '../components'
+import { ProgressBar } from '../components/ProgressBar'
+import { DistributeSummary } from '../components/DistributeSummary'
+import { CancelGroupSheet } from '../components/CancelGroupSheet'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { useGroupConfig } from '../hooks/useGroupConfig'
@@ -12,6 +16,7 @@ import { useMemberRecord } from '../hooks/useMemberRecord'
 import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
 import { formatTokenAmount } from '../utils/formatToken'
+import { projectDistribution, cycleEndUnix } from '../utils/distribution'
 import { USDC_MINT } from '../utils/constants'
 
 type MemberStatus = 'on_track' | 'behind' | 'missed'
@@ -95,28 +100,27 @@ function MemberCard({ member, status, isYou }: MemberCardProps) {
   )
 }
 
-function ProgressBar({ current, total, label }: { current: number; total: number; label: string }) {
+function CycleProgress({
+  current,
+  total,
+  ariaLabel,
+}: {
+  current: number
+  total: number
+  ariaLabel: string
+}) {
   const pct = total > 0 ? Math.round((current / total) * 100) : 0
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-2">
-        <span className="font-label text-label-md text-on-surface-variant">
-          {pct}%
-        </span>
+        <span className="font-label text-label-md text-on-surface-variant">{pct}%</span>
       </div>
-      <div
-        className="h-2 lg:h-3 rounded-full bg-surface-container-high overflow-hidden"
-        role="progressbar"
-        aria-valuenow={current}
-        aria-valuemin={0}
-        aria-valuemax={total}
-        aria-label={label}
-      >
-        <div
-          className="h-full rounded-full btn-primary-gradient transition-all duration-500"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <ProgressBar
+        value={current}
+        max={total}
+        ariaLabel={ariaLabel}
+        thickness="md"
+      />
     </div>
   )
 }
@@ -128,6 +132,7 @@ export default function GroupDashboard() {
   const program = useAnchorProgram()
   const { txState, errorDetail, execute, reset } = useTransaction()
   const [showNudge, setShowNudge] = useState(true)
+  const [cancelOpen, setCancelOpen] = useState(false)
 
   const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
   const {
@@ -174,6 +179,18 @@ export default function GroupDashboard() {
     && publicKey.toString() === group?.creator
     && (group?.currentMembers ?? 0) >= 2
 
+  const isCreator = !!publicKey && publicKey.toString() === group?.creator
+  const cycleEnd = group ? cycleEndUnix(group) : 0
+  const cycleHasEnded = group?.status === 'active' && now >= cycleEnd
+  const isCompleted = group?.status === 'completed'
+  const showSettlement = !!group && (cycleHasEnded || isCompleted) && members.length > 0
+  const canCancel = isCreator && (group?.status === 'open' || group?.status === 'active')
+
+  const projection = useMemo(
+    () => (showSettlement && group ? projectDistribution(group, members) : null),
+    [showSettlement, group, members],
+  )
+
   async function handleDeposit() {
     if (!program || !publicKey || !code) return
     const [groupPda] = getGroupConfigPDA(code)
@@ -212,6 +229,63 @@ export default function GroupDashboard() {
         .rpc()
     })
     if (sig) refetchAll()
+  }
+
+  function buildSettlementRemainingAccounts(memberList: GroupMemberData[]) {
+    return memberList.flatMap((m) => {
+      const memberPk = new PublicKey(m.member)
+      const ata = getAssociatedTokenAddressSync(usdcMint, memberPk)
+      return [
+        { pubkey: new PublicKey(m.pda), isWritable: false, isSigner: false },
+        { pubkey: ata, isWritable: true, isSigner: false },
+      ]
+    })
+  }
+
+  async function handleDistribute() {
+    if (!program || !publicKey || !code || !group) return
+    const [groupPda] = getGroupConfigPDA(code)
+    const [vaultPda] = getVaultPDA(groupPda)
+
+    const sig = await execute(async () => {
+      return await program.methods
+        .distribute()
+        .accountsPartial({
+          payer: publicKey,
+          creator: new PublicKey(group.creator),
+          groupConfig: groupPda,
+          vault: vaultPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts(buildSettlementRemainingAccounts(members))
+        .rpc()
+    })
+    if (sig) refetchAll()
+  }
+
+  async function handleCancel() {
+    if (!program || !publicKey || !code || !group) return
+    const [groupPda] = getGroupConfigPDA(code)
+    const [vaultPda] = getVaultPDA(groupPda)
+
+    const sig = await execute(async () => {
+      return await program.methods
+        .emergencyCancel()
+        .accountsPartial({
+          creator: publicKey,
+          groupConfig: groupPda,
+          vault: vaultPda,
+          mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts(buildSettlementRemainingAccounts(members))
+        .rpc()
+    })
+    if (sig) {
+      setCancelOpen(false)
+      refetchAll()
+    }
   }
 
   if (!isValidCode) {
@@ -308,6 +382,19 @@ export default function GroupDashboard() {
           )}
         </div>
 
+        {/* Settlement surface — appears when cycle has ended (active+expired) or is completed */}
+        {showSettlement && projection && (
+          <div className="mb-6">
+            <DistributeSummary
+              mode={isCompleted ? 'post' : 'pre'}
+              projection={projection}
+              yourPubkey={publicKey?.toString() ?? null}
+              loading={txState === 'signing' || txState === 'confirming'}
+              onDistribute={isCompleted ? undefined : handleDistribute}
+            />
+          </div>
+        )}
+
         {/* Desktop: 2-column layout. Mobile: single stack */}
         <div className="lg:grid lg:grid-cols-5 lg:gap-8">
           {/* Main content — 3 columns */}
@@ -324,7 +411,11 @@ export default function GroupDashboard() {
                 </div>
               </div>
 
-              <ProgressBar current={currentPeriod + 1} total={totalPeriods} label={t('groupDashboard.cycleProgress', { current: currentPeriod + 1, total: totalPeriods })} />
+              <CycleProgress
+                current={currentPeriod + 1}
+                total={totalPeriods}
+                ariaLabel={t('groupDashboard.cycleProgress', { current: currentPeriod + 1, total: totalPeriods })}
+              />
 
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div>
@@ -467,7 +558,31 @@ export default function GroupDashboard() {
             </div>
           </div>
         </div>
+
+        {/* Discreet emergency cancel — creator only, open or active groups */}
+        {canCancel && (
+          <div className="mt-8 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setCancelOpen(true)}
+              className="font-label text-label-md text-on-surface-variant hover:text-tertiary transition-colors inline-flex items-center gap-1.5 py-2 px-3"
+            >
+              <Icon name="cancel" size={16} />
+              {t('cancelGroup.trigger')}
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Cancel sheet */}
+      <CancelGroupSheet
+        open={cancelOpen}
+        members={members}
+        groupName={code ?? ''}
+        loading={txState === 'signing' || txState === 'confirming'}
+        onConfirm={handleCancel}
+        onClose={() => setCancelOpen(false)}
+      />
 
       {/* Nudge Toast */}
       {showNudge && (
@@ -490,7 +605,15 @@ export default function GroupDashboard() {
           state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
           groupCode={code}
           errorDetail={errorDetail || undefined}
-          onRetry={canDeposit ? handleDeposit : handleStartCycle}
+          onRetry={
+            cancelOpen
+              ? handleCancel
+              : showSettlement && !isCompleted
+                ? handleDistribute
+                : canDeposit
+                  ? handleDeposit
+                  : handleStartCycle
+          }
           onClose={reset}
         />
       )}
