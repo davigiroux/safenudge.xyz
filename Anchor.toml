@@ -8,10 +8,11 @@ skip-lint = false
 [programs.devnet]
 safenudge = "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB"
 
-# Uncomment + comment out [programs.devnet] above to iterate against an in-process
-# LiteSVM or local validator. Production deploys target devnet only.
-# [programs.localnet]
-# safenudge = "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB"
+# anchor-litesvm's fromWorkspace() hard-codes a lookup of programs.localnet,
+# so this block must stay present for the in-process test suite to load. The
+# program ID is the same as the devnet entry above.
+[programs.localnet]
+safenudge = "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB"
 
 [provider]
 cluster = "devnet"
