@@ -5,11 +5,16 @@ anchor_version = "1.0.2"
 resolution = true
 skip-lint = false
 
-[programs.localnet]
+[programs.devnet]
 safenudge = "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB"
 
+# Uncomment + comment out [programs.devnet] above to iterate against an in-process
+# LiteSVM or local validator. Production deploys target devnet only.
+# [programs.localnet]
+# safenudge = "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB"
+
 [provider]
-cluster = "localnet"
+cluster = "devnet"
 wallet = "~/.config/solana/id.json"
 
 [scripts]
