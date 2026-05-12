@@ -8,7 +8,7 @@ You need these installed locally (versions match the CI matrix; see [.github/wor
 
 - Rust (stable)
 - Solana CLI `v3.1.10+`
-- Anchor CLI `1.0.2` (`avm install 1.0.2 && avm use 1.0.2`)
+- Anchor CLI `1.0.2` (`avm install 1.0.2 && avm use 1.0.2`). If `anchor --version` still reports an older version, a stale `~/.cargo/bin/anchor` may be shadowing avm — rename it and symlink `~/.avm/bin/anchor` onto your PATH.
 - Node 24
 - A funded local wallet at `~/.config/solana/id.json` (`solana-keygen new` if you don't have one)
 
@@ -16,24 +16,27 @@ Three Phantom wallets in a browser — wallet A is the group creator, B and C ar
 
 ## 2. Deploy the program to devnet
 
-One-time operation. Re-deploys cost ~5 SOL each time because Solana doesn't refund program data accounts, so don't redeploy casually.
+One-time operation. The deploy locks ~2.5 SOL of rent in the ProgramData account (recoverable via `solana program close`, but you'd lose the program). Plan for ~5 SOL working balance to cover the deploy plus transaction fee buffer.
 
 ```bash
 solana config set --url devnet
-solana airdrop 5                # may need 2–3 retries due to faucet rate limits
+
+# CLI faucet caps single requests at 2 SOL and is heavily rate-limited.
+# `solana airdrop 5` will almost always be denied. Use web faucet instead:
+#   https://faucet.solana.com  (GitHub auth raises the limit)
+# Or chunk via CLI:
+solana airdrop 2 && sleep 5 && solana airdrop 2 && sleep 5 && solana airdrop 2
 solana balance                  # confirm you have >= 5 SOL
 
-anchor build --features devnet  # resolves FEE_RECIPIENT to FobkDn4… (mainnet treasury)
+# Anchor 1.0 routes cargo flags through `--`; both deploy + IDL publish happen in one step:
+anchor build -- --features devnet     # resolves FEE_RECIPIENT to FobkDn4… (devnet treasury)
 anchor deploy \
+  --program-name safenudge \
   --provider.cluster devnet \
   --program-keypair target/deploy/safenudge-keypair.json
-
-# Publish the IDL so Solscan labels accounts:
-anchor idl init \
-  --provider.cluster devnet \
-  --filepath target/idl/safenudge.json \
-  88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB
 ```
+
+Anchor 1.0 auto-publishes the IDL during `deploy` (stored in a metadata account owned by the IDL metadata program). The 0.x `anchor idl init` step is no longer needed.
 
 **Verify:**
 
@@ -58,6 +61,14 @@ Redeploy after setting — Vercel doesn't auto-rebuild on env changes alone.
 ## 4. Fund the test wallets
 
 Each Phantom wallet needs both SOL (for transaction fees) and USDC (for deposits).
+
+**Reference test wallets (devnet, Phantom):**
+
+| Role | Address |
+|------|---------|
+| A — group creator | `ExnGYk85VVEbsbcXa1kicwQBWWdCxzZ6JXjBNLvmWDh9` |
+| B — member | `CWivgpLaACkLXp5infuBFcSt1hXqa9FnfWnrKMARWNZ5` |
+| C — member | `BDuRxd1Szo4kDgYodrMGPDXnE52GBwevEhDGn723DvgW` |
 
 **SOL:** open https://faucet.solana.com, paste each wallet address, choose Devnet, request 2 SOL. Repeat for all three wallets.
 
