@@ -8,7 +8,7 @@ You need these installed locally (versions match the CI matrix; see [.github/wor
 
 - Rust (stable)
 - Solana CLI `v3.1.10+`
-- Anchor CLI `1.0.2` (`avm install 1.0.2 && avm use 1.0.2`)
+- Anchor CLI `1.0.2` (`avm install 1.0.2 && avm use 1.0.2`). If `anchor --version` still reports an older version, a stale `~/.cargo/bin/anchor` may be shadowing avm — rename it and symlink `~/.avm/bin/anchor` onto your PATH.
 - Node 24
 - A funded local wallet at `~/.config/solana/id.json` (`solana-keygen new` if you don't have one)
 
@@ -16,24 +16,27 @@ Three Phantom wallets in a browser — wallet A is the group creator, B and C ar
 
 ## 2. Deploy the program to devnet
 
-One-time operation. Re-deploys cost ~5 SOL each time because Solana doesn't refund program data accounts, so don't redeploy casually.
+One-time operation. The deploy locks ~2.5 SOL of rent in the ProgramData account (recoverable via `solana program close`, but you'd lose the program). Plan for ~5 SOL working balance to cover the deploy plus transaction fee buffer.
 
 ```bash
 solana config set --url devnet
-solana airdrop 5                # may need 2–3 retries due to faucet rate limits
+
+# CLI faucet caps single requests at 2 SOL and is heavily rate-limited.
+# `solana airdrop 5` will almost always be denied. Use web faucet instead:
+#   https://faucet.solana.com  (GitHub auth raises the limit)
+# Or chunk via CLI:
+solana airdrop 2 && sleep 5 && solana airdrop 2 && sleep 5 && solana airdrop 2
 solana balance                  # confirm you have >= 5 SOL
 
-anchor build --features devnet  # resolves FEE_RECIPIENT to FobkDn4… (mainnet treasury)
+# Anchor 1.0 routes cargo flags through `--`; both deploy + IDL publish happen in one step:
+anchor build -- --features devnet     # resolves FEE_RECIPIENT to FobkDn4… (devnet treasury)
 anchor deploy \
+  --program-name safenudge \
   --provider.cluster devnet \
   --program-keypair target/deploy/safenudge-keypair.json
-
-# Publish the IDL so Solscan labels accounts:
-anchor idl init \
-  --provider.cluster devnet \
-  --filepath target/idl/safenudge.json \
-  88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB
 ```
+
+Anchor 1.0 auto-publishes the IDL during `deploy` (stored in a metadata account owned by the IDL metadata program). The 0.x `anchor idl init` step is no longer needed.
 
 **Verify:**
 
@@ -59,6 +62,14 @@ Redeploy after setting — Vercel doesn't auto-rebuild on env changes alone.
 
 Each Phantom wallet needs both SOL (for transaction fees) and USDC (for deposits).
 
+**Reference test wallets (devnet, Phantom):**
+
+| Role | Address |
+|------|---------|
+| A — group creator | `ExnGYk85VVEbsbcXa1kicwQBWWdCxzZ6JXjBNLvmWDh9` |
+| B — member | `CWivgpLaACkLXp5infuBFcSt1hXqa9FnfWnrKMARWNZ5` |
+| C — member | `BDuRxd1Szo4kDgYodrMGPDXnE52GBwevEhDGn723DvgW` |
+
 **SOL:** open https://faucet.solana.com, paste each wallet address, choose Devnet, request 2 SOL. Repeat for all three wallets.
 
 **USDC:** open https://faucet.circle.com, paste each wallet address, choose Solana Devnet, request 100 USDC. Circle's faucet has a per-wallet rate limit (~1 request per 6 hours); if you need more, see "Troubleshooting" below.
@@ -74,33 +85,33 @@ The full distribute path is already covered by 9 unit tests with on-chain clock 
 1. **Open the Vercel preview** (or `npm run dev` locally with Phantom set to devnet)
 2. **Wallet A** → connect → `/criar` → create group:
    - code: `smoke-001`
-   - frequency: daily
+   - frequency: weekly (program supports weekly / biweekly / monthly only — pick the shortest)
    - periods: 4
-   - deposit: 10 USDC
+   - deposit: 5 USDC (Circle faucet caps at 20 USDC/wallet; 5 × 2 commitments leaves a buffer)
    - penalty: 5% / period
    - max members: 4
    - Submit → Phantom signs → status `Aberto`
-3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 10 USDC
+3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 5 USDC. Wallet A must also click **Entrar** (creator ≠ member — `create_group` only sets up the group, you have to join separately to participate).
 4. Switch back to Wallet A → **Iniciar ciclo** → status flips to `Ativo`
-5. Each of A, B, C deposits in period 0 (`Depositar` button)
+5. ~~Each of A, B, C deposits in period 0~~ — **skip this step.** `join_group` already marks `periods_deposited[0] = true` (see [join_group.rs:64](../programs/safenudge/src/instructions/join_group.rs)), so clicking Depositar again returns `AlreadyDeposited`. Joining is both registration and the period-0 deposit.
 6. Wallet A → scroll to footer → **Encerrar grupo antecipadamente** → review sheet → type `cancelar` → confirm → Phantom signs
 
 **Expected end state:**
 - Group status: `Cancelado`
-- All three wallets get exactly 20 USDC back (10 join deposit + 10 period 0 deposit). Verify in Phantom.
+- All three wallets get exactly 5 USDC back (the single join deposit that doubles as period-0). Verify in Phantom.
 - Solscan shows vault account closed; no residual funds.
 - Treasury (`FobkDn4rY18j5UAhigt5kAGsMyqP8PDxXGMH94TgG2sh`) balance unchanged — cancel never charges the protocol fee.
 
-### Full distribute path (multi-day)
+### Full distribute path (multi-week)
 
-Daily frequency means a 4-period cycle takes ~4 days end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math).
+Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math).
 
 1. Repeat steps 2–4 above with a new group code (e.g. `smoke-002`)
-2. Day 0: A, B, C all deposit
-3. Day 1: A and B deposit, C skips
-4. Day 2: A, B deposit, C skips again
-5. Day 3: A, B, C all deposit
-6. Day 4 (cycle end): dashboard shows the distribute summary — click **Fechar e distribuir** → Phantom signs
+2. Week 0: A, B, C all deposit
+3. Week 1: A and B deposit, C skips
+4. Week 2: A, B deposit, C skips again
+5. Week 3: A, B, C all deposit
+6. End of week 4 (cycle end): dashboard shows the distribute summary — click **Fechar e distribuir** → Phantom signs
 
 **Expected:**
 - Status flips to `Concluído`
@@ -112,7 +123,7 @@ Daily frequency means a 4-period cycle takes ~4 days end-to-end. Run this only w
 ## 6. Troubleshooting
 
 - **Circle faucet rate-limited:** wait 6 hours, or swap to a self-controlled mint (see issue tracker).
-- **`anchor deploy` fails with `insufficient funds`:** redeploys cost a fresh ~5 SOL each. `solana balance` and airdrop more.
+- **`anchor deploy` fails with `insufficient funds`:** redeploys lock fresh ProgramData rent (~2.5 SOL for our 350KB program). `solana balance` and top up to ~5 SOL working balance.
 - **Frontend says "carteira está na rede errada":** open Phantom → Settings → Developer Settings → Change Network → Devnet.
 - **Vercel build fails with `Missing required env var VITE_*`:** the production-strict `requireEnv` is doing its job. Pin the var in Vercel's dashboard.
 - **`groupConfig.status` stuck:** check Solscan for the transaction; if it succeeded, hard-refresh the dashboard (state is cached in React hooks until the next refetch).
