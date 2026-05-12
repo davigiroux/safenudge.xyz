@@ -130,7 +130,7 @@ export default function GroupDashboard() {
   const { code } = useParams<{ code: string }>()
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
-  const { txState, errorDetail, execute, reset } = useTransaction()
+  const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
   const [showNudge, setShowNudge] = useState(true)
   const [cancelOpen, setCancelOpen] = useState(false)
 
@@ -605,6 +605,8 @@ export default function GroupDashboard() {
           state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
           groupCode={code}
           errorDetail={errorDetail || undefined}
+          errorKind={errorKind}
+          errorProgramCode={errorProgramCode}
           onRetry={
             cancelOpen
               ? handleCancel

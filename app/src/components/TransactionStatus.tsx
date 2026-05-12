@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Icon } from './Icon'
 import { Button } from './Button'
+import type { TxErrorKind } from '../utils/txErrors'
 
 type TxState = 'signing' | 'confirming' | 'success' | 'error'
 
@@ -9,6 +10,8 @@ type TransactionStatusProps = {
   state: TxState
   groupCode?: string
   errorDetail?: string
+  errorKind?: TxErrorKind | null
+  errorProgramCode?: string | null
   onRetry?: () => void
   onClose?: () => void
 }
@@ -20,22 +23,44 @@ const stateConfig: Record<TxState, { icon: string; color: string; spin?: boolean
   error: { icon: 'error', color: 'text-error' },
 }
 
-const TITLE_KEYS: Record<TxState, string> = {
+const NON_ERROR_TITLE_KEYS: Record<Exclude<TxState, 'error'>, string> = {
   signing: 'transaction.awaitingSignature',
   confirming: 'transaction.confirming',
   success: 'transaction.success',
-  error: 'transaction.error',
+}
+
+// Maps a classified TxErrorKind to its i18n key under `errors.*`.
+// Program errors look up `errors.programError.<Name>` with a fallback.
+function errorTitleKey(kind: TxErrorKind | null | undefined, programCode: string | null | undefined): string {
+  if (!kind) return 'transaction.errorTitle'
+  if (kind === 'programError' && programCode) {
+    return `errors.programError.${programCode}`
+  }
+  return `errors.${kind}`
 }
 
 export function TransactionStatus({
   state,
   groupCode,
   errorDetail,
+  errorKind,
+  errorProgramCode,
   onRetry,
   onClose,
 }: TransactionStatusProps) {
   const { t } = useTranslation()
   const config = stateConfig[state]
+  const errorTitle = (() => {
+    if (state !== 'error') return ''
+    const key = errorTitleKey(errorKind, errorProgramCode)
+    const fallback = t('transaction.errorTitle')
+    const resolved = t(key, { defaultValue: fallback })
+    return resolved
+  })()
+  const title = state === 'error' ? errorTitle : t(NON_ERROR_TITLE_KEYS[state])
+  // Only show raw detail when it adds info beyond the localized title.
+  const showRawDetail =
+    state === 'error' && !!errorDetail && errorDetail.trim() !== '' && errorDetail !== title
   const dialogRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -63,16 +88,16 @@ export function TransactionStatus({
         className="bg-surface-container-lowest rounded-2xl p-8 max-w-sm mx-4 text-center shadow-nudge outline-none"
       >
         <div className={`mb-4 ${config.spin ? 'animate-spin' : ''}`}>
-          <Icon name={config.icon} size={48} className={config.color} label={t(TITLE_KEYS[state])} />
+          <Icon name={config.icon} size={48} className={config.color} label={title} />
         </div>
 
         <h2 id="tx-status-title" className="font-headline text-headline-sm text-on-surface mb-2">
-          {t(TITLE_KEYS[state])}
+          {title}
         </h2>
 
         <p className="font-body text-body-md text-on-surface-variant mb-6">
           {state === 'success' && t('transaction.successDetail')}
-          {state === 'error' && (errorDetail || t('errors.generic'))}
+          {state === 'error' && (showRawDetail ? errorDetail : t('errors.generic'))}
           {state === 'signing' && t('transaction.securityNote')}
         </p>
 
