@@ -1,4 +1,10 @@
 {
+  "nudge": {
+    "title": "Friendly reminder",
+    "behindOne": "{{name}} hasn't deposited this week yet — want to send a reminder?",
+    "behindMany": "{{count}} people haven't deposited this week yet.",
+    "dismiss": "Got it"
+  },
   "common": {
     "appName": "SafeNudge",
     "tagline": "Collaborative Savings",

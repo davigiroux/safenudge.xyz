@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
@@ -131,7 +131,7 @@ export default function GroupDashboard() {
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
   const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
-  const [showNudge, setShowNudge] = useState(true)
+  const [nudgeDismissed, setNudgeDismissed] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
 
   const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
@@ -190,6 +190,45 @@ export default function GroupDashboard() {
     () => (showSettlement && group ? projectDistribution(group, members) : null),
     [showSettlement, group, members],
   )
+
+  const isActive = group?.status === 'active'
+  const behind = useMemo(
+    () =>
+      isActive
+        ? members.filter(
+            (m) => deriveStatus(m, currentPeriod, isActive) !== 'on_track',
+          )
+        : [],
+    [members, currentPeriod, isActive],
+  )
+
+  const nudgeStorageKey = code ? `safenudge:nudge-dismissed:${code}:${currentPeriod}` : null
+
+  useEffect(() => {
+    if (!nudgeStorageKey) return
+    try {
+      setNudgeDismissed(sessionStorage.getItem(nudgeStorageKey) === '1')
+    } catch {
+      setNudgeDismissed(false)
+    }
+  }, [nudgeStorageKey])
+
+  const dismissNudge = () => {
+    setNudgeDismissed(true)
+    if (nudgeStorageKey) {
+      try {
+        sessionStorage.setItem(nudgeStorageKey, '1')
+      } catch {
+        // sessionStorage unavailable — fall back to in-memory dismissal only
+      }
+    }
+  }
+
+  const showNudge = !nudgeDismissed && isActive && behind.length > 0
+  const firstBehind = behind[0]
+  const nudgeMemberName = firstBehind
+    ? shortPubkey(firstBehind.member)
+    : undefined
 
   async function handleDeposit() {
     if (!program || !publicKey || !code) return
@@ -588,15 +627,15 @@ export default function GroupDashboard() {
       {showNudge && (
         <NudgeToast
           icon="priority_high"
+          behindCount={behind.length}
+          memberName={nudgeMemberName}
           action={{
-            label: t('groupDashboard.sendNudge'),
-            onClick: () => setShowNudge(false),
+            label: t('nudge.dismiss'),
+            onClick: dismissNudge,
           }}
-          onClose={() => setShowNudge(false)}
+          onClose={dismissNudge}
           duration={8000}
-        >
-          {t('createGroup.penaltyHint')}
-        </NudgeToast>
+        />
       )}
 
       {/* Transaction Status Modal */}

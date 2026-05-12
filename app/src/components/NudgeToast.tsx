@@ -1,9 +1,12 @@
 import { useState, useEffect, type ReactNode } from 'react'
+import { useTranslation } from 'react-i18next'
 import { Icon } from './Icon'
 
 type NudgeToastProps = {
   icon?: string
-  children: ReactNode
+  children?: ReactNode
+  memberName?: string
+  behindCount?: number
   action?: {
     label: string
     onClick: () => void
@@ -15,10 +18,21 @@ type NudgeToastProps = {
 export function NudgeToast({
   icon = 'lightbulb',
   children,
+  memberName,
+  behindCount,
   action,
   duration = 6000,
   onClose,
 }: NudgeToastProps) {
+  const { t } = useTranslation()
+
+  let body: ReactNode = children
+  if (behindCount !== undefined && behindCount > 0) {
+    body =
+      behindCount === 1
+        ? t('nudge.behindOne', { name: memberName ?? '' })
+        : t('nudge.behindMany', { count: behindCount })
+  }
   const [visible, setVisible] = useState(false)
 
   useEffect(() => {
@@ -52,7 +66,7 @@ export function NudgeToast({
 
       <div className="flex-1 min-w-0">
         <div className="font-body text-body-md text-on-surface">
-          {children}
+          {body}
         </div>
         {action && (
           <button
