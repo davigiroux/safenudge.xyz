@@ -163,7 +163,9 @@
   "myGroups": {
     "title": "Meus Grupos",
     "progress": "{{current}} de {{total}} depósitos",
-    "viewGroup": "Ver Grupo"
+    "viewGroup": "Ver Grupo",
+    "creatorNotJoinedHint": "Você criou este grupo mas ainda não entrou.",
+    "joinNow": "Entrar agora"
   },
   "emptyState": {
     "noGroups": "Você ainda não participa de nenhum grupo",

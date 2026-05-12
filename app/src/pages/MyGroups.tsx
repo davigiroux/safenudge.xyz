@@ -14,6 +14,7 @@ type GroupInfo = {
   depositsMade: number
   totalPeriods: number
   depositAmount: number
+  creatorOnly?: boolean
 }
 
 const STATUS_MAP: Record<number, string> = {
@@ -58,16 +59,23 @@ export default function MyGroups() {
     async function fetchGroups() {
       setLoading(true)
       try {
-        // Fetch all member records where member == connected wallet
-        // MemberRecord layout: discriminator(8) + group(32) + member(32)
-        // member field starts at offset 40
-        const memberRecords = await program!.account.memberRecord.all([
-          { memcmp: { offset: 40, bytes: publicKey!.toBase58() } }
+        // Fetch in parallel:
+        // 1. MemberRecord PDAs where member == connected wallet (offset 40)
+        // 2. All GroupConfig accounts (filter creator client-side — group_code
+        //    is a variable-length String, so creator's byte offset is dynamic
+        //    and not safe for memcmp filtering).
+        const [memberRecords, allGroups] = await Promise.all([
+          program!.account.memberRecord.all([
+            { memcmp: { offset: 40, bytes: publicKey!.toBase58() } }
+          ]),
+          program!.account.groupConfig.all(),
         ])
 
         if (cancelled) return
 
         const groupInfos: GroupInfo[] = []
+        const seenCodes = new Set<string>()
+
         for (const record of memberRecords) {
           try {
             const groupAccount = await program!.account.groupConfig.fetch(record.account.group)
@@ -78,9 +86,25 @@ export default function MyGroups() {
               totalPeriods: groupAccount.totalPeriods,
               depositAmount: groupAccount.depositAmount.toNumber(),
             })
+            seenCodes.add(groupAccount.groupCode)
           } catch {
             // Skip groups that can't be fetched
           }
+        }
+
+        // Append creator-owned groups the wallet hasn't joined yet
+        for (const g of allGroups) {
+          if (!g.account.creator.equals(publicKey!)) continue
+          if (seenCodes.has(g.account.groupCode)) continue
+          groupInfos.push({
+            groupCode: g.account.groupCode,
+            status: STATUS_MAP[g.account.status] || 'unknown',
+            depositsMade: 0,
+            totalPeriods: g.account.totalPeriods,
+            depositAmount: g.account.depositAmount.toNumber(),
+            creatorOnly: true,
+          })
+          seenCodes.add(g.account.groupCode)
         }
 
         if (!cancelled) setGroups(groupInfos)
@@ -146,28 +170,45 @@ export default function MyGroups() {
             {t('myGroups.title')}
           </h1>
           <div className="flex flex-col gap-4">
-            {groups.map((group) => (
-              <Link key={group.groupCode} to={`/grupo/${group.groupCode}`} className="block">
-                <Card variant="surface" className="hover:shadow-nudge transition-shadow">
-                  <div className="flex items-center justify-between">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-headline text-title-md text-on-surface truncate">
-                          {group.groupCode}
-                        </span>
-                        <span className={`font-label text-label-sm px-2 py-0.5 rounded-full ${STATUS_COLORS[group.status] || STATUS_COLORS.open}`}>
-                          {t(STATUS_LABELS[group.status] || STATUS_LABELS.open)}
-                        </span>
+            {groups.map((group) => {
+              const href = group.creatorOnly
+                ? `/entrar/${group.groupCode}`
+                : `/grupo/${group.groupCode}`
+              return (
+                <Link key={group.groupCode} to={href} className="block">
+                  <Card variant="surface" className="hover:shadow-nudge transition-shadow">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="font-headline text-title-md text-on-surface truncate">
+                            {group.groupCode}
+                          </span>
+                          <span className={`font-label text-label-sm px-2 py-0.5 rounded-full ${STATUS_COLORS[group.status] || STATUS_COLORS.open}`}>
+                            {t(STATUS_LABELS[group.status] || STATUS_LABELS.open)}
+                          </span>
+                        </div>
+                        {group.creatorOnly ? (
+                          <span className="font-label text-label-md text-on-surface-variant">
+                            {t('myGroups.creatorNotJoinedHint')}
+                          </span>
+                        ) : (
+                          <span className="font-label text-label-md text-on-surface-variant">
+                            {t('myGroups.progress', { current: group.depositsMade, total: group.totalPeriods })}
+                          </span>
+                        )}
                       </div>
-                      <span className="font-label text-label-md text-on-surface-variant">
-                        {t('myGroups.progress', { current: group.depositsMade, total: group.totalPeriods })}
-                      </span>
+                      {group.creatorOnly ? (
+                        <span className="flex-shrink-0 font-label text-label-md text-primary">
+                          {t('myGroups.joinNow')}
+                        </span>
+                      ) : (
+                        <Icon name="chevron_right" size={24} className="text-on-surface-variant flex-shrink-0" />
+                      )}
                     </div>
-                    <Icon name="chevron_right" size={24} className="text-on-surface-variant flex-shrink-0" />
-                  </div>
-                </Card>
-              </Link>
-            ))}
+                  </Card>
+                </Link>
+              )
+            })}
           </div>
 
           {/* Actions below group list */}
