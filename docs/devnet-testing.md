@@ -91,14 +91,14 @@ The full distribute path is already covered by 9 unit tests with on-chain clock 
    - penalty: 5% / period
    - max members: 4
    - Submit → Phantom signs → status `Aberto`
-3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 5 USDC
+3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 5 USDC. Wallet A must also click **Entrar** (creator ≠ member — `create_group` only sets up the group, you have to join separately to participate).
 4. Switch back to Wallet A → **Iniciar ciclo** → status flips to `Ativo`
-5. Each of A, B, C deposits in period 0 (`Depositar` button)
+5. ~~Each of A, B, C deposits in period 0~~ — **skip this step.** `join_group` already marks `periods_deposited[0] = true` (see [join_group.rs:64](../programs/safenudge/src/instructions/join_group.rs)), so clicking Depositar again returns `AlreadyDeposited`. Joining is both registration and the period-0 deposit.
 6. Wallet A → scroll to footer → **Encerrar grupo antecipadamente** → review sheet → type `cancelar` → confirm → Phantom signs
 
 **Expected end state:**
 - Group status: `Cancelado`
-- All three wallets get exactly 10 USDC back (5 join deposit + 5 period 0 deposit). Verify in Phantom.
+- All three wallets get exactly 5 USDC back (the single join deposit that doubles as period-0). Verify in Phantom.
 - Solscan shows vault account closed; no residual funds.
 - Treasury (`FobkDn4rY18j5UAhigt5kAGsMyqP8PDxXGMH94TgG2sh`) balance unchanged — cancel never charges the protocol fee.
 
