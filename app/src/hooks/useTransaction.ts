@@ -1,15 +1,22 @@
 import { useState, useCallback } from 'react'
+import { classifyTxError, type TxErrorKind } from '../utils/txErrors'
 
 export type TxState = 'idle' | 'signing' | 'confirming' | 'success' | 'error'
 
 type UseTransactionReturn = {
   txState: TxState
+  /** Raw underlying message — kept for backwards compat / secondary display. */
   errorDetail: string | null
+  /** Classified error kind — drives the localized error title. */
+  errorKind: TxErrorKind | null
+  /** Anchor program error name when errorKind === 'programError'. */
+  errorProgramCode: string | null
   /**
    * Run a transaction. Returns the signature on success, or `null` on
-   * failure (in which case `txState` is `'error'` and `errorDetail`
-   * contains the message). Callers that need to act on success — e.g.
-   * to refetch on-chain state — should gate on a non-null return.
+   * failure (in which case `txState` is `'error'` and `errorDetail` /
+   * `errorKind` describe the failure). Callers that need to act on
+   * success — e.g. to refetch on-chain state — should gate on a
+   * non-null return.
    */
   execute: (fn: () => Promise<string>) => Promise<string | null>
   reset: () => void
@@ -18,10 +25,14 @@ type UseTransactionReturn = {
 export function useTransaction(): UseTransactionReturn {
   const [txState, setTxState] = useState<TxState>('idle')
   const [errorDetail, setErrorDetail] = useState<string | null>(null)
+  const [errorKind, setErrorKind] = useState<TxErrorKind | null>(null)
+  const [errorProgramCode, setErrorProgramCode] = useState<string | null>(null)
 
   const reset = useCallback(() => {
     setTxState('idle')
     setErrorDetail(null)
+    setErrorKind(null)
+    setErrorProgramCode(null)
   }, [])
 
   // The wallet popup is shown during the rpc await — we want the UI to
@@ -32,6 +43,8 @@ export function useTransaction(): UseTransactionReturn {
   const execute = useCallback(async (fn: () => Promise<string>): Promise<string | null> => {
     setTxState('signing')
     setErrorDetail(null)
+    setErrorKind(null)
+    setErrorProgramCode(null)
     try {
       const sig = await fn()
       setTxState('confirming')
@@ -41,12 +54,14 @@ export function useTransaction(): UseTransactionReturn {
       setTxState('success')
       return sig
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Transaction failed'
-      setErrorDetail(message)
+      const classified = classifyTxError(err)
+      setErrorDetail(classified.raw ?? 'Transaction failed')
+      setErrorKind(classified.kind)
+      setErrorProgramCode(classified.programCode ?? null)
       setTxState('error')
       return null
     }
   }, [])
 
-  return { txState, errorDetail, execute, reset }
+  return { txState, errorDetail, errorKind, errorProgramCode, execute, reset }
 }

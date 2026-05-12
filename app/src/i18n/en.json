@@ -169,7 +169,9 @@
   "myGroups": {
     "title": "My Groups",
     "progress": "{{current}} of {{total}} deposits",
-    "viewGroup": "View Group"
+    "viewGroup": "View Group",
+    "creatorNotJoinedHint": "You created this group but haven't joined yet.",
+    "joinNow": "Join now"
   },
   "emptyState": {
     "noGroups": "You're not part of any group yet",
@@ -185,8 +187,7 @@
     "confirming": "Confirming on network...",
     "success": "Deposit confirmed!",
     "successDetail": "Your transaction was sent and confirmed successfully on the network",
-    "error": "Insufficient balance",
-    "errorDetail": "You need at least {{amount}} USDC",
+    "errorTitle": "Something went wrong",
     "viewExplorer": "View on Explorer",
     "returnHome": "Return Home",
     "tryAgain": "Try Again",
@@ -373,7 +374,20 @@
     "generic": "Something went wrong. Shall we try again?",
     "walletNotConnected": "Connect your wallet to continue",
     "wrongNetwork": "Your wallet is on the wrong network. Switch to Devnet.",
+    "blockhashExpired": "The network took too long to respond. Please try again.",
     "insufficientBalance": "Insufficient balance for this operation",
+    "userRejected": "You cancelled the signature.",
+    "simulationFailed": "Simulation failed. Check your connection.",
+    "unknown": "Something went wrong. Try again in a few seconds.",
+    "programError": {
+      "GroupFull": "This group is already full",
+      "GroupNotOpen": "This group is not accepting new members",
+      "AlreadyDeposited": "You already deposited this period",
+      "CycleNotActive": "This group's cycle hasn't started yet",
+      "CycleNotEnded": "The cycle hasn't ended yet",
+      "NotCreator": "Only the group creator can do this",
+      "InvalidGroupCode": "Invalid group code"
+    },
     "groupFull": "This group is already full",
     "groupNotOpen": "This group is not accepting new members",
     "alreadyDeposited": "You already deposited this period",
