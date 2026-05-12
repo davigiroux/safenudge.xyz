@@ -85,33 +85,33 @@ The full distribute path is already covered by 9 unit tests with on-chain clock 
 1. **Open the Vercel preview** (or `npm run dev` locally with Phantom set to devnet)
 2. **Wallet A** → connect → `/criar` → create group:
    - code: `smoke-001`
-   - frequency: daily
+   - frequency: weekly (program supports weekly / biweekly / monthly only — pick the shortest)
    - periods: 4
-   - deposit: 10 USDC
+   - deposit: 5 USDC (Circle faucet caps at 20 USDC/wallet; 5 × 2 commitments leaves a buffer)
    - penalty: 5% / period
    - max members: 4
    - Submit → Phantom signs → status `Aberto`
-3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 10 USDC
+3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 5 USDC
 4. Switch back to Wallet A → **Iniciar ciclo** → status flips to `Ativo`
 5. Each of A, B, C deposits in period 0 (`Depositar` button)
 6. Wallet A → scroll to footer → **Encerrar grupo antecipadamente** → review sheet → type `cancelar` → confirm → Phantom signs
 
 **Expected end state:**
 - Group status: `Cancelado`
-- All three wallets get exactly 20 USDC back (10 join deposit + 10 period 0 deposit). Verify in Phantom.
+- All three wallets get exactly 10 USDC back (5 join deposit + 5 period 0 deposit). Verify in Phantom.
 - Solscan shows vault account closed; no residual funds.
 - Treasury (`FobkDn4rY18j5UAhigt5kAGsMyqP8PDxXGMH94TgG2sh`) balance unchanged — cancel never charges the protocol fee.
 
-### Full distribute path (multi-day)
+### Full distribute path (multi-week)
 
-Daily frequency means a 4-period cycle takes ~4 days end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math).
+Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math).
 
 1. Repeat steps 2–4 above with a new group code (e.g. `smoke-002`)
-2. Day 0: A, B, C all deposit
-3. Day 1: A and B deposit, C skips
-4. Day 2: A, B deposit, C skips again
-5. Day 3: A, B, C all deposit
-6. Day 4 (cycle end): dashboard shows the distribute summary — click **Fechar e distribuir** → Phantom signs
+2. Week 0: A, B, C all deposit
+3. Week 1: A and B deposit, C skips
+4. Week 2: A, B deposit, C skips again
+5. Week 3: A, B, C all deposit
+6. End of week 4 (cycle end): dashboard shows the distribute summary — click **Fechar e distribuir** → Phantom signs
 
 **Expected:**
 - Status flips to `Concluído`
@@ -123,7 +123,7 @@ Daily frequency means a 4-period cycle takes ~4 days end-to-end. Run this only w
 ## 6. Troubleshooting
 
 - **Circle faucet rate-limited:** wait 6 hours, or swap to a self-controlled mint (see issue tracker).
-- **`anchor deploy` fails with `insufficient funds`:** redeploys cost a fresh ~5 SOL each. `solana balance` and airdrop more.
+- **`anchor deploy` fails with `insufficient funds`:** redeploys lock fresh ProgramData rent (~2.5 SOL for our 350KB program). `solana balance` and top up to ~5 SOL working balance.
 - **Frontend says "carteira está na rede errada":** open Phantom → Settings → Developer Settings → Change Network → Devnet.
 - **Vercel build fails with `Missing required env var VITE_*`:** the production-strict `requireEnv` is doing its job. Pin the var in Vercel's dashboard.
 - **`groupConfig.status` stuck:** check Solscan for the transaction; if it succeeded, hard-refresh the dashboard (state is cached in React hooks until the next refetch).
