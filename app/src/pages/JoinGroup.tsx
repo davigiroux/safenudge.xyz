@@ -26,7 +26,7 @@ export default function JoinGroup() {
   const navigate = useNavigate()
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
-  const { txState, errorDetail, execute, reset } = useTransaction()
+  const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
 
   const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
   const { data: group, loading: groupLoading, error: groupError } = useGroupConfig(isValidCode ? code : undefined)
@@ -274,6 +274,8 @@ export default function JoinGroup() {
           state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
           groupCode={code}
           errorDetail={errorDetail || undefined}
+          errorKind={errorKind}
+          errorProgramCode={errorProgramCode}
           onRetry={handleJoin}
           onClose={reset}
         />
