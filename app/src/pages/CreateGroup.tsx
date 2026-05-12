@@ -11,6 +11,7 @@ import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { getGroupConfigPDA, getVaultPDA } from '../utils/pda'
 import { USDC_MINT } from '../utils/constants'
+import { bucketAmount, FREQUENCY_NAMES, hashId, track } from '../utils/analytics'
 
 type Frequency = '0' | '1' | '2'
 
@@ -61,29 +62,50 @@ export default function CreateGroup() {
     const [groupConfigPda] = getGroupConfigPDA(groupCode)
     const [vaultPda] = getVaultPDA(groupConfigPda)
 
-    const sig = await execute(async () => {
-      return await program.methods
-        .createGroup(
-          groupCode,
-          depositAmountBN,
-          parseInt(frequency),
-          totalPeriods,
-          maxMembers,
-          parseInt(penaltyType),
-          penaltyBN,
-        )
-        .accountsPartial({
-          creator: publicKey,
-          groupConfig: groupConfigPda,
-          vault: vaultPda,
-          mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc()
-    })
+    const groupHash = await hashId(groupCode)
+    const groupProps = {
+      group_code_hash: groupHash,
+      frequency: FREQUENCY_NAMES[parseInt(frequency)],
+      total_periods: totalPeriods,
+      max_members: maxMembers,
+      deposit_bucket: bucketAmount(amount),
+      penalty_type: penaltyType === '1' ? ('percent' as const) : ('fixed' as const),
+    }
+    track('group_create_submitted', groupProps)
+
+    const sig = await execute(
+      async () =>
+        await program.methods
+          .createGroup(
+            groupCode,
+            depositAmountBN,
+            parseInt(frequency),
+            totalPeriods,
+            maxMembers,
+            parseInt(penaltyType),
+            penaltyBN,
+          )
+          .accountsPartial({
+            creator: publicKey,
+            groupConfig: groupConfigPda,
+            vault: vaultPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc(),
+      {
+        onError: (err) =>
+          track('group_create_failed', {
+            ...groupProps,
+            error_kind: err.kind,
+            program_code: err.programCode ?? null,
+          }),
+      },
+    )
 
     if (sig) {
+      track('group_created', { ...groupProps, signature: sig })
       setTimeout(() => navigate(`/grupo/${groupCode}`), 1500)
     }
   }

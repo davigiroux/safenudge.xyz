@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { classifyTxError, type TxErrorKind } from '../utils/txErrors'
+import { classifyTxError, type ClassifiedTxError, type TxErrorKind } from '../utils/txErrors'
 
 export type TxState = 'idle' | 'signing' | 'confirming' | 'success' | 'error'
 
@@ -18,7 +18,10 @@ type UseTransactionReturn = {
    * success — e.g. to refetch on-chain state — should gate on a
    * non-null return.
    */
-  execute: (fn: () => Promise<string>) => Promise<string | null>
+  execute: (
+    fn: () => Promise<string>,
+    opts?: { onError?: (err: ClassifiedTxError) => void },
+  ) => Promise<string | null>
   reset: () => void
 }
 
@@ -40,7 +43,10 @@ export function useTransaction(): UseTransactionReturn {
   // "confirming" once the signature comes back and we're waiting on
   // network confirmation. The previous version flipped both states in
   // the same tick, so the signing UI never rendered.
-  const execute = useCallback(async (fn: () => Promise<string>): Promise<string | null> => {
+  const execute = useCallback(async (
+    fn: () => Promise<string>,
+    opts?: { onError?: (err: ClassifiedTxError) => void },
+  ): Promise<string | null> => {
     setTxState('signing')
     setErrorDetail(null)
     setErrorKind(null)
@@ -59,6 +65,7 @@ export function useTransaction(): UseTransactionReturn {
       setErrorKind(classified.kind)
       setErrorProgramCode(classified.programCode ?? null)
       setTxState('error')
+      opts?.onError?.(classified)
       return null
     }
   }, [])

@@ -18,6 +18,7 @@ import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda
 import { formatTokenAmount } from '../utils/formatToken'
 import { projectDistribution, cycleEndUnix } from '../utils/distribution'
 import { USDC_MINT } from '../utils/constants'
+import { hashId, track } from '../utils/analytics'
 
 type MemberStatus = 'on_track' | 'behind' | 'missed'
 
@@ -237,37 +238,76 @@ export default function GroupDashboard() {
     const [vaultPda] = getVaultPDA(groupPda)
     const memberAta = getAssociatedTokenAddressSync(usdcMint, publicKey)
 
-    const sig = await execute(async () => {
-      return await program.methods
-        .deposit()
-        .accountsPartial({
-          member: publicKey,
-          groupConfig: groupPda,
-          memberRecord: memberPda,
-          memberTokenAccount: memberAta,
-          vault: vaultPda,
-          mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .rpc()
-    })
-    if (sig) refetchAll()
+    const groupHash = await hashId(code)
+    const periodIndex = currentPeriod
+    track('deposit_submitted', { group_code_hash: groupHash, period_index: periodIndex })
+
+    const sig = await execute(
+      async () =>
+        await program.methods
+          .deposit()
+          .accountsPartial({
+            member: publicKey,
+            groupConfig: groupPda,
+            memberRecord: memberPda,
+            memberTokenAccount: memberAta,
+            vault: vaultPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .rpc(),
+      {
+        onError: (err) =>
+          track('deposit_failed', {
+            group_code_hash: groupHash,
+            period_index: periodIndex,
+            error_kind: err.kind,
+            program_code: err.programCode ?? null,
+          }),
+      },
+    )
+    if (sig) {
+      track('deposit_confirmed', {
+        group_code_hash: groupHash,
+        period_index: periodIndex,
+        signature: sig,
+      })
+      refetchAll()
+    }
   }
 
   async function handleStartCycle() {
     if (!program || !publicKey || !code) return
     const [groupPda] = getGroupConfigPDA(code)
 
-    const sig = await execute(async () => {
-      return await program.methods
-        .startCycle()
-        .accountsPartial({
-          creator: publicKey,
-          groupConfig: groupPda,
-        })
-        .rpc()
+    const groupHash = await hashId(code)
+    track('cycle_start_submitted', {
+      group_code_hash: groupHash,
+      member_count: group?.currentMembers ?? 0,
     })
-    if (sig) refetchAll()
+
+    const sig = await execute(
+      async () =>
+        await program.methods
+          .startCycle()
+          .accountsPartial({
+            creator: publicKey,
+            groupConfig: groupPda,
+          })
+          .rpc(),
+      {
+        onError: (err) =>
+          track('cycle_start_failed', {
+            group_code_hash: groupHash,
+            error_kind: err.kind,
+            program_code: err.programCode ?? null,
+          }),
+      },
+    )
+    if (sig) {
+      track('cycle_started', { group_code_hash: groupHash, signature: sig })
+      refetchAll()
+    }
   }
 
   function buildSettlementRemainingAccounts(memberList: GroupMemberData[]) {
@@ -286,21 +326,43 @@ export default function GroupDashboard() {
     const [groupPda] = getGroupConfigPDA(code)
     const [vaultPda] = getVaultPDA(groupPda)
 
-    const sig = await execute(async () => {
-      return await program.methods
-        .distribute()
-        .accountsPartial({
-          payer: publicKey,
-          creator: new PublicKey(group.creator),
-          groupConfig: groupPda,
-          vault: vaultPda,
-          mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .remainingAccounts(buildSettlementRemainingAccounts(members))
-        .rpc()
+    const groupHash = await hashId(code)
+    track('distribution_submitted', {
+      group_code_hash: groupHash,
+      member_count: members.length,
     })
-    if (sig) refetchAll()
+
+    const sig = await execute(
+      async () =>
+        await program.methods
+          .distribute()
+          .accountsPartial({
+            payer: publicKey,
+            creator: new PublicKey(group.creator),
+            groupConfig: groupPda,
+            vault: vaultPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts(buildSettlementRemainingAccounts(members))
+          .rpc(),
+      {
+        onError: (err) =>
+          track('distribution_failed', {
+            group_code_hash: groupHash,
+            error_kind: err.kind,
+            program_code: err.programCode ?? null,
+          }),
+      },
+    )
+    if (sig) {
+      track('distribution_completed', {
+        group_code_hash: groupHash,
+        member_count: members.length,
+        signature: sig,
+      })
+      refetchAll()
+    }
   }
 
   async function handleCancel() {
@@ -308,20 +370,33 @@ export default function GroupDashboard() {
     const [groupPda] = getGroupConfigPDA(code)
     const [vaultPda] = getVaultPDA(groupPda)
 
-    const sig = await execute(async () => {
-      return await program.methods
-        .emergencyCancel()
-        .accountsPartial({
-          creator: publicKey,
-          groupConfig: groupPda,
-          vault: vaultPda,
-          mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .remainingAccounts(buildSettlementRemainingAccounts(members))
-        .rpc()
-    })
+    const groupHash = await hashId(code)
+    track('emergency_cancel_submitted', { group_code_hash: groupHash })
+
+    const sig = await execute(
+      async () =>
+        await program.methods
+          .emergencyCancel()
+          .accountsPartial({
+            creator: publicKey,
+            groupConfig: groupPda,
+            vault: vaultPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts(buildSettlementRemainingAccounts(members))
+          .rpc(),
+      {
+        onError: (err) =>
+          track('emergency_cancel_failed', {
+            group_code_hash: groupHash,
+            error_kind: err.kind,
+            program_code: err.programCode ?? null,
+          }),
+      },
+    )
     if (sig) {
+      track('emergency_cancel_completed', { group_code_hash: groupHash, signature: sig })
       setCancelOpen(false)
       refetchAll()
     }

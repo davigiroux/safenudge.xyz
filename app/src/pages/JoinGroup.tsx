@@ -13,6 +13,7 @@ import { useMemberRecord } from '../hooks/useMemberRecord'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
 import { formatTokenAmount } from '../utils/formatToken'
 import { USDC_MINT } from '../utils/constants'
+import { bucketAmount, hashId, track } from '../utils/analytics'
 
 const FREQUENCY_LABELS: Record<string, string> = {
   weekly: 'createGroup.weekly',
@@ -49,23 +50,37 @@ export default function JoinGroup() {
     const [vaultPda] = getVaultPDA(groupPda)
     const memberAta = getAssociatedTokenAddressSync(usdcMint, publicKey)
 
-    const sig = await execute(async () => {
-      return await program.methods
-        .joinGroup()
-        .accountsPartial({
-          member: publicKey,
-          groupConfig: groupPda,
-          memberRecord: memberPda,
-          memberTokenAccount: memberAta,
-          vault: vaultPda,
-          mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-        })
-        .rpc()
-    })
+    const groupHash = await hashId(code)
+    const depositBucket = bucketAmount(group.depositAmount / 1_000_000)
+    track('group_join_attempted', { group_code_hash: groupHash, deposit_bucket: depositBucket })
+
+    const sig = await execute(
+      async () =>
+        await program.methods
+          .joinGroup()
+          .accountsPartial({
+            member: publicKey,
+            groupConfig: groupPda,
+            memberRecord: memberPda,
+            memberTokenAccount: memberAta,
+            vault: vaultPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .rpc(),
+      {
+        onError: (err) =>
+          track('group_join_failed', {
+            group_code_hash: groupHash,
+            error_kind: err.kind,
+            program_code: err.programCode ?? null,
+          }),
+      },
+    )
 
     if (sig) {
+      track('group_joined', { group_code_hash: groupHash, signature: sig })
       setTimeout(() => navigate(`/grupo/${code}`), 1500)
     }
   }
