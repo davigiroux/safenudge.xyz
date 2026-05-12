@@ -1,4 +1,10 @@
 {
+  "nudge": {
+    "title": "Lembrete amigável",
+    "behindOne": "{{name}} ainda não depositou esta semana — quer mandar um lembrete?",
+    "behindMany": "{{count}} pessoas ainda não depositaram esta semana.",
+    "dismiss": "Ok, obrigado"
+  },
   "common": {
     "appName": "SafeNudge",
     "tagline": "Poupança Colaborativa",
