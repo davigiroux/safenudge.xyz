@@ -1,0 +1,125 @@
+# Devnet Testing
+
+How to deploy SafeNudge to Solana devnet and run an end-to-end test with three Phantom wallets. This is the manual smoke test path — CI deploy automation is intentionally out of scope.
+
+## 1. Prerequisites
+
+You need these installed locally (versions match the CI matrix; see [.github/workflows/ci.yml](../.github/workflows/ci.yml)):
+
+- Rust (stable)
+- Solana CLI `v3.1.10+`
+- Anchor CLI `1.0.2` (`avm install 1.0.2 && avm use 1.0.2`)
+- Node 24
+- A funded local wallet at `~/.config/solana/id.json` (`solana-keygen new` if you don't have one)
+
+Three Phantom wallets in a browser — wallet A is the group creator, B and C are members.
+
+## 2. Deploy the program to devnet
+
+One-time operation. Re-deploys cost ~5 SOL each time because Solana doesn't refund program data accounts, so don't redeploy casually.
+
+```bash
+solana config set --url devnet
+solana airdrop 5                # may need 2–3 retries due to faucet rate limits
+solana balance                  # confirm you have >= 5 SOL
+
+anchor build --features devnet  # resolves FEE_RECIPIENT to FobkDn4… (mainnet treasury)
+anchor deploy \
+  --provider.cluster devnet \
+  --program-keypair target/deploy/safenudge-keypair.json
+
+# Publish the IDL so Solscan labels accounts:
+anchor idl init \
+  --provider.cluster devnet \
+  --filepath target/idl/safenudge.json \
+  88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB
+```
+
+**Verify:**
+
+```bash
+solana program show 88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB --url devnet
+```
+
+Output should show `Last Deployed Slot` and the program data account. The program ID matches the one hardcoded in [app/src/utils/constants.ts](../app/src/utils/constants.ts) and [Anchor.toml](../Anchor.toml).
+
+## 3. Vercel environment variables
+
+Production builds use `requireEnv` (see [app/src/utils/constants.ts](../app/src/utils/constants.ts)) which throws if any `VITE_*` var is missing. Set these in Vercel's project settings under `Environment Variables`, scoped to `Production`, `Preview`, and `Development`:
+
+| Name | Value |
+|------|-------|
+| `VITE_PROGRAM_ID` | `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB` |
+| `VITE_USDC_MINT` | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
+| `VITE_SOLANA_RPC_URL` | `https://api.devnet.solana.com` (or a private RPC URL) |
+
+Redeploy after setting — Vercel doesn't auto-rebuild on env changes alone.
+
+## 4. Fund the test wallets
+
+Each Phantom wallet needs both SOL (for transaction fees) and USDC (for deposits).
+
+**SOL:** open https://faucet.solana.com, paste each wallet address, choose Devnet, request 2 SOL. Repeat for all three wallets.
+
+**USDC:** open https://faucet.circle.com, paste each wallet address, choose Solana Devnet, request 100 USDC. Circle's faucet has a per-wallet rate limit (~1 request per 6 hours); if you need more, see "Troubleshooting" below.
+
+Confirm balances in Phantom before starting the smoke test.
+
+## 5. Smoke test — 3-wallet, single cycle
+
+The full distribute path is already covered by 9 unit tests with on-chain clock manipulation, so this devnet smoke is about proving the deployed program + frontend + Phantom wiring work — not re-validating math. We use emergency cancel as the short path; the optional multi-day distribute test follows.
+
+### Quick path (~5 min) — cancel before cycle end
+
+1. **Open the Vercel preview** (or `npm run dev` locally with Phantom set to devnet)
+2. **Wallet A** → connect → `/criar` → create group:
+   - code: `smoke-001`
+   - frequency: daily
+   - periods: 4
+   - deposit: 10 USDC
+   - penalty: 5% / period
+   - max members: 4
+   - Submit → Phantom signs → status `Aberto`
+3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 10 USDC
+4. Switch back to Wallet A → **Iniciar ciclo** → status flips to `Ativo`
+5. Each of A, B, C deposits in period 0 (`Depositar` button)
+6. Wallet A → scroll to footer → **Encerrar grupo antecipadamente** → review sheet → type `cancelar` → confirm → Phantom signs
+
+**Expected end state:**
+- Group status: `Cancelado`
+- All three wallets get exactly 20 USDC back (10 join deposit + 10 period 0 deposit). Verify in Phantom.
+- Solscan shows vault account closed; no residual funds.
+- Treasury (`FobkDn4rY18j5UAhigt5kAGsMyqP8PDxXGMH94TgG2sh`) balance unchanged — cancel never charges the protocol fee.
+
+### Full distribute path (multi-day)
+
+Daily frequency means a 4-period cycle takes ~4 days end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math).
+
+1. Repeat steps 2–4 above with a new group code (e.g. `smoke-002`)
+2. Day 0: A, B, C all deposit
+3. Day 1: A and B deposit, C skips
+4. Day 2: A, B deposit, C skips again
+5. Day 3: A, B, C all deposit
+6. Day 4 (cycle end): dashboard shows the distribute summary — click **Fechar e distribuir** → Phantom signs
+
+**Expected:**
+- Status flips to `Concluído`
+- A and B receive >10×4 = 40 USDC each (base + bonus from C's penalty pool)
+- C receives <40 USDC (penalty applied, capped at total deposited)
+- Treasury gets 5% of the penalty pool
+- Sum of all payouts + fee = sum of all deposits (conservation invariant)
+
+## 6. Troubleshooting
+
+- **Circle faucet rate-limited:** wait 6 hours, or swap to a self-controlled mint (see issue tracker).
+- **`anchor deploy` fails with `insufficient funds`:** redeploys cost a fresh ~5 SOL each. `solana balance` and airdrop more.
+- **Frontend says "carteira está na rede errada":** open Phantom → Settings → Developer Settings → Change Network → Devnet.
+- **Vercel build fails with `Missing required env var VITE_*`:** the production-strict `requireEnv` is doing its job. Pin the var in Vercel's dashboard.
+- **`groupConfig.status` stuck:** check Solscan for the transaction; if it succeeded, hard-refresh the dashboard (state is cached in React hooks until the next refetch).
+
+## 7. What's not covered
+
+- Mainnet deploy (intentionally — protocol has not been audited)
+- CI deploy automation (planned post-audit; see [ROADMAP.md](../ROADMAP.md))
+- Stress testing with the max 10-member group (single-tx distribute may hit account-limit; per-member claim path is the fallback, currently un-implemented)
+- Real Pix on-ramp (the `pixComingSoon` copy is honest — devnet doesn't need it)
