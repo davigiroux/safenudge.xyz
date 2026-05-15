@@ -40,29 +40,28 @@ pub struct WithdrawFees<'info> {
 }
 
 impl<'info> WithdrawFees<'info> {
-    pub fn handler(&mut self) -> Result<()> {
-        let amount = self.treasury_token_account.amount;
+    pub fn handler(ctx: Context<WithdrawFees>) -> Result<()> {
+        let amount = ctx.accounts.treasury_token_account.amount;
         if amount == 0 {
             return Ok(());
         }
 
-        let bump = Pubkey::find_program_address(&[b"treasury"], &crate::ID).1;
-        let bump_bytes = [bump];
+        let bump_bytes = [ctx.bumps.treasury_authority];
         let signer_seeds: &[&[u8]] = &[b"treasury", &bump_bytes];
         let signer = &[signer_seeds];
 
         let cpi_accounts = TransferChecked {
-            from: self.treasury_token_account.to_account_info(),
-            to: self.recipient_token_account.to_account_info(),
-            mint: self.mint.to_account_info(),
-            authority: self.treasury_authority.to_account_info(),
+            from: ctx.accounts.treasury_token_account.to_account_info(),
+            to: ctx.accounts.recipient_token_account.to_account_info(),
+            mint: ctx.accounts.mint.to_account_info(),
+            authority: ctx.accounts.treasury_authority.to_account_info(),
         };
         let cpi_ctx = CpiContext::new_with_signer(
-            self.token_program.key(),
+            ctx.accounts.token_program.key(),
             cpi_accounts,
             signer,
         );
-        transfer_checked(cpi_ctx, amount, self.mint.decimals)?;
+        transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
 
         Ok(())
     }

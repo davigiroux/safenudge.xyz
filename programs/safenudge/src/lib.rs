@@ -79,6 +79,6 @@ pub mod safenudge {
     }
 
     pub fn withdraw_fees(ctx: Context<WithdrawFees>) -> Result<()> {
-        ctx.accounts.handler()
+        WithdrawFees::handler(ctx)
     }
 }

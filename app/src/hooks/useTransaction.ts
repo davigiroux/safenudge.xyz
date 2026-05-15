@@ -1,7 +1,10 @@
 import { useState, useCallback } from 'react'
 import { classifyTxError, type ClassifiedTxError, type TxErrorKind } from '../utils/txErrors'
+import type { TxStages } from '../utils/runMethod'
 
 export type TxState = 'idle' | 'signing' | 'confirming' | 'success' | 'error'
+
+type ExecuteInput = TxStages | (() => Promise<string>)
 
 type UseTransactionReturn = {
   txState: TxState
@@ -19,7 +22,7 @@ type UseTransactionReturn = {
    * non-null return.
    */
   execute: (
-    fn: () => Promise<string>,
+    input: ExecuteInput,
     opts?: { onError?: (err: ClassifiedTxError) => void },
   ) => Promise<string | null>
   reset: () => void
@@ -38,25 +41,28 @@ export function useTransaction(): UseTransactionReturn {
     setErrorProgramCode(null)
   }, [])
 
-  // The wallet popup is shown during the rpc await — we want the UI to
-  // show "signing" while the user is being prompted, and only flip to
-  // "confirming" once the signature comes back and we're waiting on
-  // network confirmation. The previous version flipped both states in
-  // the same tick, so the signing UI never rendered.
+  // Two-stage flow: the wallet popup happens inside `send` (UI shows
+  // "signing"), and `confirm` awaits cluster confirmation (UI shows
+  // "confirming"). Each await is a real React tick, so both states
+  // render. Callers using a bare `() => Promise<string>` opt out of the
+  // confirming phase — the UI goes signing → success directly.
   const execute = useCallback(async (
-    fn: () => Promise<string>,
+    input: ExecuteInput,
     opts?: { onError?: (err: ClassifiedTxError) => void },
   ): Promise<string | null> => {
+    const stages: TxStages | { send: () => Promise<string>; confirm?: undefined } =
+      typeof input === 'function' ? { send: input } : input
+
     setTxState('signing')
     setErrorDetail(null)
     setErrorKind(null)
     setErrorProgramCode(null)
     try {
-      const sig = await fn()
-      setTxState('confirming')
-      // fn() already awaited the rpc and returned the signature; if we
-      // ever switch to a flow that confirms separately, the await
-      // would go here. For now there's nothing further to wait on.
+      const sig = await stages.send()
+      if (stages.confirm) {
+        setTxState('confirming')
+        await stages.confirm(sig)
+      }
       setTxState('success')
       return sig
     } catch (err: unknown) {
