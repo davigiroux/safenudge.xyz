@@ -1,5 +1,4 @@
-import type { Transaction } from '@solana/web3.js'
-import type { Program } from '@coral-xyz/anchor'
+import type { Connection, PublicKey, Transaction } from '@solana/web3.js'
 
 export type TxStages = {
   send: () => Promise<string>
@@ -7,6 +6,18 @@ export type TxStages = {
 }
 
 type MethodBuilder = { transaction: () => Promise<Transaction> }
+
+type SignerWallet = {
+  publicKey: PublicKey
+  signTransaction: <T extends Transaction>(tx: T) => Promise<T>
+}
+
+type ProgramLike = {
+  provider: {
+    connection: Connection
+    wallet?: SignerWallet
+  }
+}
 
 /**
  * Splits an Anchor methods-builder call into two awaitable phases so the UI
@@ -17,14 +28,15 @@ type MethodBuilder = { transaction: () => Promise<Transaction> }
  * The send phase resolves once the network has accepted the signed tx; the
  * confirm phase resolves once the cluster reaches the provider's commitment.
  */
-export function runMethod<T extends Program>(
+export function runMethod(
   builder: MethodBuilder,
-  program: T,
+  program: ProgramLike,
 ): TxStages {
-  const provider = program.provider as {
-    connection: import('@solana/web3.js').Connection
-    wallet: { publicKey: import('@solana/web3.js').PublicKey; signTransaction: (tx: Transaction) => Promise<Transaction> }
+  const provider = program.provider
+  if (!provider.wallet) {
+    throw new Error('runMethod requires a provider with a connected wallet')
   }
+  const wallet = provider.wallet
   let blockhashCtx: { blockhash: string; lastValidBlockHeight: number } | null = null
 
   return {
@@ -33,8 +45,8 @@ export function runMethod<T extends Program>(
       const bh = await provider.connection.getLatestBlockhash()
       blockhashCtx = bh
       tx.recentBlockhash = bh.blockhash
-      tx.feePayer = provider.wallet.publicKey
-      const signed = await provider.wallet.signTransaction(tx)
+      tx.feePayer = wallet.publicKey
+      const signed = await wallet.signTransaction(tx)
       return await provider.connection.sendRawTransaction(signed.serialize())
     },
     confirm: async (sig: string) => {
