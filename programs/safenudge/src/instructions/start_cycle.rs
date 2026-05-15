@@ -5,6 +5,7 @@ use crate::state::{GroupConfig, STATUS_ACTIVE, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct StartCycle<'info> {
+    #[account(mut)]
     pub creator: Signer<'info>,
 
     #[account(

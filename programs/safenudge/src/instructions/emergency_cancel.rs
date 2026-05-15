@@ -5,7 +5,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
-use crate::state::{GroupConfig, MemberRecord, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_OPEN};
+use crate::state::{validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct EmergencyCancel<'info> {
@@ -69,55 +69,13 @@ impl<'info> EmergencyCancel<'info> {
             let record_info = &ctx.remaining_accounts[record_idx];
             let token_info = &ctx.remaining_accounts[token_idx];
 
-            // The member_record must be owned by this program; otherwise an
-            // attacker could craft a fake account with arbitrary contents.
-            require_keys_eq!(
-                *record_info.owner,
-                crate::ID,
-                SafeNudgeError::InvalidAccountOwner
-            );
-
-            // Deserialize member record
-            let data = record_info.try_borrow_data()?;
-            let mut data_slice: &[u8] = &data;
-            let member_record = MemberRecord::try_deserialize(&mut data_slice)
-                .map_err(|_| SafeNudgeError::MemberCountMismatch)?;
-
-            // Validate member record belongs to this group
-            require!(
-                member_record.group == group_key,
-                SafeNudgeError::MemberCountMismatch
-            );
-
-            // Validate the account key matches the canonical member PDA so
-            // a caller cannot pass a forged record with arbitrary contents.
-            let (expected_record, _) = Pubkey::find_program_address(
-                &[b"member", group_key.as_ref(), member_record.member.as_ref()],
-                &crate::ID,
-            );
-            require_keys_eq!(
-                *record_info.key,
-                expected_record,
-                SafeNudgeError::InvalidMemberRecord
-            );
-
-            // Reject duplicate records.
-            require!(
-                !seen_records.contains(record_info.key),
-                SafeNudgeError::DuplicateMemberRecord
-            );
-            seen_records.push(*record_info.key);
-
-            // Destination token account must belong to the member and use
-            // the configured mint.
-            let token_account =
-                InterfaceAccount::<TokenAccount>::try_from(token_info)?;
-            require_keys_eq!(
-                token_account.owner,
-                member_record.member,
-                SafeNudgeError::InvalidTokenAccountOwner
-            );
-            require_keys_eq!(token_account.mint, mint_key, SafeNudgeError::InvalidMint);
+            let member_record = validate_member_pair(
+                record_info,
+                token_info,
+                &group_key,
+                &mint_key,
+                &mut seen_records,
+            )?;
 
             refund_amounts.push(member_record.total_deposited);
         }

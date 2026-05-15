@@ -8,6 +8,7 @@ import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, TransactionStatus } from '../components'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
+import { runMethod } from '../utils/runMethod'
 import { useGroupConfig } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
@@ -55,8 +56,8 @@ export default function JoinGroup() {
     track('group_join_attempted', { group_code_hash: groupHash, deposit_bucket: depositBucket })
 
     const sig = await execute(
-      async () =>
-        await program.methods
+      runMethod(
+        program.methods
           .joinGroup()
           .accountsPartial({
             member: publicKey,
@@ -67,8 +68,9 @@ export default function JoinGroup() {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
-          })
-          .rpc(),
+          }),
+        program,
+      ),
       {
         onError: (err) =>
           track('group_join_failed', {

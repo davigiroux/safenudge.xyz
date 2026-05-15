@@ -11,6 +11,7 @@ import { DistributeSummary } from '../components/DistributeSummary'
 import { CancelGroupSheet } from '../components/CancelGroupSheet'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
+import { runMethod } from '../utils/runMethod'
 import { useGroupConfig } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
@@ -243,8 +244,8 @@ export default function GroupDashboard() {
     track('deposit_submitted', { group_code_hash: groupHash, period_index: periodIndex })
 
     const sig = await execute(
-      async () =>
-        await program.methods
+      runMethod(
+        program.methods
           .deposit()
           .accountsPartial({
             member: publicKey,
@@ -254,8 +255,9 @@ export default function GroupDashboard() {
             vault: vaultPda,
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
-          })
-          .rpc(),
+          }),
+        program,
+      ),
       {
         onError: (err) =>
           track('deposit_failed', {
@@ -287,14 +289,15 @@ export default function GroupDashboard() {
     })
 
     const sig = await execute(
-      async () =>
-        await program.methods
+      runMethod(
+        program.methods
           .startCycle()
           .accountsPartial({
             creator: publicKey,
             groupConfig: groupPda,
-          })
-          .rpc(),
+          }),
+        program,
+      ),
       {
         onError: (err) =>
           track('cycle_start_failed', {
@@ -333,8 +336,8 @@ export default function GroupDashboard() {
     })
 
     const sig = await execute(
-      async () =>
-        await program.methods
+      runMethod(
+        program.methods
           .distribute()
           .accountsPartial({
             payer: publicKey,
@@ -344,8 +347,9 @@ export default function GroupDashboard() {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
-          .remainingAccounts(buildSettlementRemainingAccounts(members))
-          .rpc(),
+          .remainingAccounts(buildSettlementRemainingAccounts(members)),
+        program,
+      ),
       {
         onError: (err) =>
           track('distribution_failed', {
@@ -374,8 +378,8 @@ export default function GroupDashboard() {
     track('emergency_cancel_submitted', { group_code_hash: groupHash })
 
     const sig = await execute(
-      async () =>
-        await program.methods
+      runMethod(
+        program.methods
           .emergencyCancel()
           .accountsPartial({
             creator: publicKey,
@@ -384,8 +388,9 @@ export default function GroupDashboard() {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
-          .remainingAccounts(buildSettlementRemainingAccounts(members))
-          .rpc(),
+          .remainingAccounts(buildSettlementRemainingAccounts(members)),
+        program,
+      ),
       {
         onError: (err) =>
           track('emergency_cancel_failed', {

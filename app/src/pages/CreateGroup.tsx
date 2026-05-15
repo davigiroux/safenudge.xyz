@@ -9,6 +9,7 @@ import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, TextInput, RadioGroup, TransactionStatus } from '../components'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
+import { runMethod } from '../utils/runMethod'
 import { getGroupConfigPDA, getVaultPDA } from '../utils/pda'
 import { USDC_MINT } from '../utils/constants'
 import { bucketAmount, FREQUENCY_NAMES, hashId, track } from '../utils/analytics'
@@ -74,8 +75,8 @@ export default function CreateGroup() {
     track('group_create_submitted', groupProps)
 
     const sig = await execute(
-      async () =>
-        await program.methods
+      runMethod(
+        program.methods
           .createGroup(
             groupCode,
             depositAmountBN,
@@ -92,8 +93,9 @@ export default function CreateGroup() {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
-          })
-          .rpc(),
+          }),
+        program,
+      ),
       {
         onError: (err) =>
           track('group_create_failed', {
