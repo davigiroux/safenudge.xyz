@@ -4,6 +4,7 @@ import { PublicKey } from '@solana/web3.js'
 import type { BN } from '@coral-xyz/anchor'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getGroupConfigPDA } from '../utils/pda'
+import { MEMBER_RECORD_GROUP_OFFSET } from '../utils/constants'
 
 export type GroupMemberData = {
   member: string
@@ -53,7 +54,7 @@ export function useGroupMembers(groupCode: string | undefined) {
       try {
         const [groupPda] = getGroupConfigPDA(groupCode!)
         const records = await program.account.memberRecord.all([
-          { memcmp: { offset: 8, bytes: groupPda.toBase58() } },
+          { memcmp: { offset: MEMBER_RECORD_GROUP_OFFSET, bytes: groupPda.toBase58() } },
         ])
 
         if (cancelled) return

@@ -1,6 +1,8 @@
 export { useTransaction } from './useTransaction'
 export type { TxState } from './useTransaction'
 export { useAnchorProgram, useAnchorProvider } from './useAnchorProgram'
+export { useChainTimeOffset } from './useChainTimeOffset'
+export { useClusterCheck } from './useClusterCheck'
 export { useGroupConfig } from './useGroupConfig'
 export { useMemberRecord } from './useMemberRecord'
 export type { GroupConfigData, GroupStatus } from './useGroupConfig'

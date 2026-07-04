@@ -147,7 +147,11 @@
     "streak": "streak",
     "sendNudge": "Send nudge",
     "planDetails": "Plan Details",
-    "weeklyAmount": "Weekly Amount",
+    "periodAmount": {
+      "weekly": "Weekly Amount",
+      "biweekly": "Biweekly Amount",
+      "monthly": "Monthly Amount"
+    },
     "paymentDay": "Payment Day",
     "endDate": "End Date",
     "security": "Funds protected by Collateralized Vault",
@@ -380,20 +384,29 @@
     "simulationFailed": "Simulation failed. Check your connection.",
     "unknown": "Something went wrong. Try again in a few seconds.",
     "programError": {
+      "InvalidGroupStatus": "The group isn't in the right stage for this action. Check whether the cycle has started.",
       "GroupFull": "This group is already full",
-      "GroupNotOpen": "This group is not accepting new members",
-      "AlreadyDeposited": "You already deposited this period",
-      "CycleNotActive": "This group's cycle hasn't started yet",
+      "UnauthorizedCreator": "Only the group creator can do this",
+      "InsufficientMembers": "The group needs at least 2 members to start",
       "CycleNotEnded": "The cycle hasn't ended yet",
-      "NotCreator": "Only the group creator can do this",
-      "InvalidGroupCode": "Invalid group code"
-    },
-    "groupFull": "This group is already full",
-    "groupNotOpen": "This group is not accepting new members",
-    "alreadyDeposited": "You already deposited this period",
-    "cycleNotActive": "This group's cycle hasn't started yet",
-    "cycleNotEnded": "The cycle hasn't ended yet",
-    "notCreator": "Only the group creator can do this",
-    "invalidGroupCode": "Invalid group code"
+      "AlreadyDeposited": "You already deposited this period",
+      "CycleEnded": "The cycle has ended — deposits are closed",
+      "InvalidGroupCode": "Invalid group code",
+      "InvalidPenaltyConfig": "The penalty settings aren't valid. Review the value and try again.",
+      "InvalidFrequency": "Invalid deposit frequency",
+      "InvalidGroupSize": "Groups must have between 2 and 10 people",
+      "InvalidPeriodCount": "The number of periods must be between 1 and 52",
+      "InvalidDepositAmount": "The deposit amount must be greater than zero",
+      "ArithmeticOverflow": "We hit a calculation error. Try again or reach out to us.",
+      "InvalidMint": "This token doesn't match the group's configuration",
+      "MemberCountMismatch": "The member list doesn't add up. Refresh the page and try again.",
+      "InvalidAccountOwner": "One of the submitted accounts doesn't belong to SafeNudge",
+      "InvalidMemberRecord": "We couldn't verify one of the member records. Refresh the page and try again.",
+      "InvalidTokenAccountOwner": "The destination account doesn't belong to the expected member",
+      "DuplicateMemberRecord": "A member was submitted more than once. Refresh the page and try again.",
+      "UnauthorizedRecipient": "Only the official fee recipient can do this",
+      "NoFeesToWithdraw": "There are no fees to withdraw right now",
+      "TreasuryNotInitialized": "The protocol fee vault hasn't been created yet. Try again shortly."
+    }
   }
 }

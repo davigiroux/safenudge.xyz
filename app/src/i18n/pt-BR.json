@@ -147,7 +147,11 @@
     "streak": "sequência",
     "sendNudge": "Enviar cutucada",
     "planDetails": "Detalhes do Plano",
-    "weeklyAmount": "Valor Semanal",
+    "periodAmount": {
+      "weekly": "Valor Semanal",
+      "biweekly": "Valor Quinzenal",
+      "monthly": "Valor Mensal"
+    },
     "paymentDay": "Dia de Pagamento",
     "endDate": "Data Final",
     "security": "Fundos protegidos por Cofre Colateralizado",
@@ -380,20 +384,29 @@
     "simulationFailed": "A simulação falhou. Verifique sua conexão.",
     "unknown": "Algo não deu certo. Tente novamente em alguns segundos.",
     "programError": {
+      "InvalidGroupStatus": "O grupo não está na fase certa para essa ação. Confira se o ciclo já começou.",
       "GroupFull": "Este grupo já está completo",
-      "GroupNotOpen": "Este grupo não está aceitando novos membros",
-      "AlreadyDeposited": "Você já depositou neste período",
-      "CycleNotActive": "O ciclo deste grupo ainda não começou",
+      "UnauthorizedCreator": "Apenas quem criou o grupo pode fazer isso",
+      "InsufficientMembers": "O grupo precisa de pelo menos 2 membros para começar",
       "CycleNotEnded": "O ciclo ainda não terminou",
-      "NotCreator": "Apenas o criador do grupo pode fazer isso",
-      "InvalidGroupCode": "Código de grupo inválido"
-    },
-    "groupFull": "Este grupo já está completo",
-    "groupNotOpen": "Este grupo não está aceitando novos membros",
-    "alreadyDeposited": "Você já depositou neste período",
-    "cycleNotActive": "O ciclo deste grupo ainda não começou",
-    "cycleNotEnded": "O ciclo ainda não terminou",
-    "notCreator": "Apenas o criador do grupo pode fazer isso",
-    "invalidGroupCode": "Código de grupo inválido"
+      "AlreadyDeposited": "Você já depositou neste período",
+      "CycleEnded": "O ciclo já terminou — não dá mais para depositar",
+      "InvalidGroupCode": "Código de grupo inválido",
+      "InvalidPenaltyConfig": "A configuração de penalidade não é válida. Revise o valor e tente de novo.",
+      "InvalidFrequency": "Frequência de depósito inválida",
+      "InvalidGroupSize": "O grupo precisa ter entre 2 e 10 pessoas",
+      "InvalidPeriodCount": "O número de períodos precisa ficar entre 1 e 52",
+      "InvalidDepositAmount": "O valor do depósito precisa ser maior que zero",
+      "ArithmeticOverflow": "Encontramos um erro de cálculo. Tente de novo ou fale com a gente.",
+      "InvalidMint": "Essa moeda não corresponde à configuração do grupo",
+      "MemberCountMismatch": "A lista de membros não confere. Atualize a página e tente de novo.",
+      "InvalidAccountOwner": "Uma das contas enviadas não pertence ao SafeNudge",
+      "InvalidMemberRecord": "Não reconhecemos o registro de um dos membros. Atualize a página e tente de novo.",
+      "InvalidTokenAccountOwner": "A conta de destino não pertence ao membro esperado",
+      "DuplicateMemberRecord": "Um membro foi enviado mais de uma vez. Atualize a página e tente de novo.",
+      "UnauthorizedRecipient": "Apenas o destinatário oficial das taxas pode fazer isso",
+      "NoFeesToWithdraw": "Não há taxas para sacar no momento",
+      "TreasuryNotInitialized": "O cofre de taxas do protocolo ainda não foi criado. Tente de novo em instantes."
+    }
   }
 }

@@ -1,3 +1,7 @@
+// Explicit import from the `buffer` polyfill (already a dependency for the
+// browser bundle): the global Buffer *type* used to arrive transitively via
+// the wallet-adapter umbrella package, which is gone.
+import { Buffer } from 'buffer'
 import { PublicKey } from '@solana/web3.js'
 import { PROGRAM_ID } from './constants'
 
@@ -25,3 +29,6 @@ export function getVaultPDA(groupConfigKey: PublicKey): [PublicKey, number] {
   )
 }
 
+export function getTreasuryAuthorityPDA(): [PublicKey, number] {
+  return PublicKey.findProgramAddressSync([Buffer.from('treasury')], PROGRAM_ID)
+}
