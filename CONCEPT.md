@@ -48,7 +48,7 @@ The primary user is a Brazilian who has participated in or understands informal 
 
 They don't know what Solana is. They don't have a wallet. They've probably used Pix to split a dinner bill, and that's about as far as their fintech experience goes.
 
-The MVP uses standard wallet connection (Phantom/Backpack) — a deliberate compromise to ship the protocol mechanics first. The architecture is designed for embedded wallets and a Pix on-ramp as the real onboarding path for the non-crypto target user.
+The MVP uses standard wallet connection (Phantom/Solflare) — a deliberate compromise to ship the protocol mechanics first. The architecture is designed for embedded wallets and a Pix on-ramp as the real onboarding path for the non-crypto target user.
 
 ## How It Works
 

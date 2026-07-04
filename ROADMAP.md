@@ -91,7 +91,7 @@ The original sizing was 18–25 hours total. Numbers below are the original sizi
 13. ✅ Scaffold frontend — Vite + React + TypeScript, wallet-adapter, Anchor client
 14. ✅ Create Group page — form, validation, instruction call
 15. ✅ Join Group page — group preview, join + deposit flow
-16. ⚠️ Group Dashboard — actions wired, but member list still shows MOCK_MEMBERS (issue #11 M2)
+16. ✅ Group Dashboard — actions wired, member list shows live on-chain members via useGroupMembers
 17. ⚠️ Ramp integration — placeholder `alert()` only (issue #11 M4)
 18. ✅ i18n setup — PT-BR + EN translations
 19. ⚠️ Misleading 12% yield projection in CreateGroup (issue #11 M11)

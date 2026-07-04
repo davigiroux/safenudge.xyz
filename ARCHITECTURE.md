@@ -123,6 +123,7 @@ Creates a new savings group.
 - `total_periods` in [1, 52]
 - `max_members` in [2, 10]
 - `penalty_type` in [0, 1]
+- If fixed, `penalty_value <= deposit_amount` (per missed period; an unbounded value used to allow groups whose settlement math overflowed — issue #44 H-1)
 - If percentage, `penalty_value <= 5000` (max 50%)
 - `group_code` length 1-32 chars, alphanumeric + hyphens only
 
@@ -140,7 +141,7 @@ A member joins the group and makes their initial deposit.
 - `member` (signer, mut)
 - `group_config` (mut) — increments member count
 - `member_record` (init) — PDA for this member in this group
-- `member_token_account` (mut) — member's USDC token account (source)
+- `member_token_account` (mut) — member's canonical ATA for the group mint (source). Enforced via `associated_token::` constraints: settlement derives each member's ATA deterministically, so any other token account would brick the group at `distribute` time (issue #44 M-3)
 - `vault` (mut) — group's USDC vault (destination)
 - `mint`
 - `token_program`
@@ -229,11 +230,13 @@ current_period = min(elapsed / period_duration, total_periods - 1)
 Settles the cycle. Calculates penalties and distributes funds. Anyone can trigger this.
 
 **Accounts:**
-- `payer` (signer) — pays for transaction fees
+- `payer` (signer) — pays for transaction fees only, never rent
 - `creator` (mut, validated against `group_config.creator` via `has_one`) — receives vault rent on close
 - `group_config` (mut)
 - `vault` (mut) — source of all distributions; signs its own transfers (self-as-authority)
 - `mint`
+- `treasury_authority` (PDA, seeds `[b"treasury"]`)
+- `treasury_token_account` (mut, **optional**) — canonical ATA of `(mint, treasury_authority)`, pinned by `associated_token::` constraints when passed. Required only when a protocol fee is due this settlement; created ahead of time via `init_treasury`, never here (issue #44 H-3: `init_if_needed` let permissionless callers be rent-griefed)
 - `token_program`
 - Plus: remaining accounts are pairs of `[member_record, member_token_account]` for each member
 
@@ -247,11 +250,15 @@ Settles the cycle. Calculates penalties and distributes funds. Anyone can trigge
 - Each `member_record` account is owned by this program and matches the canonical `["member", group, member]` PDA
 - No `member_record` is passed twice
 - Each paired `member_token_account` is owned by `member_record.member` and uses `group_config.mint`
+- If `protocol_fee > 0`, `treasury_token_account` must be passed and initialized (`TreasuryNotInitialized` otherwise — settlement is blocked, not bricked, until `FEE_RECIPIENT` runs `init_treasury`; funds stay in the vault and the call is retriable). The fee cannot be dodged by omitting the account.
 
 **Distribution logic:**
 ```
 for each member:
     missed = total_periods - member.deposits_made
+    // Penalty math is computed in u128 so no admissible input can overflow
+    // before the cap clamps it (issue #44 H-1); the narrowing back to u64
+    // is infallible because the result is <= total_deposited.
     if penalty_type == Fixed:
         penalty = missed * penalty_value
     else: // Percentage
@@ -262,11 +269,25 @@ for each member:
     member_payout = member.total_deposited - penalty
     total_penalties += penalty
 
-// Split collected penalties among fully compliant members
+// Protocol fee: 5% of the penalty pool. Skipped (0) when no one is
+// compliant (pro-rata refund branch) or when FEE_RECIPIENT is the
+// compile-time placeholder (fee_recipient_configured() == false) — the
+// full pool is then redistributed, nothing accumulates or is burned
+// (issue #44 H-4).
 compliant_count = members where deposits_made == total_periods
+protocol_fee = (compliant_count == 0 || !fee_recipient_configured())
+    ? 0
+    : total_penalties * PROTOCOL_FEE_BPS / 10_000
+redistributable = total_penalties - protocol_fee
+
+// Split remaining penalties among fully compliant members
 if compliant_count > 0:
-    bonus_per_compliant = total_penalties / compliant_count
-    
+    bonus_per_compliant = redistributable / compliant_count
+
+// Fee CPI first (if protocol_fee > 0), so the last-member dust path sees
+// the post-fee vault balance.
+transfer_checked(vault -> treasury_token_account, protocol_fee)
+
 for each member:
     payout = member_payout
     if member.deposits_made == total_periods:
@@ -333,7 +354,31 @@ Drains the protocol treasury to the configured `FEE_RECIPIENT`. Permissionless t
 
 **Effects:**
 - Transfers `treasury_token_account.amount` to `recipient_token_account` via CPI signed by the treasury PDA
+- Fails with `NoFeesToWithdraw` when the treasury balance is zero (issue #44 L-6: a silent no-op made the recipient pay a tx fee to learn nothing)
 - Treasury account stays open across withdrawals (cheaper than re-init each cycle)
+
+---
+
+#### 8. `init_treasury`
+
+One-shot, per-mint creation of the protocol treasury ATA. Signed and paid for by the compile-time `FEE_RECIPIENT`, so a permissionless `distribute` caller can never be forced to fund rent for an account only the fee recipient controls (issue #44 H-3).
+
+**Accounts:**
+- `fee_recipient` (signer, mut) — must equal compile-time `FEE_RECIPIENT`; pays the ATA rent
+- `treasury_authority` (PDA, seeds `[b"treasury"]`)
+- `treasury_token_account` (init) — canonical ATA of `(mint, treasury_authority)`; plain `init`, so a second call for the same mint fails
+- `mint` — any mint; groups are per-mint while the treasury authority PDA is global, so the protocol holds one ATA per supported mint
+- `token_program`, `associated_token_program`, `system_program`
+
+**Args:** None
+
+**Validation:**
+- `fee_recipient.key() == FEE_RECIPIENT` (`UnauthorizedRecipient`)
+
+**Effects:**
+- Creates the treasury ATA for the given mint (all work happens in account constraints)
+
+**Ops runbook:** before the first fee-charging settlement on a cluster, `FEE_RECIPIENT` must run `init_treasury` for each supported mint (USDC at minimum). Until then, fee-charging `distribute` calls fail with `TreasuryNotInitialized` (retriable); fee-free settlements are unaffected. Under the mainnet placeholder `FEE_RECIPIENT`, this instruction is uncallable (the system program cannot sign) — consistent with fees being disabled there.
 
 ---
 
@@ -347,16 +392,19 @@ Drains the protocol treasury to the configured `FEE_RECIPIENT`. Permissionless t
 pub treasury_authority: SystemAccount<'info>
 
 // Token account — canonical ATA of (mint, treasury_authority)
-// Created lazily via `init_if_needed` in `distribute` on the first cycle
-// that charges a fee; reused on every subsequent cycle.
+// Created once per mint via `init_treasury` (fee recipient signs and pays);
+// `distribute` only ever transfers into it, never creates it.
 pub treasury_token_account: InterfaceAccount<'info, TokenAccount>
 ```
 
 **Fee math (in `distribute` after Pass 1):**
 
 ```rust
-let protocol_fee = if compliant_count == 0 {
-    0  // Pro-rata refund branch — no penalty pool to skim from
+let protocol_fee = if compliant_count == 0 || !fee_recipient_configured() {
+    // Pro-rata refund branch has no penalty pool to skim from; a
+    // placeholder FEE_RECIPIENT (mainnet until issue #20) disables the
+    // fee entirely so nothing accumulates in an unwithdrawable treasury.
+    0
 } else {
     total_penalties.checked_mul(PROTOCOL_FEE_BPS)?.checked_div(10_000)?
 };
@@ -370,16 +418,21 @@ The fee CPI runs **before** any member-payout CPIs so the "last member gets vaul
 
 ```rust
 #[cfg(feature = "mainnet")]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("...");
+pub const FEE_RECIPIENT: Pubkey = pubkey!("111..."); // placeholder == Pubkey::default()
 
 #[cfg(all(feature = "devnet", not(feature = "mainnet")))]
 pub const FEE_RECIPIENT: Pubkey = pubkey!("FobkDn4r...");
 
+// Test-only fallback: matching private key is committed at
+// tests/fixtures/fee-recipient.json so CI exercises init_treasury and the
+// withdraw_fees happy path. Treat it as public.
 #[cfg(not(any(feature = "mainnet", feature = "devnet")))]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("FobkDn4r...");
+pub const FEE_RECIPIENT: Pubkey = pubkey!("A3xewgQH...");
 ```
 
-Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor build -- --features mainnet`. Mainnet placeholder + multisig migration tracked in issue #20.
+**Placeholder semantics:** the mainnet placeholder is byte-identical to `Pubkey::default()`. While it is in place, `fee_recipient_configured()` is false: `distribute` skips the protocol fee (the full penalty pool is redistributed — nothing accumulates in a treasury no one could ever withdraw from) and `init_treasury` / `withdraw_fees` are uncallable. Replace via issue #20 before any fee-collecting mainnet deploy.
+
+Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor build -- --features mainnet`. **Devnet deploys MUST build with `--features devnet`** — a plain build embeds the test fixture key (whose private half is public in this repo) as the fee recipient. Mainnet placeholder + multisig migration tracked in issue #20.
 
 ---
 
@@ -391,7 +444,7 @@ Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor 
 | MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking |
 | Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority) |
 | TreasuryAuthority | `["treasury"]` | Authority over the protocol-fee ATA; holds no data |
-| TreasuryATA | canonical ATA of `(mint, TreasuryAuthority)` | Accumulates 5% of every penalty pool until `withdraw_fees` is called |
+| TreasuryATA | canonical ATA of `(mint, TreasuryAuthority)` | Accumulates 5% of every penalty pool until `withdraw_fees` is called; created once per mint via `init_treasury` (fee recipient signs and pays) |
 
 ### Error Codes
 
@@ -424,8 +477,26 @@ pub enum SafeNudgeError {
     InvalidGroupSize,
     #[msg("Invalid period count")]
     InvalidPeriodCount,
+    #[msg("Deposit amount must be greater than zero")]
+    InvalidDepositAmount,
+    #[msg("Arithmetic overflow")]
+    ArithmeticOverflow,
+    #[msg("Token mint does not match group configuration")]
+    InvalidMint,
     #[msg("Member count mismatch in distribution")]
     MemberCountMismatch,
+    #[msg("Account is not owned by this program")]
+    InvalidAccountOwner,
+    #[msg("Member record does not match the canonical PDA for its member")]
+    InvalidMemberRecord,
+    #[msg("Destination token account does not belong to the expected member")]
+    InvalidTokenAccountOwner,
+    #[msg("The same member record was passed more than once")]
+    DuplicateMemberRecord,
+    #[msg("Treasury has no fees to withdraw")]
+    NoFeesToWithdraw,
+    #[msg("Protocol treasury token account for this mint has not been initialized")]
+    TreasuryNotInitialized,
 }
 ```
 

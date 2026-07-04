@@ -488,6 +488,7 @@ Decisions that affect security or architecture. Do not change without explicit d
 | Distribution via remaining accounts (single tx) | Atomic settlement; no partial distribution state. May need per-member claims if 10-member groups hit account limits | Apr 2026 |
 | Simplified 30-day months | Acceptable for MVP; real calendar math adds complexity without proportional value | Apr 2026 |
 | 5% protocol fee on penalty pool, compile-time `FEE_RECIPIENT`, PDA-controlled treasury, no admin override | v1 revenue without runtime admin surface; per-cluster recipient via cargo features, multisig migration tracked in issue #20 | May 2026 |
+| Treasury ATA created only via one-shot `init_treasury` (fee recipient signs and pays); fee skipped, not burned, under placeholder `FEE_RECIPIENT`; fixed penalty bounded at `deposit_amount` with u128 settlement math | Permissionless distribute callers can't be rent-griefed into funding the treasury (issue #44 H-3); placeholder-recipient builds redistribute the would-be fee instead of trapping it (H-4); no penalty configuration can brick settlement via overflow (H-1) | Jul 2026 |
 
 ---
 
