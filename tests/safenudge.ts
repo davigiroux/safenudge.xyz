@@ -31,7 +31,10 @@ import IDL from "../target/idl/safenudge.json" with { type: "json" };
 // exercise init_treasury and the withdraw_fees happy path; set
 // SAFENUDGE_FEE_RECIPIENT_KEYPAIR to override with a different keypair file.
 const FEE_RECIPIENT = new PublicKey("A3xewgQHyKpHHVC87mmiYkFo8qBgq4dz2UTw3XtANXvy");
-const FEE_RECIPIENT_KEYPAIR_PATH = path.join(__dirname, "fixtures", "fee-recipient.json");
+// cwd-relative (tests always run from the repo root — see package.json /
+// Anchor.toml / ci.yml): mocha loads this file as an ES module under Node 24,
+// so __dirname does not exist here.
+const FEE_RECIPIENT_KEYPAIR_PATH = path.join(process.cwd(), "tests", "fixtures", "fee-recipient.json");
 const PROTOCOL_FEE_BPS = 500n;
 
 describe("safenudge", () => {
