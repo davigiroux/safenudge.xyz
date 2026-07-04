@@ -67,6 +67,16 @@ impl<'info> CreateGroup<'info> {
             SafeNudgeError::InvalidGroupSize
         );
         require!(penalty_type <= 1, SafeNudgeError::InvalidPenaltyConfig);
+        if penalty_type == 0 {
+            // Fixed penalty is charged per missed period; it may not exceed
+            // the per-period deposit (mirrors the percentage cap's <= 100%
+            // per period). An unbounded value used to allow groups whose
+            // settlement math overflowed (issue #44 H-1).
+            require!(
+                penalty_value <= deposit_amount,
+                SafeNudgeError::InvalidPenaltyConfig
+            );
+        }
         if penalty_type == 1 {
             require!(penalty_value <= 5000, SafeNudgeError::InvalidPenaltyConfig);
         }

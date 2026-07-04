@@ -43,7 +43,7 @@ impl<'info> WithdrawFees<'info> {
     pub fn handler(ctx: Context<WithdrawFees>) -> Result<()> {
         let amount = ctx.accounts.treasury_token_account.amount;
         if amount == 0 {
-            return Ok(());
+            return Err(SafeNudgeError::NoFeesToWithdraw.into());
         }
 
         let bump_bytes = [ctx.bumps.treasury_authority];

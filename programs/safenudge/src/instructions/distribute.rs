@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token_interface::{
     close_account, transfer_checked, CloseAccount, Mint, TokenAccount, TokenInterface,
     TransferChecked,
@@ -11,6 +10,8 @@ use crate::PROTOCOL_FEE_BPS;
 
 #[derive(Accounts)]
 pub struct Distribute<'info> {
+    /// Permissionless caller triggering settlement. Pays only the transaction
+    /// fee — never rent (the treasury ATA is pre-created via `init_treasury`).
     #[account(mut)]
     pub payer: Signer<'info>,
 
@@ -50,19 +51,21 @@ pub struct Distribute<'info> {
     )]
     pub treasury_authority: SystemAccount<'info>,
 
-    /// Treasury USDC ATA. Created on the first cycle that charges a fee and
-    /// reused thereafter. Authority is the treasury PDA above.
+    /// Treasury ATA for this mint, created ahead of time by FEE_RECIPIENT via
+    /// `init_treasury` — never initialized here, so a permissionless caller
+    /// can't be griefed into paying its rent. Optional: required only when a
+    /// protocol fee is due this settlement (enforced in the handler); when
+    /// passed, the associated_token constraints pin it to the canonical ATA of
+    /// (mint, treasury_authority), so no other destination can receive the fee.
     #[account(
-        init_if_needed,
-        payer = payer,
+        mut,
         associated_token::mint = mint,
         associated_token::authority = treasury_authority,
+        associated_token::token_program = token_program,
     )]
-    pub treasury_token_account: InterfaceAccount<'info, TokenAccount>,
+    pub treasury_token_account: Option<InterfaceAccount<'info, TokenAccount>>,
 
     pub token_program: Interface<'info, TokenInterface>,
-    pub associated_token_program: Program<'info, AssociatedToken>,
-    pub system_program: Program<'info, System>,
 }
 
 impl<'info> Distribute<'info> {
@@ -145,34 +148,44 @@ impl<'info> Distribute<'info> {
                 .checked_sub(deposits_made)
                 .ok_or(SafeNudgeError::ArithmeticOverflow)?;
 
-            // Calculate penalty
-            let raw_penalty = if missed == 0 {
-                0u64
+            // Calculate penalty in u128 so no admissible input can overflow
+            // before the total_deposited cap clamps it (issue #44 H-1: a fixed
+            // penalty_value near u64::MAX used to error out at checked_mul and
+            // permanently brick settlement). missed <= 52 and both factors are
+            // u64, so every intermediate provably fits in u128; the checked_*
+            // calls are kept per the arithmetic rules but are unreachable.
+            let raw_penalty: u128 = if missed == 0 {
+                0
             } else {
                 match penalty_type {
                     0 => {
                         // Fixed: penalty = missed * penalty_value
-                        missed
-                            .checked_mul(penalty_value)
+                        (missed as u128)
+                            .checked_mul(penalty_value as u128)
                             .ok_or(SafeNudgeError::ArithmeticOverflow)?
                     }
                     1 => {
                         // Percentage: penalty = missed * (deposit_amount * penalty_value / 10000)
-                        let per_period = deposit_amount
-                            .checked_mul(penalty_value)
+                        let per_period = (deposit_amount as u128)
+                            .checked_mul(penalty_value as u128)
                             .ok_or(SafeNudgeError::ArithmeticOverflow)?
                             .checked_div(10000)
                             .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-                        missed
+                        (missed as u128)
                             .checked_mul(per_period)
                             .ok_or(SafeNudgeError::ArithmeticOverflow)?
                     }
-                    _ => return Err(SafeNudgeError::InvalidFrequency.into()),
+                    _ => return Err(SafeNudgeError::InvalidPenaltyConfig.into()),
                 }
             };
 
-            // Cap penalty at total deposited
-            let penalty = std::cmp::min(raw_penalty, member_record.total_deposited);
+            // Cap penalty at total deposited; the cap also makes the narrowing
+            // back to u64 infallible (result <= total_deposited <= u64::MAX).
+            let penalty = u64::try_from(std::cmp::min(
+                raw_penalty,
+                member_record.total_deposited as u128,
+            ))
+            .map_err(|_| SafeNudgeError::ArithmeticOverflow)?;
 
             let base_payout = member_record
                 .total_deposited
@@ -201,7 +214,12 @@ impl<'info> Distribute<'info> {
         // When no one is compliant, the pro-rata refund branch (below) returns
         // each member their full deposit and `total_penalties` is logically
         // forgiven — fee must be zero so that branch is preserved.
-        let protocol_fee: u64 = if compliant_count == 0 {
+        //
+        // The fee is also skipped entirely while FEE_RECIPIENT is the
+        // compile-time placeholder (mainnet builds until issue #20): the full
+        // penalty pool then flows into `redistributable` below, so nothing
+        // accumulates in a treasury no one can withdraw from (issue #44 H-4).
+        let protocol_fee: u64 = if compliant_count == 0 || !crate::fee_recipient_configured() {
             0
         } else {
             total_penalties
@@ -209,6 +227,17 @@ impl<'info> Distribute<'info> {
                 .and_then(|x| x.checked_div(10_000))
                 .ok_or(SafeNudgeError::ArithmeticOverflow)?
         };
+
+        // Fee-evasion guard: distribute is permissionless, so the caller must
+        // not be able to dodge the fee by omitting the treasury account. When
+        // a fee is due the canonical treasury ATA must be passed and exist
+        // (created via init_treasury); otherwise settlement is blocked — not
+        // bricked — until FEE_RECIPIENT initializes it. Still the Checks
+        // phase (CEI): nothing has been mutated yet.
+        require!(
+            protocol_fee == 0 || ctx.accounts.treasury_token_account.is_some(),
+            SafeNudgeError::TreasuryNotInitialized
+        );
 
         let redistributable = total_penalties
             .checked_sub(protocol_fee)
@@ -250,9 +279,14 @@ impl<'info> Distribute<'info> {
         // Fee transfer goes first so the last-member dust path naturally sees
         // the post-fee remainder via vault.reload().
         if protocol_fee > 0 {
+            let treasury = ctx
+                .accounts
+                .treasury_token_account
+                .as_ref()
+                .ok_or(SafeNudgeError::TreasuryNotInitialized)?; // unreachable; guarded above
             let fee_cpi_accounts = TransferChecked {
                 from: ctx.accounts.vault.to_account_info(),
-                to: ctx.accounts.treasury_token_account.to_account_info(),
+                to: treasury.to_account_info(),
                 mint: ctx.accounts.mint.to_account_info(),
                 authority: ctx.accounts.vault.to_account_info(),
             };
