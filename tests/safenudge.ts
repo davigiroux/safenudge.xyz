@@ -2296,9 +2296,12 @@ describe("safenudge", () => {
           .rpc();
         assert.fail("should have failed");
       } catch (e: any) {
+        // The constraint violation must be attributed to the treasury
+        // account — the exact variant differs across Anchor constraint
+        // paths (ConstraintAssociated vs AccountNotAssociatedTokenAccount).
         assert.match(
           e.message,
-          /ConstraintAssociated|AccountNotAssociatedTokenAccount|2009/,
+          /ConstraintAssociated|AccountNotAssociatedTokenAccount|caused by account: treasury_token_account/,
         );
       }
     });
@@ -2684,10 +2687,13 @@ describe("safenudge", () => {
         assert.fail("should have failed");
       } catch (e: any) {
         // `init` (not init_if_needed): re-creating an existing ATA fails at
-        // the system-program level ("already in use" / create account error).
+        // the system-program level. LiteSVM surfaces it as IllegalOwner
+        // (create-account against an account already owned by the token
+        // program); a real validator reports "already in use".
         const errStr = e.message || e.toString();
         assert.ok(
           errStr.includes("already in use") ||
+          errStr.includes("IllegalOwner") ||
           errStr.includes("custom program error") ||
           errStr.includes("Error processing Instruction"),
           `Expected already-in-use failure, got: ${errStr.substring(0, 200)}`
