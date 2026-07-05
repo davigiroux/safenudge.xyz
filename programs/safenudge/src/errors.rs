@@ -44,4 +44,8 @@ pub enum SafeNudgeError {
     DuplicateMemberRecord,
     #[msg("Recipient is not the configured FEE_RECIPIENT")]
     UnauthorizedRecipient,
+    #[msg("Treasury has no fees to withdraw")]
+    NoFeesToWithdraw,
+    #[msg("Protocol treasury token account for this mint has not been initialized")]
+    TreasuryNotInitialized,
 }

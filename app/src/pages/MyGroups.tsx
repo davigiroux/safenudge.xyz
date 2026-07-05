@@ -7,6 +7,7 @@ import { Button, Card, Icon } from '../components'
 import { EmptyState } from '../components/EmptyState'
 import { TextInput } from '../components/Input'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { MEMBER_RECORD_MEMBER_OFFSET } from '../utils/constants'
 
 type GroupInfo = {
   groupCode: string
@@ -60,13 +61,13 @@ export default function MyGroups() {
       setLoading(true)
       try {
         // Fetch in parallel:
-        // 1. MemberRecord PDAs where member == connected wallet (offset 40)
+        // 1. MemberRecord PDAs where member == connected wallet
         // 2. All GroupConfig accounts (filter creator client-side — group_code
         //    is a variable-length String, so creator's byte offset is dynamic
         //    and not safe for memcmp filtering).
         const [memberRecords, allGroups] = await Promise.all([
           program!.account.memberRecord.all([
-            { memcmp: { offset: 40, bytes: publicKey!.toBase58() } }
+            { memcmp: { offset: MEMBER_RECORD_MEMBER_OFFSET, bytes: publicKey!.toBase58() } }
           ]),
           program!.account.groupConfig.all(),
         ])
@@ -76,20 +77,23 @@ export default function MyGroups() {
         const groupInfos: GroupInfo[] = []
         const seenCodes = new Set<string>()
 
+        // Resolve member-record groups from the already-fetched group list
+        // instead of one RPC fetch per record (issue #44 M-5).
+        const groupsByAddress = new Map(
+          allGroups.map((g) => [g.publicKey.toBase58(), g.account])
+        )
+
         for (const record of memberRecords) {
-          try {
-            const groupAccount = await program!.account.groupConfig.fetch(record.account.group)
-            groupInfos.push({
-              groupCode: groupAccount.groupCode,
-              status: STATUS_MAP[groupAccount.status] || 'unknown',
-              depositsMade: record.account.depositsMade,
-              totalPeriods: groupAccount.totalPeriods,
-              depositAmount: groupAccount.depositAmount.toNumber(),
-            })
-            seenCodes.add(groupAccount.groupCode)
-          } catch {
-            // Skip groups that can't be fetched
-          }
+          const groupAccount = groupsByAddress.get(record.account.group.toBase58())
+          if (!groupAccount) continue // group closed or not visible — skip
+          groupInfos.push({
+            groupCode: groupAccount.groupCode,
+            status: STATUS_MAP[groupAccount.status] || 'unknown',
+            depositsMade: record.account.depositsMade,
+            totalPeriods: groupAccount.totalPeriods,
+            depositAmount: groupAccount.depositAmount.toNumber(),
+          })
+          seenCodes.add(groupAccount.groupCode)
         }
 
         // Append creator-owned groups the wallet hasn't joined yet

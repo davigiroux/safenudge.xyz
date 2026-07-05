@@ -7,6 +7,7 @@ import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-tok
 import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, TransactionStatus } from '../components'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { useClusterCheck } from '../hooks/useClusterCheck'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
 import { useGroupConfig } from '../hooks/useGroupConfig'
@@ -28,6 +29,7 @@ export default function JoinGroup() {
   const navigate = useNavigate()
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
+  const { wrongCluster } = useClusterCheck()
   const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
 
   const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
@@ -44,7 +46,7 @@ export default function JoinGroup() {
   }, [isMember, code, navigate])
 
   async function handleJoin() {
-    if (!program || !publicKey || !code || !group) return
+    if (!program || !publicKey || !code || !group || wrongCluster) return
 
     const [groupPda] = getGroupConfigPDA(code)
     const [memberPda] = getMemberRecordPDA(groupPda, publicKey)
@@ -142,6 +144,14 @@ export default function JoinGroup() {
   return (
     <PageLayout bgClass="bg-surface-container-low">
       <div className="px-4 py-6 md:px-8 lg:px-32 lg:py-16">
+        {wrongCluster && (
+          <div className="mb-4 rounded-xl bg-tertiary-fixed/20 p-4 flex items-center gap-3 max-w-5xl mx-auto" role="alert">
+            <Icon name="warning" size={20} className="text-tertiary" />
+            <span className="font-body text-body-md text-on-surface">
+              {t('errors.wrongNetwork')}
+            </span>
+          </div>
+        )}
         {/* Desktop: 2-column asymmetric. Mobile: single stack */}
         <div className="lg:grid lg:grid-cols-5 lg:gap-16 lg:items-start max-w-5xl mx-auto">
           {/* Left: invitation context -- 2 columns */}

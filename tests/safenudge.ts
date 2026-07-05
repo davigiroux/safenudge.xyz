@@ -11,22 +11,30 @@ import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   MINT_SIZE,
+  ACCOUNT_SIZE,
   createInitializeMintInstruction,
+  createInitializeAccountInstruction,
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
   AccountLayout,
 } from "@solana/spl-token";
 import * as fs from "fs";
+import * as path from "path";
 import { assert } from "chai";
 
 import IDL from "../target/idl/safenudge.json" with { type: "json" };
 
 // Must match the localnet/fallback `FEE_RECIPIENT` constant in
-// programs/safenudge/src/lib.rs. The withdraw_fees positive test needs the
-// matching keypair (set SAFENUDGE_FEE_RECIPIENT_KEYPAIR to a JSON file path);
-// the negative test only needs the pubkey.
-const FEE_RECIPIENT = new PublicKey("FobkDn4rY18j5UAhigt5kAGsMyqP8PDxXGMH94TgG2sh");
+// programs/safenudge/src/lib.rs. The matching private key is committed at
+// tests/fixtures/fee-recipient.json (public by design, test-only) so CI can
+// exercise init_treasury and the withdraw_fees happy path; set
+// SAFENUDGE_FEE_RECIPIENT_KEYPAIR to override with a different keypair file.
+const FEE_RECIPIENT = new PublicKey("A3xewgQHyKpHHVC87mmiYkFo8qBgq4dz2UTw3XtANXvy");
+// cwd-relative (tests always run from the repo root — see package.json /
+// Anchor.toml / ci.yml): mocha loads this file as an ES module under Node 24,
+// so __dirname does not exist here.
+const FEE_RECIPIENT_KEYPAIR_PATH = path.join(process.cwd(), "tests", "fixtures", "fee-recipient.json");
 const PROTOCOL_FEE_BPS = 500n;
 
 describe("safenudge", () => {
@@ -152,20 +160,81 @@ describe("safenudge", () => {
     return AccountLayout.decode(acct.data).amount;
   }
 
-  function loadFeeRecipientKeypair(): Keypair | null {
-    const envPath = process.env.SAFENUDGE_FEE_RECIPIENT_KEYPAIR;
-    if (!envPath) return null;
-    try {
-      const bytes = JSON.parse(fs.readFileSync(envPath, "utf-8"));
-      const kp = Keypair.fromSecretKey(Uint8Array.from(bytes));
-      if (!kp.publicKey.equals(FEE_RECIPIENT)) return null;
-      return kp;
-    } catch {
-      return null;
+  function loadFeeRecipientKeypair(): Keypair {
+    // Defaults to the committed fixture; SAFENUDGE_FEE_RECIPIENT_KEYPAIR
+    // overrides. The fixture is a hard test dependency (init_treasury and the
+    // withdraw_fees happy path both sign with it), so failure to load throws
+    // instead of silently skipping.
+    const keypairPath = process.env.SAFENUDGE_FEE_RECIPIENT_KEYPAIR || FEE_RECIPIENT_KEYPAIR_PATH;
+    const bytes = JSON.parse(fs.readFileSync(keypairPath, "utf-8"));
+    const kp = Keypair.fromSecretKey(Uint8Array.from(bytes));
+    if (!kp.publicKey.equals(FEE_RECIPIENT)) {
+      throw new Error(
+        `Fee recipient keypair at ${keypairPath} is ${kp.publicKey.toBase58()}, ` +
+        `expected ${FEE_RECIPIENT.toBase58()} (the lib.rs fallback FEE_RECIPIENT)`
+      );
     }
+    return kp;
   }
 
-  async function createFundedMember(amount: number): Promise<{ keypair: Keypair; tokenAccount: PublicKey }> {
+  // One-shot treasury ATA creation for the test mint, signed by the
+  // FEE_RECIPIENT fixture. Mirrors the on-cluster deploy runbook: the fee
+  // recipient initializes the treasury before the first fee-charging
+  // settlement.
+  async function initTreasury(mint: PublicKey = usdcMint): Promise<PublicKey> {
+    const kp = loadFeeRecipientKeypair();
+    const fundTx = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: payer.publicKey,
+        toPubkey: kp.publicKey,
+        lamports: LAMPORTS_PER_SOL,
+      })
+    );
+    await provider.sendAndConfirm(fundTx, [payer]);
+
+    await program.methods.initTreasury()
+      .accounts({
+        feeRecipient: kp.publicKey,
+        mint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([kp])
+      .rpc();
+
+    return getTreasuryAta(mint);
+  }
+
+  // Conservation-of-funds invariant, asserted after every successful
+  // distribute (CLAUDE.md test rules): every deposited token is accounted for
+  // between member payouts and the protocol fee, and the vault is closed.
+  async function assertFundConservation(opts: {
+    vaultPda: PublicKey;
+    memberAtas: PublicKey[];
+    memberBalancesBefore: bigint[];
+    treasuryBefore: bigint;
+    expectedFee: bigint;
+    totalDeposits: bigint;
+  }): Promise<void> {
+    let paidOut = 0n;
+    for (let i = 0; i < opts.memberAtas.length; i++) {
+      const after = await getTokenBalanceOrZero(opts.memberAtas[i]);
+      paidOut += after - opts.memberBalancesBefore[i];
+    }
+    const treasuryAfter = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
+    const feeDelta = treasuryAfter - opts.treasuryBefore;
+    assert.equal(feeDelta, opts.expectedFee, "protocol fee delta");
+    assert.equal(
+      paidOut + feeDelta,
+      opts.totalDeposits,
+      "conservation: payouts + fee must equal total deposits"
+    );
+    assert.isNull(
+      context.banksClient.getAccount(opts.vaultPda),
+      "vault must be closed (zero residue) after distribution"
+    );
+  }
+
+  async function createFundedMember(amount: number | bigint): Promise<{ keypair: Keypair; tokenAccount: PublicKey }> {
     const keypair = Keypair.generate();
     const fundTx = new Transaction().add(
       SystemProgram.transfer({
@@ -271,6 +340,28 @@ describe("safenudge", () => {
       try {
         await program.methods
           .createGroup(groupCode, new BN(10_000_000), 0, 4, 5, 1, new BN(5001))
+          .accounts({
+            creator: payer.publicKey, groupConfig: groupConfigPda, vault: vaultPda,
+            mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidPenaltyConfig");
+      }
+    });
+
+    it("fails when fixed penalty exceeds the deposit amount", async () => {
+      // Issue #44 H-1: an unbounded fixed penalty_value used to allow groups
+      // whose settlement math overflowed u64 and permanently bricked
+      // distribute. The fixed penalty is now capped at deposit_amount.
+      const groupCode = "bad-fixed-pen";
+      const [groupConfigPda] = getGroupPda(groupCode);
+      const [vaultPda] = getVaultPda(groupConfigPda);
+
+      try {
+        await program.methods
+          .createGroup(groupCode, new BN(10_000_000), 0, 4, 5, 0, new BN(10_000_001))
           .accounts({
             creator: payer.publicKey, groupConfig: groupConfigPda, vault: vaultPda,
             mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
@@ -462,6 +553,69 @@ describe("safenudge", () => {
         assert.fail("should have failed");
       } catch (e: any) {
         assert.include(e.message, "InvalidGroupStatus");
+      }
+    });
+
+    it("fails when the member token account is not the canonical ATA", async () => {
+      // Issue #44 M-3: settlement derives each member's ATA deterministically,
+      // so join_group must only accept the canonical ATA — any other token
+      // account would brick the whole group at distribute time.
+      const groupCode = "join-non-ata";
+      const depositAmount = 10_000_000;
+      const [groupConfigPda] = getGroupPda(groupCode);
+      const [vaultPda] = getVaultPda(groupConfigPda);
+
+      await program.methods
+        .createGroup(groupCode, new BN(depositAmount), 0, 4, 5, 0, new BN(2_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: groupConfigPda, vault: vaultPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // Member with a raw (non-associated) SPL token account holding funds.
+      const member = await createFundedMember(depositAmount * 10);
+      const rawAccount = Keypair.generate();
+      const rent = await provider.connection.getMinimumBalanceForRentExemption(ACCOUNT_SIZE);
+      const rawTx = new Transaction().add(
+        SystemProgram.createAccount({
+          fromPubkey: payer.publicKey,
+          newAccountPubkey: rawAccount.publicKey,
+          space: ACCOUNT_SIZE,
+          lamports: rent,
+          programId: TOKEN_PROGRAM_ID,
+        }),
+        createInitializeAccountInstruction(
+          rawAccount.publicKey, usdcMint, member.keypair.publicKey, TOKEN_PROGRAM_ID
+        ),
+        createMintToInstruction(
+          usdcMint, rawAccount.publicKey, mintAuthority.publicKey, depositAmount * 10
+        )
+      );
+      await provider.sendAndConfirm(rawTx, [payer, rawAccount, mintAuthority]);
+
+      const [memberRecordPda] = getMemberPda(groupConfigPda, member.keypair.publicKey);
+      try {
+        await program.methods
+          .joinGroup()
+          .accounts({
+            member: member.keypair.publicKey,
+            groupConfig: groupConfigPda,
+            memberRecord: memberRecordPda,
+            memberTokenAccount: rawAccount.publicKey,
+            vault: vaultPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+            systemProgram: SystemProgram.programId,
+          })
+          .signers([member.keypair])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.match(
+          e.message,
+          /ConstraintAssociated|AccountNotAssociatedTokenAccount|2009/,
+        );
       }
     });
   });
@@ -896,7 +1050,13 @@ describe("safenudge", () => {
           clk.unixTimestamp + BigInt(8 * 86400))
       );
 
-      // Distribute
+      const m1BalBefore = await getTokenBalanceOrZero(m1Ata);
+      const m2BalBefore = await getTokenBalanceOrZero(m2Ata);
+      const treasuryBefore = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
+
+      // Distribute. All members compliant → no penalties, no fee — the
+      // treasury account is not required, which doubles as the liveness
+      // proof that fee-free settlements never depend on init_treasury.
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
@@ -904,6 +1064,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: null,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -917,6 +1078,21 @@ describe("safenudge", () => {
       // Verify status == Completed
       const group = await program.account.groupConfig.fetch(gPda);
       assert.equal(group.status, 2);
+
+      // Each member gets their exact deposits back (2 periods × 5 USDC).
+      const m1BalAfter = await getTokenBalanceOrZero(m1Ata);
+      const m2BalAfter = await getTokenBalanceOrZero(m2Ata);
+      assert.equal(Number(m1BalAfter - m1BalBefore), 2 * depositAmount);
+      assert.equal(Number(m2BalAfter - m2BalBefore), 2 * depositAmount);
+
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas: [m1Ata, m2Ata],
+        memberBalancesBefore: [m1BalBefore, m2BalBefore],
+        treasuryBefore,
+        expectedFee: 0n,
+        totalDeposits: BigInt(4 * depositAmount),
+      });
     });
 
     it("distributes with penalties: one member misses deposits", async () => {
@@ -991,9 +1167,11 @@ describe("safenudge", () => {
         return data.amount;
       };
 
+      const treasuryAta = await initTreasury();
+
       const m1BalBefore = await getTokenBalance(m1Ata);
       const m2BalBefore = await getTokenBalance(m2Ata);
-      const treasuryBefore = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
+      const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
 
       // Distribute
       await program.methods.distribute()
@@ -1003,6 +1181,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: treasuryAta,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -1028,10 +1207,14 @@ describe("safenudge", () => {
       assert.equal(m2Received, 8_000_000);
 
       // Conservation: members + fee == total deposits (30M)
-      const treasuryAfter = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
-      const feeCharged = Number(treasuryAfter - treasuryBefore);
-      assert.equal(feeCharged, 100_000);
-      assert.equal(m1Received + m2Received + feeCharged, 30_000_000);
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas: [m1Ata, m2Ata],
+        memberBalancesBefore: [m1BalBefore, m2BalBefore],
+        treasuryBefore,
+        expectedFee: 100_000n,
+        totalDeposits: 30_000_000n,
+      });
 
       // Verify status == Completed
       const group = await program.account.groupConfig.fetch(gPda);
@@ -1110,9 +1293,11 @@ describe("safenudge", () => {
         return data.amount;
       };
 
+      const treasuryAta = await initTreasury();
+
       const m1BalBefore = await getTokenBalance(m1Ata);
       const m2BalBefore = await getTokenBalance(m2Ata);
-      const treasuryBefore = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
+      const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
 
       // Distribute
       await program.methods.distribute()
@@ -1122,6 +1307,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: treasuryAta,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -1146,10 +1332,14 @@ describe("safenudge", () => {
       assert.equal(m2Received, 9_500_000);
 
       // Conservation: members + fee == total deposits (30M)
-      const treasuryAfter = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
-      const feeCharged = Number(treasuryAfter - treasuryBefore);
-      assert.equal(feeCharged, 25_000);
-      assert.equal(m1Received + m2Received + feeCharged, 30_000_000);
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas: [m1Ata, m2Ata],
+        memberBalancesBefore: [m1BalBefore, m2BalBefore],
+        treasuryBefore,
+        expectedFee: 25_000n,
+        totalDeposits: 30_000_000n,
+      });
 
       const group = await program.account.groupConfig.fetch(gPda);
       assert.equal(group.status, 2);
@@ -1214,7 +1404,8 @@ describe("safenudge", () => {
       const m2BalBefore = await getTokenBalance(m2Ata);
       const treasuryBefore = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
 
-      // Distribute
+      // Distribute. No compliant members → refund branch, fee 0, so the
+      // treasury account is not required.
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
@@ -1222,6 +1413,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: null,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -1245,11 +1437,15 @@ describe("safenudge", () => {
       assert.equal(m2Received, depositAmount);
 
       // No fee charged when no one is compliant (pro-rata refund branch).
-      const treasuryAfter = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
-      assert.equal(treasuryAfter - treasuryBefore, 0n);
-
       // Conservation: total == vault (10M)
-      assert.equal(m1Received + m2Received, 10_000_000);
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas: [m1Ata, m2Ata],
+        memberBalancesBefore: [m1BalBefore, m2BalBefore],
+        treasuryBefore,
+        expectedFee: 0n,
+        totalDeposits: 10_000_000n,
+      });
 
       const group = await program.account.groupConfig.fetch(gPda);
       assert.equal(group.status, 2);
@@ -1262,11 +1458,14 @@ describe("safenudge", () => {
 
       const code = "dist-cap-pen";
       const depositAmount = 5_000_000;  // 5 USDC
-      const penaltyValue = 10_000_000;  // 10 USDC fixed (way more than deposit)
+      // Max fixed penalty create_group now allows (== deposit_amount). With
+      // 3 missed periods the raw penalty (15M) still exceeds the member's
+      // total deposit (5M), so the total_deposited cap is exercised.
+      const penaltyValue = 5_000_000;   // 5 USDC fixed
       const [gPda] = getGroupPda(code);
       const [vPda] = getVaultPda(gPda);
 
-      // Create group: weekly, 4 periods, fixed 10 USDC penalty
+      // Create group: weekly, 4 periods, fixed 5 USDC penalty
       await program.methods
         .createGroup(code, new BN(depositAmount), 0, 4, 5, 0, new BN(penaltyValue))
         .accounts({
@@ -1333,9 +1532,11 @@ describe("safenudge", () => {
         return data.amount;
       };
 
+      const treasuryAta = await initTreasury();
+
       const m1BalBefore = await getTokenBalance(m1Ata);
       const m2BalBefore = await getTokenBalance(m2Ata);
-      const treasuryBefore = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
+      const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
 
       // Distribute
       await program.methods.distribute()
@@ -1345,6 +1546,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: treasuryAta,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -1359,7 +1561,7 @@ describe("safenudge", () => {
       const m2BalAfter = await getTokenBalance(m2Ata);
 
       // m1 deposited 20M (4 periods), 0 missed → compliant
-      // m2 deposited 5M (1 period), missed 3 → raw penalty = 3 * 10M = 30M, capped at 5M
+      // m2 deposited 5M (1 period), missed 3 → raw penalty = 3 * 5M = 15M, capped at 5M
       // m2 base = 5M - 5M = 0
       // total_penalties = 5M, protocol fee = 250K (5%), redistributable = 4.75M
       // m1 = 20M + 4.75M = 24_750_000
@@ -1371,10 +1573,14 @@ describe("safenudge", () => {
       assert.equal(m2Received, 0);
 
       // Conservation: members + fee == total deposits (25M)
-      const treasuryAfter = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
-      const feeCharged = Number(treasuryAfter - treasuryBefore);
-      assert.equal(feeCharged, 250_000);
-      assert.equal(m1Received + m2Received + feeCharged, 25_000_000);
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas: [m1Ata, m2Ata],
+        memberBalancesBefore: [m1BalBefore, m2BalBefore],
+        treasuryBefore,
+        expectedFee: 250_000n,
+        totalDeposits: 25_000_000n,
+      });
 
       const group = await program.account.groupConfig.fetch(gPda);
       assert.equal(group.status, 2);
@@ -1427,6 +1633,7 @@ describe("safenudge", () => {
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
+            treasuryTokenAccount: null,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts([
@@ -1498,6 +1705,7 @@ describe("safenudge", () => {
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
+            treasuryTokenAccount: null,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts([
@@ -1565,6 +1773,7 @@ describe("safenudge", () => {
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
+            treasuryTokenAccount: null,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts([
@@ -1633,6 +1842,7 @@ describe("safenudge", () => {
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
+            treasuryTokenAccount: null,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts([
@@ -1708,7 +1918,7 @@ describe("safenudge", () => {
           clk.unixTimestamp + BigInt(8 * 86400))
       );
 
-      const treasuryAta = getTreasuryAta(usdcMint);
+      const treasuryAta = await initTreasury();
       const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
 
       await program.methods.distribute()
@@ -1718,6 +1928,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: treasuryAta,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -1795,6 +2006,7 @@ describe("safenudge", () => {
           clk.unixTimestamp + BigInt(8 * 86400))
       );
 
+      // All compliant → fee 0 → treasury not required (passed as null).
       const treasuryAta = getTreasuryAta(usdcMint);
       const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
 
@@ -1805,6 +2017,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: null,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -1817,6 +2030,434 @@ describe("safenudge", () => {
 
       const treasuryAfter = await getTokenBalanceOrZero(treasuryAta);
       assert.equal(treasuryAfter, treasuryBefore);
+    });
+
+    it("settles an extreme fixed penalty without overflow (no settlement brick)", async () => {
+      // Issue #44 H-1 positive proof. deposit == penalty == 2^62 (the max the
+      // create bound allows) and 5 missed periods make the raw penalty
+      // 5 * 2^62 > u64::MAX — the old u64 checked_mul errored here on every
+      // distribute call, permanently locking the vault. The u128 math must
+      // settle instead, with the penalty capped at total_deposited.
+      const code = "dist-huge-pen";
+      const depositAmount = 4611686018427387904n; // 2^62
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new BN(depositAmount.toString()), 0, 6, 5, 0, new BN(depositAmount.toString()))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(depositAmount);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(depositAmount);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Neither deposits again → each missed 5 of 6 periods. Warp past the
+      // 6-week cycle end.
+      const clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(43 * 86400))
+      );
+
+      const m1BalBefore = await getTokenBalanceOrZero(m1Ata);
+      const m2BalBefore = await getTokenBalanceOrZero(m2Ata);
+
+      // No compliant members → refund branch, fee 0, no treasury needed.
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          treasuryTokenAccount: null,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
+      // Full refund at u64 scale, no overflow, vault closed.
+      const m1BalAfter = await getTokenBalanceOrZero(m1Ata);
+      const m2BalAfter = await getTokenBalanceOrZero(m2Ata);
+      assert.equal(m1BalAfter - m1BalBefore, depositAmount);
+      assert.equal(m2BalAfter - m2BalBefore, depositAmount);
+      assert.isNull(context.banksClient.getAccount(vPda));
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+    });
+
+    it("fails with TreasuryNotInitialized when a fee is due and no treasury is passed, then settles after init_treasury", async () => {
+      // Issue #44 H-3: distribute never creates the treasury (no rent-griefing
+      // of permissionless callers) and a caller cannot dodge the fee by
+      // omitting the account. Settlement is blocked — not bricked — until the
+      // FEE_RECIPIENT runs init_treasury.
+      const code = "dist-no-treas";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new BN(10_000_000), 0, 2, 5, 0, new BN(4_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      let clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // m1 deposits period 1, m2 skips → penalty due → fee due.
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
+
+      clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      const remaining = [
+        { pubkey: m1Pda, isWritable: false, isSigner: false },
+        { pubkey: m1Ata, isWritable: true, isSigner: false },
+        { pubkey: m2Pda, isWritable: false, isSigner: false },
+        { pubkey: m2Ata, isWritable: true, isSigner: false },
+      ];
+
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            creator: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            treasuryTokenAccount: null,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts(remaining)
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "TreasuryNotInitialized");
+      }
+
+      // Group is still Active and fully recoverable: init the treasury and
+      // settle successfully.
+      let group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 1);
+
+      const treasuryAta = await initTreasury();
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          treasuryTokenAccount: treasuryAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts(remaining)
+        .rpc();
+
+      group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+      assert.equal(await getTokenBalanceOrZero(treasuryAta), 200_000n);
+    });
+
+    it("fails when a non-canonical treasury token account is passed", async () => {
+      // The associated_token constraints pin the fee destination to the
+      // canonical treasury ATA — an attacker cannot substitute their own
+      // account to capture the protocol fee.
+      const code = "dist-fake-treas";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new BN(10_000_000), 0, 2, 5, 0, new BN(4_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      const clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(15 * 86400))
+      );
+
+      // Attacker-owned ATA substituted for the treasury.
+      const { tokenAccount: attackerAta } = await createFundedMember(0);
+
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            creator: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            treasuryTokenAccount: attackerAta,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+            { pubkey: m2Pda, isWritable: false, isSigner: false },
+            { pubkey: m2Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        // The constraint violation must be attributed to the treasury
+        // account — the exact variant differs across Anchor constraint
+        // paths (ConstraintAssociated vs AccountNotAssociatedTokenAccount).
+        assert.match(
+          e.message,
+          /ConstraintAssociated|AccountNotAssociatedTokenAccount|caused by account: treasury_token_account/,
+        );
+      }
+    });
+
+    it("fails with InvalidMemberRecord when a program account is not a member record", async () => {
+      // Issue #44 M-6: a forged/undeserializable record used to surface as
+      // the misleading MemberCountMismatch.
+      const code = "dist-forged-rec";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      await program.methods
+        .createGroup(code, new BN(5_000_000), 0, 1, 5, 0, new BN(0))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      const clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      // The group_config account is program-owned but has the wrong
+      // discriminator — deserialization as a MemberRecord must fail cleanly.
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            creator: payer.publicKey,
+            groupConfig: gPda,
+            vault: vPda,
+            mint: usdcMint,
+            treasuryTokenAccount: null,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+            { pubkey: gPda, isWritable: false, isSigner: false },
+            { pubkey: m2Ata, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidMemberRecord");
+      }
+    });
+
+    it("fails with InvalidMemberRecord when a member record belongs to another group", async () => {
+      const codeA = "dist-xgroup-a";
+      const codeB = "dist-xgroup-b";
+      const [gPdaA] = getGroupPda(codeA);
+      const [vPdaA] = getVaultPda(gPdaA);
+      const [gPdaB] = getGroupPda(codeB);
+      const [vPdaB] = getVaultPda(gPdaB);
+
+      for (const [code, gPda, vPda] of [[codeA, gPdaA, vPdaA], [codeB, gPdaB, vPdaB]] as const) {
+        await program.methods
+          .createGroup(code, new BN(5_000_000), 0, 1, 5, 0, new BN(0))
+          .accounts({
+            creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+            mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+      }
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
+      const [m1Pda] = getMemberPda(gPdaA, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPdaA, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPdaA, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
+      const [m2Pda] = getMemberPda(gPdaA, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPdaA, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPdaA, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      // Outsider joins group B — a real MemberRecord, wrong group.
+      const { keypair: mB, tokenAccount: mBAta } = await createFundedMember(100_000_000);
+      const [mBPda] = getMemberPda(gPdaB, mB.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: mB.publicKey, groupConfig: gPdaB, memberRecord: mBPda,
+          memberTokenAccount: mBAta, vault: vPdaB, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([mB]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPdaA })
+        .rpc();
+
+      const clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      try {
+        await program.methods.distribute()
+          .accounts({
+            payer: payer.publicKey,
+            creator: payer.publicKey,
+            groupConfig: gPdaA,
+            vault: vPdaA,
+            mint: usdcMint,
+            treasuryTokenAccount: null,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .remainingAccounts([
+            { pubkey: m1Pda, isWritable: false, isSigner: false },
+            { pubkey: m1Ata, isWritable: true, isSigner: false },
+            { pubkey: mBPda, isWritable: false, isSigner: false },
+            { pubkey: mBAta, isWritable: true, isSigner: false },
+          ])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidMemberRecord");
+      }
     });
   });
 
@@ -1858,38 +2499,98 @@ describe("safenudge", () => {
       }
     });
 
-    it("transfers full treasury balance to the FEE_RECIPIENT (env-gated)", async () => {
+    it("transfers full treasury balance to the FEE_RECIPIENT", async () => {
       const recipientKp = loadFeeRecipientKeypair();
-      if (!recipientKp) {
-        // No keypair available — the negative test above covers the safety
-        // property. To run this end-to-end, set
-        // SAFENUDGE_FEE_RECIPIENT_KEYPAIR=/path/to/keypair.json.
-        return;
-      }
 
-      // Fund recipient and create their ATA.
-      const fundTx = new Transaction().add(
-        SystemProgram.transfer({
-          fromPubkey: payer.publicKey,
-          toPubkey: recipientKp.publicKey,
-          lamports: 2 * LAMPORTS_PER_SOL,
+      // Fund the treasury with a real fee: penalty group where m2 misses a
+      // period. total_penalties = 4M → fee = 200K in the treasury.
+      const code = "wf-happy";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+      await program.methods
+        .createGroup(code, new BN(10_000_000), 0, 2, 5, 0, new BN(4_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
         })
+        .rpc();
+
+      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
+      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m1]).rpc();
+
+      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
+      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
+      await program.methods.joinGroup()
+        .accounts({
+          member: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
+          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .signers([m2]).rpc();
+
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      let clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
       );
-      await provider.sendAndConfirm(fundTx, [payer]);
 
-      const recipientAta = getAssociatedTokenAddressSync(usdcMint, recipientKp.publicKey);
-      const ataAcct = context.banksClient.getAccount(recipientAta);
-      if (!ataAcct) {
-        const ataTx = new Transaction().add(
-          createAssociatedTokenAccountInstruction(
-            payer.publicKey, recipientAta, recipientKp.publicKey, usdcMint
-          )
-        );
-        await provider.sendAndConfirm(ataTx, [payer]);
-      }
+      // m1 deposits period 1, m2 skips
+      await program.methods.deposit()
+        .accounts({
+          member: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
+          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .signers([m1]).rpc();
 
-      const treasuryAta = getTreasuryAta(usdcMint);
+      clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      const treasuryAta = await initTreasury();
+
+      await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey,
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          treasuryTokenAccount: treasuryAta,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts([
+          { pubkey: m1Pda, isWritable: false, isSigner: false },
+          { pubkey: m1Ata, isWritable: true, isSigner: false },
+          { pubkey: m2Pda, isWritable: false, isSigner: false },
+          { pubkey: m2Ata, isWritable: true, isSigner: false },
+        ])
+        .rpc();
+
       const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
+      assert.equal(treasuryBefore, 200_000n);
+
+      // Recipient ATA (recipient was funded with SOL by initTreasury).
+      const recipientAta = getAssociatedTokenAddressSync(usdcMint, recipientKp.publicKey);
+      const ataTx = new Transaction().add(
+        createAssociatedTokenAccountInstruction(
+          payer.publicKey, recipientAta, recipientKp.publicKey, usdcMint
+        )
+      );
+      await provider.sendAndConfirm(ataTx, [payer]);
 
       await program.methods.withdrawFees()
         .accounts({
@@ -1906,6 +2607,98 @@ describe("safenudge", () => {
       const recipientBalance = await getTokenBalanceOrZero(recipientAta);
       assert.equal(treasuryAfter, 0n);
       assert.equal(recipientBalance, treasuryBefore);
+    });
+
+    it("fails with NoFeesToWithdraw when the treasury is empty", async () => {
+      const recipientKp = loadFeeRecipientKeypair();
+      const treasuryAta = await initTreasury();
+
+      const recipientAta = getAssociatedTokenAddressSync(usdcMint, recipientKp.publicKey);
+      const ataTx = new Transaction().add(
+        createAssociatedTokenAccountInstruction(
+          payer.publicKey, recipientAta, recipientKp.publicKey, usdcMint
+        )
+      );
+      await provider.sendAndConfirm(ataTx, [payer]);
+
+      try {
+        await program.methods.withdrawFees()
+          .accounts({
+            recipient: recipientKp.publicKey,
+            treasuryTokenAccount: treasuryAta,
+            recipientTokenAccount: recipientAta,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([recipientKp])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "NoFeesToWithdraw");
+      }
+    });
+  });
+
+  // ─── init_treasury tests ──────────────────────────────────
+
+  describe("init_treasury", () => {
+    it("FEE_RECIPIENT creates the treasury ATA for a mint", async () => {
+      const treasuryAta = await initTreasury();
+
+      const acct = context.banksClient.getAccount(treasuryAta);
+      assert.isNotNull(acct, "treasury ATA must exist after init_treasury");
+      const decoded = AccountLayout.decode(acct!.data);
+      const [treasuryAuthority] = getTreasuryAuthorityPda();
+      assert.equal(new PublicKey(decoded.owner).toBase58(), treasuryAuthority.toBase58());
+      assert.equal(new PublicKey(decoded.mint).toBase58(), usdcMint.toBase58());
+      assert.equal(decoded.amount, 0n);
+    });
+
+    it("rejects a signer that is not the FEE_RECIPIENT", async () => {
+      const { keypair: imposter } = await createFundedMember(0);
+
+      try {
+        await program.methods.initTreasury()
+          .accounts({
+            feeRecipient: imposter.publicKey,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .signers([imposter])
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "UnauthorizedRecipient");
+      }
+    });
+
+    it("fails when the treasury ATA already exists (one-shot init)", async () => {
+      await initTreasury();
+
+      // Warp slot so the second identical tx isn't deduped.
+      const clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot + BigInt(1), clk.epochStartTimestamp, clk.epoch,
+          clk.leaderScheduleEpoch, clk.unixTimestamp + BigInt(1))
+      );
+
+      try {
+        await initTreasury();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        // `init` (not init_if_needed): re-creating an existing ATA fails at
+        // the system-program level. LiteSVM surfaces it as IllegalOwner
+        // (create-account against an account already owned by the token
+        // program); a real validator reports "already in use".
+        const errStr = e.message || e.toString();
+        assert.ok(
+          errStr.includes("already in use") ||
+          errStr.includes("IllegalOwner") ||
+          errStr.includes("custom program error") ||
+          errStr.includes("Error processing Instruction"),
+          `Expected already-in-use failure, got: ${errStr.substring(0, 200)}`
+        );
+      }
     });
   });
 
@@ -2382,10 +3175,12 @@ describe("safenudge", () => {
         return data.amount;
       };
 
+      const treasuryAta = await initTreasury();
+
       const m1BalBefore = await getTokenBalance(m1Ata);
       const m2BalBefore = await getTokenBalance(m2Ata);
       const m3BalBefore = await getTokenBalance(m3Ata);
-      const treasuryBefore = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
+      const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
 
       // Total vault = 40M + 30M + 10M = 80M
       const vaultAcct = context.banksClient.getAccount(vPda);
@@ -2400,6 +3195,7 @@ describe("safenudge", () => {
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
+          treasuryTokenAccount: treasuryAta,
           tokenProgram: TOKEN_PROGRAM_ID,
         })
         .remainingAccounts([
@@ -2437,19 +3233,20 @@ describe("safenudge", () => {
       assert.equal(m2Received, 28_000_000);
       assert.equal(m3Received, 4_000_000);
 
-      // Conservation of funds: sum(payouts) + fee == sum(deposits) == 80M
-      const treasuryAfter = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
-      const feeCharged = Number(treasuryAfter - treasuryBefore);
-      assert.equal(feeCharged, 400_000);
-      assert.equal(m1Received + m2Received + m3Received + feeCharged, 80_000_000);
+      // Conservation of funds: sum(payouts) + fee == sum(deposits) == 80M,
+      // vault closed with zero residue.
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas: [m1Ata, m2Ata, m3Ata],
+        memberBalancesBefore: [m1BalBefore, m2BalBefore, m3BalBefore],
+        treasuryBefore,
+        expectedFee: 400_000n,
+        totalDeposits: 80_000_000n,
+      });
 
       // Verify status == Completed
       const group = await program.account.groupConfig.fetch(gPda);
       assert.equal(group.status, 2);
-
-      // Verify vault is closed (account no longer exists)
-      const vaultAfter = context.banksClient.getAccount(vPda);
-      assert.isNull(vaultAfter);
     });
   });
 });

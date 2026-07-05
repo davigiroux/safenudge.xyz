@@ -234,6 +234,10 @@ export type Safenudge = {
       "accounts": [
         {
           "name": "payer",
+          "docs": [
+            "Permissionless caller triggering settlement. Pays only the transaction",
+            "fee — never rent (the treasury ATA is pre-created via `init_treasury`)."
+          ],
           "writable": true,
           "signer": true
         },
@@ -324,10 +328,15 @@ export type Safenudge = {
         {
           "name": "treasuryTokenAccount",
           "docs": [
-            "Treasury USDC ATA. Created on the first cycle that charges a fee and",
-            "reused thereafter. Authority is the treasury PDA above."
+            "Treasury ATA for this mint, created ahead of time by FEE_RECIPIENT via",
+            "`init_treasury` — never initialized here, so a permissionless caller",
+            "can't be griefed into paying its rent. Optional: required only when a",
+            "protocol fee is due this settlement (enforced in the handler); when",
+            "passed, the associated_token constraints pin it to the canonical ATA of",
+            "(mint, treasury_authority), so no other destination can receive the fee."
           ],
           "writable": true,
+          "optional": true,
           "pda": {
             "seeds": [
               {
@@ -335,41 +344,8 @@ export type Safenudge = {
                 "path": "treasuryAuthority"
               },
               {
-                "kind": "const",
-                "value": [
-                  6,
-                  221,
-                  246,
-                  225,
-                  215,
-                  101,
-                  161,
-                  147,
-                  217,
-                  203,
-                  225,
-                  70,
-                  206,
-                  235,
-                  121,
-                  172,
-                  28,
-                  180,
-                  133,
-                  237,
-                  95,
-                  91,
-                  55,
-                  145,
-                  58,
-                  140,
-                  245,
-                  133,
-                  126,
-                  255,
-                  0,
-                  169
-                ]
+                "kind": "account",
+                "path": "tokenProgram"
               },
               {
                 "kind": "account",
@@ -417,14 +393,6 @@ export type Safenudge = {
         },
         {
           "name": "tokenProgram"
-        },
-        {
-          "name": "associatedTokenProgram",
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -505,6 +473,129 @@ export type Safenudge = {
       "args": []
     },
     {
+      "name": "initTreasury",
+      "discriminator": [
+        105,
+        152,
+        173,
+        51,
+        158,
+        151,
+        49,
+        14
+      ],
+      "accounts": [
+        {
+          "name": "feeRecipient",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "treasuryAuthority",
+          "docs": [
+            "PDA with authority over all treasury token accounts. Holds no data."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  114,
+                  101,
+                  97,
+                  115,
+                  117,
+                  114,
+                  121
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasuryTokenAccount",
+          "docs": [
+            "Canonical ATA of (mint, treasury_authority). `init` (not",
+            "`init_if_needed`): calling twice fails, which is fine for a one-shot."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "treasuryAuthority"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "Any mint — groups are per-mint (`group_config.mint`) while the treasury",
+            "authority PDA is global, so the protocol holds one ATA per supported mint."
+          ]
+        },
+        {
+          "name": "tokenProgram"
+        },
+        {
+          "name": "associatedTokenProgram",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "joinGroup",
       "discriminator": [
         121,
@@ -574,7 +665,66 @@ export type Safenudge = {
         },
         {
           "name": "memberTokenAccount",
-          "writable": true
+          "docs": [
+            "Must be the member's canonical ATA for the group mint (pins owner and",
+            "mint too). Settlement derives each member's ATA deterministically, so",
+            "accepting any other token account here would brick the whole group at",
+            "distribute time (issue #44 M-3)."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "member"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
         },
         {
           "name": "vault",
@@ -626,6 +776,7 @@ export type Safenudge = {
       "accounts": [
         {
           "name": "creator",
+          "writable": true,
           "signer": true,
           "relations": [
             "groupConfig"
@@ -846,6 +997,16 @@ export type Safenudge = {
       "code": 6020,
       "name": "unauthorizedRecipient",
       "msg": "Recipient is not the configured FEE_RECIPIENT"
+    },
+    {
+      "code": 6021,
+      "name": "noFeesToWithdraw",
+      "msg": "Treasury has no fees to withdraw"
+    },
+    {
+      "code": 6022,
+      "name": "treasuryNotInitialized",
+      "msg": "Protocol treasury token account for this mint has not been initialized"
     }
   ],
   "types": [
@@ -1005,3 +1166,4 @@ export type Safenudge = {
     }
   ]
 };
+

@@ -101,6 +101,8 @@ jobs:
       # macOS-generated lockfile.
       - run: npm install --no-audit --no-fund
       - run: npx tsc --noEmit
+      - name: Check i18n error map is in sync with the IDL
+        run: node ../scripts/sync-error-i18n.mjs
       - run: npm run build
         env:
           # Build needs these set; values do not matter for type / build pass.

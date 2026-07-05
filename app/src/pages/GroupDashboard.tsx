@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
-import { useWallet } from '@solana/wallet-adapter-react'
+import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { PublicKey } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
 import { PageLayout } from '../components/PageLayout'
@@ -15,7 +15,9 @@ import { runMethod } from '../utils/runMethod'
 import { useGroupConfig } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
-import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
+import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA, getTreasuryAuthorityPDA } from '../utils/pda'
+import { useChainTimeOffset } from '../hooks/useChainTimeOffset'
+import { useClusterCheck } from '../hooks/useClusterCheck'
 import { formatTokenAmount } from '../utils/formatToken'
 import { projectDistribution, cycleEndUnix } from '../utils/distribution'
 import { USDC_MINT } from '../utils/constants'
@@ -131,10 +133,17 @@ export default function GroupDashboard() {
   const { t } = useTranslation()
   const { code } = useParams<{ code: string }>()
   const { publicKey } = useWallet()
+  const { connection } = useConnection()
   const program = useAnchorProgram()
   const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
   const [nudgeDismissed, setNudgeDismissed] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
+  const chainTimeOffset = useChainTimeOffset()
+  const { wrongCluster } = useClusterCheck()
+  // The action that started the in-flight/failed transaction, so "retry"
+  // replays exactly that action rather than whichever handler the render-time
+  // predicate chain happens to select (issue #44 B-1).
+  const lastActionRef = useRef<(() => Promise<void>) | null>(null)
 
   const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
   const {
@@ -160,9 +169,11 @@ export default function GroupDashboard() {
 
   const usdcMint = USDC_MINT
 
-  // Calculate current period from real data
+  // Calculate current period from real data. The chain-time offset corrects
+  // for skewed device clocks so the UI's period math agrees with the
+  // program's Clock::get() view (issue #44 M-2).
   const periodDuration = group ? (PERIOD_SECONDS[group.frequency] || 7 * 86400) : 7 * 86400
-  const now = Math.floor(Date.now() / 1000)
+  const now = Math.floor(Date.now() / 1000) + chainTimeOffset
   const elapsed = group ? now - group.cycleStart : 0
   const currentPeriod = group && group.status === 'active'
     ? Math.min(Math.floor(elapsed / periodDuration), group.totalPeriods - 1)
@@ -233,7 +244,8 @@ export default function GroupDashboard() {
     : undefined
 
   async function handleDeposit() {
-    if (!program || !publicKey || !code) return
+    if (!program || !publicKey || !code || wrongCluster) return
+    lastActionRef.current = handleDeposit
     const [groupPda] = getGroupConfigPDA(code)
     const [memberPda] = getMemberRecordPDA(groupPda, publicKey)
     const [vaultPda] = getVaultPDA(groupPda)
@@ -279,7 +291,8 @@ export default function GroupDashboard() {
   }
 
   async function handleStartCycle() {
-    if (!program || !publicKey || !code) return
+    if (!program || !publicKey || !code || wrongCluster) return
+    lastActionRef.current = handleStartCycle
     const [groupPda] = getGroupConfigPDA(code)
 
     const groupHash = await hashId(code)
@@ -325,9 +338,18 @@ export default function GroupDashboard() {
   }
 
   async function handleDistribute() {
-    if (!program || !publicKey || !code || !group) return
+    if (!program || !publicKey || !code || !group || wrongCluster) return
+    lastActionRef.current = handleDistribute
     const [groupPda] = getGroupConfigPDA(code)
     const [vaultPda] = getVaultPDA(groupPda)
+
+    // The program only requires the treasury ATA when a protocol fee is due;
+    // pass it if it exists on-chain, otherwise null (fee-free settlements
+    // must not depend on it).
+    const [treasuryAuthority] = getTreasuryAuthorityPDA()
+    const treasuryAta = getAssociatedTokenAddressSync(usdcMint, treasuryAuthority, true)
+    const treasuryInfo = await connection.getAccountInfo(treasuryAta)
+    const treasuryTokenAccount = treasuryInfo ? treasuryAta : null
 
     const groupHash = await hashId(code)
     track('distribution_submitted', {
@@ -345,6 +367,7 @@ export default function GroupDashboard() {
             groupConfig: groupPda,
             vault: vaultPda,
             mint: usdcMint,
+            treasuryTokenAccount,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts(buildSettlementRemainingAccounts(members)),
@@ -370,7 +393,8 @@ export default function GroupDashboard() {
   }
 
   async function handleCancel() {
-    if (!program || !publicKey || !code || !group) return
+    if (!program || !publicKey || !code || !group || wrongCluster) return
+    lastActionRef.current = handleCancel
     const [groupPda] = getGroupConfigPDA(code)
     const [vaultPda] = getVaultPDA(groupPda)
 
@@ -454,6 +478,16 @@ export default function GroupDashboard() {
   return (
     <PageLayout bgClass="bg-surface-container-low">
       <div className="px-4 pt-4 pb-4 md:px-8 lg:px-32 lg:py-8">
+        {/* Wrong-cluster guard — writes are disabled while this shows */}
+        {wrongCluster && (
+          <div className="mb-4 rounded-xl bg-tertiary-fixed/20 p-4 flex items-center gap-3" role="alert">
+            <Icon name="warning" size={20} className="text-tertiary" />
+            <span className="font-body text-body-md text-on-surface">
+              {t('errors.wrongNetwork')}
+            </span>
+          </div>
+        )}
+
         {/* Group Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
           <div>
@@ -539,7 +573,7 @@ export default function GroupDashboard() {
               <div className="grid grid-cols-2 gap-4 mt-4">
                 <div>
                   <span className="font-label text-label-sm text-on-surface-variant block">
-                    {t('groupDashboard.weeklyAmount')}
+                    {t(`groupDashboard.periodAmount.${group.frequency}`)}
                   </span>
                   <span className="font-body text-title-sm text-on-surface">
                     {depositAmountFormatted}
@@ -610,7 +644,7 @@ export default function GroupDashboard() {
                 <h3 className="font-headline text-title-md text-on-surface mb-3">
                   {t('groupDashboard.planDetails')}
                 </h3>
-                <StatRow label={t('groupDashboard.weeklyAmount')} value={depositAmountFormatted} />
+                <StatRow label={t(`groupDashboard.periodAmount.${group.frequency}`)} value={depositAmountFormatted} />
                 <StatRow label={t('createGroup.frequency')} value={t(`createGroup.${group.frequency}`)} />
                 <StatRow label={t('createGroup.memberLimit')} value={`${group.currentMembers} / ${group.maxMembers}`} />
               </Card>
@@ -634,7 +668,7 @@ export default function GroupDashboard() {
                 <h3 className="font-headline text-title-lg text-on-surface mb-4">
                   {t('groupDashboard.planDetails')}
                 </h3>
-                <StatRow label={t('groupDashboard.weeklyAmount')} value={depositAmountFormatted} />
+                <StatRow label={t(`groupDashboard.periodAmount.${group.frequency}`)} value={depositAmountFormatted} />
                 <StatRow label={t('createGroup.frequency')} value={t(`createGroup.${group.frequency}`)} />
                 <StatRow label={t('createGroup.memberLimit')} value={`${group.currentMembers} / ${group.maxMembers}`} />
               </Card>
@@ -726,15 +760,9 @@ export default function GroupDashboard() {
           errorDetail={errorDetail || undefined}
           errorKind={errorKind}
           errorProgramCode={errorProgramCode}
-          onRetry={
-            cancelOpen
-              ? handleCancel
-              : showSettlement && !isCompleted
-                ? handleDistribute
-                : canDeposit
-                  ? handleDeposit
-                  : handleStartCycle
-          }
+          onRetry={() => {
+            void lastActionRef.current?.()
+          }}
           onClose={reset}
         />
       )}

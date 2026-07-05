@@ -26,12 +26,12 @@ pub fn validate_member_pair<'info>(
     let data = record_info.try_borrow_data()?;
     let mut data_slice: &[u8] = &data;
     let member_record = MemberRecord::try_deserialize(&mut data_slice)
-        .map_err(|_| SafeNudgeError::MemberCountMismatch)?;
+        .map_err(|_| SafeNudgeError::InvalidMemberRecord)?;
     drop(data);
 
     require!(
         member_record.group == *group_key,
-        SafeNudgeError::MemberCountMismatch
+        SafeNudgeError::InvalidMemberRecord
     );
 
     let (expected_record, _) = Pubkey::find_program_address(

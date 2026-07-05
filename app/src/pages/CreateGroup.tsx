@@ -8,10 +8,11 @@ import { BN } from '@coral-xyz/anchor'
 import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, TextInput, RadioGroup, TransactionStatus } from '../components'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { useClusterCheck } from '../hooks/useClusterCheck'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
 import { getGroupConfigPDA, getVaultPDA } from '../utils/pda'
-import { USDC_MINT } from '../utils/constants'
+import { USDC_MINT, BRL_PER_USD } from '../utils/constants'
 import { bucketAmount, FREQUENCY_NAMES, hashId, track } from '../utils/analytics'
 
 type Frequency = '0' | '1' | '2'
@@ -36,6 +37,7 @@ export default function CreateGroup() {
   const navigate = useNavigate()
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
+  const { wrongCluster } = useClusterCheck()
   const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
 
   const usdcMint = USDC_MINT
@@ -53,7 +55,7 @@ export default function CreateGroup() {
   const groupTotal = individualGoal * maxMembers
 
   async function handleSubmit() {
-    if (!program || !publicKey || !groupCode || amount <= 0) return
+    if (!program || !publicKey || !groupCode || amount <= 0 || wrongCluster) return
 
     const depositAmountBN = new BN(Math.round(amount * 1_000_000))
     const penaltyBN = penaltyType === '1'
@@ -115,6 +117,14 @@ export default function CreateGroup() {
   return (
     <PageLayout bgClass="bg-surface-container-low">
       <div className="px-4 py-6 md:px-8 lg:px-32">
+        {wrongCluster && (
+          <div className="mb-4 rounded-xl bg-tertiary-fixed/20 p-4 flex items-center gap-3" role="alert">
+            <Icon name="warning" size={20} className="text-tertiary" />
+            <span className="font-body text-body-md text-on-surface">
+              {t('errors.wrongNetwork')}
+            </span>
+          </div>
+        )}
         <h1 className="font-headline text-headline-md text-on-surface mb-2">
           {t('createGroup.title')}
         </h1>
@@ -143,7 +153,7 @@ export default function CreateGroup() {
               type="number"
               placeholder="0.00"
               suffix={t('createGroup.depositAmountUnit')}
-              hint={amount > 0 ? t('createGroup.estimatedBrl', { value: (amount * 5.2).toFixed(2) }) : undefined}
+              hint={amount > 0 ? t('createGroup.estimatedBrl', { value: (amount * BRL_PER_USD).toFixed(2) }) : undefined}
               value={depositAmount}
               onChange={(e) => setDepositAmount(e.target.value)}
             />
@@ -301,7 +311,7 @@ export default function CreateGroup() {
                   </span>
                 </div>
                 <p className="font-body text-body-md text-on-surface-variant">
-                  {t('createGroup.estimatedBrl', { value: (individualGoal * 5.2).toFixed(2) })}
+                  {t('createGroup.estimatedBrl', { value: (individualGoal * BRL_PER_USD).toFixed(2) })}
                 </p>
               </Card>
             )}

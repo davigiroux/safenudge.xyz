@@ -29,10 +29,15 @@ pub struct JoinGroup<'info> {
     )]
     pub member_record: Account<'info, MemberRecord>,
 
+    /// Must be the member's canonical ATA for the group mint (pins owner and
+    /// mint too). Settlement derives each member's ATA deterministically, so
+    /// accepting any other token account here would brick the whole group at
+    /// distribute time (issue #44 M-3).
     #[account(
         mut,
-        constraint = member_token_account.mint == group_config.mint @ SafeNudgeError::InvalidMint,
-        constraint = member_token_account.owner == member.key(),
+        associated_token::mint = mint,
+        associated_token::authority = member,
+        associated_token::token_program = token_program,
     )]
     pub member_token_account: InterfaceAccount<'info, TokenAccount>,
 
