@@ -6,7 +6,7 @@ import BN from "bn.js";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { LiteSVMProvider, fromWorkspace } from "anchor-litesvm";
 import { Clock } from "litesvm";
-import { PublicKey, Keypair, SystemProgram, Transaction } from "@solana/web3.js";
+import { PublicKey, Keypair, SystemProgram, Transaction, ComputeBudgetProgram } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
@@ -1092,6 +1092,106 @@ describe("safenudge", () => {
         treasuryBefore,
         expectedFee: 0n,
         totalDeposits: BigInt(4 * depositAmount),
+      });
+    });
+
+    it("distributes correctly for a full 10-member group (all compliant)", async () => {
+      // Phase 2 item 12 / issue #46 L-8: max_members = 10 is the largest group
+      // the program allows, and it drives distribute with 20 remaining accounts
+      // — the account-count and compute ceiling for single-transaction
+      // settlement. A single-period cycle keeps every member compliant from
+      // their join-time deposit (no separate deposit round), so the conservation
+      // invariant reduces to "every deposit returned, vault closed" without
+      // penalty/fee bookkeeping. A raised compute-unit limit mirrors what a real
+      // client must attach: 10 member-pair validations + 10 transfer_checked
+      // CPIs + the vault close exceed the 200k default.
+      const code = "dist-10-full";
+      const depositAmount = 3_000_000; // 3 USDC
+      const memberCount = 10;
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+
+      // Create group: weekly, 1 period, fixed 1 USDC penalty, 10-member cap
+      await program.methods
+        .createGroup(code, new BN(depositAmount), 0, 1, 10, 0, new BN(1_000_000))
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        })
+        .rpc();
+
+      // Fill the group to capacity. Joining deposits period 0 — the only period
+      // — so all 10 members end the cycle fully compliant.
+      const members: { pda: PublicKey; ata: PublicKey }[] = [];
+      for (let i = 0; i < memberCount; i++) {
+        const { keypair, tokenAccount } = await createFundedMember(depositAmount);
+        const [mPda] = getMemberPda(gPda, keypair.publicKey);
+        await program.methods.joinGroup()
+          .accounts({
+            member: keypair.publicKey, groupConfig: gPda, memberRecord: mPda,
+            memberTokenAccount: tokenAccount, vault: vPda, mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          })
+          .signers([keypair]).rpc();
+        members.push({ pda: mPda, ata: tokenAccount });
+      }
+
+      const groupAfterJoin = await program.account.groupConfig.fetch(gPda);
+      assert.equal(groupAfterJoin.currentMembers, memberCount);
+
+      // Start cycle
+      await program.methods.startCycle()
+        .accounts({ creator: payer.publicKey, groupConfig: gPda })
+        .rpc();
+
+      // Advance past the single-period cycle end (1 week)
+      const clk = context.banksClient.getClock();
+      context.setClock(
+        new Clock(clk.slot, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch,
+          clk.unixTimestamp + BigInt(8 * 86400))
+      );
+
+      const memberAtas = members.map((m) => m.ata);
+      const balancesBefore = await Promise.all(memberAtas.map((a) => getTokenBalanceOrZero(a)));
+      const treasuryBefore = await getTokenBalanceOrZero(getTreasuryAta(usdcMint));
+
+      // Distribute with 20 remaining accounts (2 per member). All members
+      // compliant → no penalties, no fee, so the treasury account is not
+      // required (passed as null).
+      const remaining = members.flatMap((m) => [
+        { pubkey: m.pda, isWritable: false, isSigner: false },
+        { pubkey: m.ata, isWritable: true, isSigner: false },
+      ]);
+      await program.methods.distribute()
+        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
+        .accounts({
+          payer: payer.publicKey,
+          creator: payer.publicKey,
+          groupConfig: gPda,
+          vault: vPda,
+          mint: usdcMint,
+          treasuryTokenAccount: null,
+          tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts(remaining)
+        .rpc();
+
+      // Status Completed; each member's single deposit returned in full.
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+
+      for (let i = 0; i < memberCount; i++) {
+        const after = await getTokenBalanceOrZero(memberAtas[i]);
+        assert.equal(Number(after - balancesBefore[i]), depositAmount);
+      }
+
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas,
+        memberBalancesBefore: balancesBefore,
+        treasuryBefore,
+        expectedFee: 0n,
+        totalDeposits: BigInt(memberCount * depositAmount),
       });
     });
 
