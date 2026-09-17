@@ -225,8 +225,18 @@ Per-cluster builds for the protocol fee recipient:
 ```bash
 anchor build                              # local / test fallback recipient
 anchor build -- --features devnet         # devnet recipient
-anchor build -- --features mainnet        # mainnet placeholder (issue #20)
+anchor build -- --features mainnet        # refused until configured — see below
 ```
+
+The mainnet build is refused on purpose. `declare_id!` is cluster-gated the same way `FEE_RECIPIENT` is, and a `--features mainnet` build stops with one error until both are configured:
+
+```
+error: mainnet build is not configured: set MAINNET_PROGRAM_ID and the mainnet
+       FEE_RECIPIENT in programs/safenudge/src/lib.rs, then remove this
+       compile_error!. See issue #20.
+```
+
+This exists so a mainnet artifact pointed at placeholder values cannot be produced at all. A placeholder program ID deploys to the wrong address. A placeholder fee recipient is worse: `distribute` succeeds, members are paid correctly, and the protocol collects nothing — no error, no failed transaction, nothing to notice. Both values are set as part of [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20).
 
 ### Run the frontend
 

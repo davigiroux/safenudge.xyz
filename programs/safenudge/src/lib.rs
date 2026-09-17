@@ -3,7 +3,44 @@
 
 use anchor_lang::prelude::*;
 
+// Cluster-gated program ID, mirroring the `FEE_RECIPIENT` pattern below.
+// Devnet, localnet and the LiteSVM suite all share the devnet ID; mainnet
+// gets a dedicated one so a mainnet deploy can never land on the devnet
+// program. Keep `Anchor.toml` and the frontend's `VITE_PROGRAM_ID` in step
+// with whichever branch is built.
+#[cfg(not(feature = "mainnet"))]
 declare_id!("88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB");
+
+// A mainnet build is refused until it is configured, rather than producing
+// a deployable artifact pointed at placeholder values. Both of these must
+// be replaced before the `compile_error!` is removed (issue #20):
+//
+//   1. `MAINNET_PROGRAM_ID` below — the pubkey of a mainnet program keypair
+//      generated with `solana-keygen new -o <path>` and backed up off-machine.
+//      Losing it after the first deploy means that program ID can never be
+//      redeployed to.
+//   2. `FEE_RECIPIENT`'s `mainnet` branch — the Squads multisig vault
+//      address. While it is `Pubkey::default()`, `distribute` skips the
+//      protocol fee entirely and mainnet collects no revenue (issue #44 H-4).
+//
+// Deleting this `compile_error!` without doing both is the failure it exists
+// to prevent. `anchor build` and CI never pass `--features mainnet`, so this
+// gate costs nothing until someone deliberately builds for mainnet.
+#[cfg(feature = "mainnet")]
+compile_error!(
+    "mainnet build is not configured: set MAINNET_PROGRAM_ID and the mainnet \
+     FEE_RECIPIENT in programs/safenudge/src/lib.rs, then remove this \
+     compile_error!. See issue #20."
+);
+
+/// Placeholder mainnet program ID. Not deployable — the `compile_error!`
+/// above fires first. Present so a `--features mainnet` build reports one
+/// clear error instead of a cascade of missing-`ID` failures.
+#[cfg(feature = "mainnet")]
+pub const MAINNET_PROGRAM_ID: &str = "11111111111111111111111111111111";
+
+#[cfg(feature = "mainnet")]
+declare_id!("11111111111111111111111111111111");
 
 pub mod errors;
 pub mod instructions;
