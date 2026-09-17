@@ -130,6 +130,10 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | CI | GitHub Actions | Anchor build/test, tsc, build, security-lint, audits |
 | Hosting | Vercel | Auto-deploy from `main` |
 
+### Downstream consumers
+
+This repository's frontend is not the program's only consumer. **SafePool** (private repository, same author) is a second product built on the same deployed program, reused unchanged — same instruction set, same PDA seeds, same IDL. Its mainnet cutover depends on [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20) and on the upgrade-authority decision in [`ARCHITECTURE.md`](./ARCHITECTURE.md#no-upgrade-authority), so changes to the program surface here have a second caller to account for.
+
 → Read the full architecture in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ---
@@ -138,14 +142,22 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 
 SafeNudge holds user funds. The security posture is structural, not bolted on. Six non-negotiables:
 
-1. **No admin backdoors.** No upgrade-authority instruction, no admin withdrawal, no owner override.
+1. **No admin path to user funds.** The program has no owner and no admin role. No instruction moves vault funds to an arbitrary address. The one privileged instruction, `withdraw_fees`, can only move accumulated protocol fees out of the treasury PDA to a compile-time `FEE_RECIPIENT` — it cannot touch a group vault. The creator's only powers are `start_cycle` and `emergency_cancel`, and cancel returns every member's deposit pro-rata.
 2. **PDA-only authority on the vault.** No human wallet can ever sign a transfer out of the vault.
 3. **One-directional state machine.** Status moves `Open → Active → Completed/Cancelled`. Every instruction validates status as its first check; nothing can revert.
 4. **Capped penalty math.** A member can never owe more than they deposited. All numeric ops use `checked_add/sub/mul/div` — raw arithmetic on `u64` is forbidden and CI-enforced.
 5. **Permissionless distribution.** Anyone can settle a finished cycle. No single party can hold funds hostage.
 6. **`transfer_checked` everywhere.** Mint and decimals are validated at the CPI level — no token-confusion attacks.
 
-The Drift Protocol exploit of April 2026 ($285M, 12 minutes) didn't exploit a code bug — it abused an admin key, durable nonces, and oracle manipulation. SafeNudge's attack surface is smaller (no oracles, no governance, no upgrade authority), but the *principle* is the same: correctness lives in the constraints, not just the code paths.
+### Upgrade authority — the honest caveat
+
+The six guarantees above describe the deployed bytecode. They hold only as long as that bytecode cannot be replaced, and today it can: the devnet deployment still has a live upgrade authority. Whoever holds that key can ship a different program at the same address, and the constraints above would not apply to it.
+
+The destination is `set-upgrade-authority --final`, which sets the authority to `None` and makes the program permanently unpatchable. Before that, upgrade authority moves to a 2-of-3 Squads multisig, so no single key can replace the program. `--final` follows once the mainnet configuration is settled, an external review of `distribute` and `emergency_cancel` has landed, and the program has run on mainnet with real funds without needing a patch. The full reasoning, including what `--final` would freeze permanently, is in [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md).
+
+Until that sequence completes, read the guarantees above as "no single party can move your money", not "the rules can never change".
+
+The Drift Protocol exploit of April 2026 ($285M, 12 minutes) didn't exploit a code bug — it abused an admin key, durable nonces, and oracle manipulation. SafeNudge's attack surface is smaller: no oracles, no governance, no admin role inside the program. The upgrade key is the one place the same class of risk still applies, which is why it goes to a multisig before real funds arrive. The *principle* is the same either way: correctness lives in the constraints, not just the code paths.
 
 → Threat model, instruction matrix, and constraint templates in [`ARCHITECTURE.md`](./ARCHITECTURE.md#security-architecture). Engineering rules and forbidden patterns in [`CLAUDE.md`](./CLAUDE.md#security-principles).
 

@@ -21,7 +21,7 @@ The minimum viable product: a complete savings-group lifecycle on devnet with bi
 - [x] CI pipeline: anchor build/test, tsc, security-lint, i18n drift + audits (`.github/workflows/ci.yml`)
 - [x] README with setup instructions and devnet demo link
 - [ ] Ramp Network widget for Pix → USDC on-ramp (still a placeholder button in `JoinGroup.tsx`)
-- [ ] Devnet deployment finalized — program live at `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB`; upgrade authority not yet locked via `set-upgrade-authority --final`
+- [ ] Devnet deployment finalized — program live at `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB`; upgrade authority not yet locked via `set-upgrade-authority --final`. Locking is deferred on purpose — authority moves to a 2-of-3 Squads multisig first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md). Execution tracked in issue #20
 
 ### v1.1 — Protocol fee · shipped (devnet)
 
@@ -31,7 +31,7 @@ Adds the v1 revenue stream so the protocol can sustain itself without yield infr
 - [x] PDA-controlled treasury USDC token account at seeds `[b"treasury"]`, created via one-shot `init_treasury` (issue #44 H-3)
 - [x] `withdraw_fees` instruction restricted to a compile-time `FEE_RECIPIENT`, gated per cluster via cargo features
 - [x] Fee disclosure in landing copy and Como Funciona, replacing the prior "zero fees" framing
-- [ ] Mainnet `FEE_RECIPIENT` real pubkey + multisig migration + cluster-gated `declare_id!` — tracked in issue #20
+- [ ] Mainnet `FEE_RECIPIENT` real pubkey + multisig migration + cluster-gated `declare_id!` — tracked in issue #20. Also blocks SafePool's mainnet cutover: it has no mainnet program ID to target until `declare_id!` is cluster-gated
 
 ### v2 — Yield Integration
 
@@ -99,7 +99,7 @@ The original sizing was 18–25 hours total. Numbers below are the original sizi
 ### Phase 4 — Polish & Deploy · ⚠️ partial
 
 20. ✅ CI workflow — `.github/workflows/ci.yml` (program build/test, frontend tsc/build, security-lint, i18n drift check)
-21. ⚠️ Devnet deployment — program live at `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB`; `set-upgrade-authority --final` still pending
+21. ⚠️ Devnet deployment — program live at `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB`; `set-upgrade-authority --final` still pending, and deliberately so — a one-way door with a downstream consumer and no audit behind it. Multisig first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md)
 22. ⚠️ End-to-end testing on devnet — pending
 23. ✅ README — present with setup + demo instructions
 
@@ -124,6 +124,8 @@ Cross-references for everything currently in flight:
 | Frontend deps drift, i18n error map + drift gate, cluster guard, chain-time period | shipped | PR #45 |
 | CI pipeline (program / frontend / security-lint / i18n) | shipped | `.github/workflows/ci.yml` |
 | Mainnet `FEE_RECIPIENT` + multisig + cluster-gated `declare_id!` | open | issue #20 |
+| Downstream consumer: SafePool (private repo) reuses this program unchanged; its mainnet cutover rides on the same issue | open | issue #20 |
+| Upgrade authority → 2-of-3 Squads multisig, `--final` deferred (devnet rehearsal, then mainnet) | decided, not executed | [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md), issue #20 |
 | Weekly review automation (rolling findings) | ongoing | issues labelled `review` (latest #46) |
 
 When a PR merges, the corresponding row should reflect `shipped` — keeping this table short and high-signal beats letting it grow into a changelog.
