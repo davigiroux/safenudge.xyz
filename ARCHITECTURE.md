@@ -808,6 +808,13 @@ solana program set-upgrade-authority <PROGRAM_ID> --final
 
 For development iterations, keep upgrade authority until final deployment. Document this in the README.
 
+**This step is irreversible, and it is deliberately deferred.** See [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md): mainnet upgrade authority goes to a 2-of-3 Squads multisig first, and `--final` runs only after issue #20 closes, an external review of `distribute` and `emergency_cancel` lands, and a soak period on mainnet elapses. `--final` makes the deployed bytecode permanently unpatchable: no bug fix, no migration, no recovery. Two facts bear on its timing, recorded here rather than left implicit:
+
+- **SafeNudge has a second consumer.** SafePool (private repository, same author) is a separate product built on this program, reused unchanged — same instruction set, same PDA seeds, same IDL. Its own mainnet cutover routes real BRL-stablecoin funds through this program, and is blocked on [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20). SafePool's `docs/adr/0002-safenudge-safepool-boundary.md` holds the boundary contract between the two repositories, including how its pinned copy of the IDL tracks this one.
+- **No third-party audit has been performed or scheduled.** CI runs `cargo audit` and `npm audit` as advisory dependency scans; neither reviews this program's logic.
+
+Locking immutability on an unaudited program that real money moves through is a tradeoff, not a formality. A multisig removes the single-key risk without removing the patch path; immutability removes both. Take them in that order.
+
 ---
 
 ## Task Breakdown
