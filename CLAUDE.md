@@ -311,6 +311,8 @@ Every PR must include:
 3. **Test coverage** — list of new/modified tests
 4. **Checklist** — completed agent checklist for the relevant role
 
+**Any PR touching `programs/` or `tests/` uses this format, and only this format.** Do not use the `visual-pr` skill on those — its template omits Security impact and Test coverage, and dropping the security note on a program change removes the only place that analysis is written down. For every other PR (docs, frontend, CI, tooling), `visual-pr` is the preferred format.
+
 No PR merges without:
 - [ ] `anchor build` succeeds
 - [ ] `anchor test` passes (all tests, not just new ones)
