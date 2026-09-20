@@ -7,3 +7,16 @@ app/.env
 app/dist/
 *.png
 .playwright-mcp/
+
+# Program keypairs. A program keypair's pubkey IS the program address, so
+# committing one publishes the identity of a deployed program. Keep them
+# outside target/ (which is disposable) and back them up off-machine.
+keys/
+*-keypair.json
+
+# Agent skills installed via `npx skills add`. Local tooling, not project
+# configuration — see CLAUDE.md on which PRs they apply to.
+.agents/
+.claude/skills/
+skills-lock.json
+.humanlayer/

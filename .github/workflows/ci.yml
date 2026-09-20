@@ -107,7 +107,7 @@ jobs:
         env:
           # Build needs these set; values do not matter for type / build pass.
           VITE_SOLANA_RPC_URL: https://api.devnet.solana.com
-          VITE_PROGRAM_ID: 88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB
+          VITE_PROGRAM_ID: GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc
           VITE_USDC_MINT: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
 
   security-lint:

@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/safenudge.json`.
  */
 export type Safenudge = {
-  "address": "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB",
+  "address": "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc",
   "metadata": {
     "name": "safenudge",
     "version": "0.1.0",

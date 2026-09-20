@@ -6,13 +6,13 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-safenudge = "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB"
+safenudge = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
 
 # anchor-litesvm's fromWorkspace() hard-codes a lookup of programs.localnet,
 # so this block must stay present for the in-process test suite to load. The
 # program ID is the same as the devnet entry above.
 [programs.localnet]
-safenudge = "88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB"
+safenudge = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
 
 [provider]
 cluster = "devnet"
