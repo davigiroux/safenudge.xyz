@@ -86,6 +86,28 @@ rather than beside it. The sequence is only safe in this order: prove
 every key can approve, then move the authority. Reversing it turns a
 non-functioning member into a key that cannot be replaced.
 
+Two gates, not one. This ADR was written about `--final`, and left the
+first mainnet deploy implicitly ungated — which reads as permission to
+deploy as soon as the constants are filled in. It is not.
+
+The first mainnet deploy waits on sustained application-level testing
+against devnet: the full lifecycle driven through the frontend the way a
+member would, repeatedly, not a one-off smoke test. The program's own
+suite passes 46 tests and has never caught an integration fault, because
+it cannot — LiteSVM runs the program in isolation, with no wallet, no
+RPC, no frontend and no real token accounts. Every failure mode that has
+actually cost time on this project lived in that gap: a lost upgrade
+authority, a placeholder fee recipient that breaks nothing visibly, an
+RPC dropping a deploy midway. None of those are things a unit test fails
+on.
+
+This gate is cheap and the failure it prevents is not. Devnet costs
+airdropped SOL and an afternoon; the same bug found on mainnet costs
+real BRS belonging to people in a savings group, in a program whose
+patch path is a multisig proposal. Deploying earlier buys nothing —
+nothing downstream is waiting on a mainnet program except SafePool's own
+cutover, which has its own gates.
+
 `--final` runs later, and only when all of: issue #20 closed with a real
 `FEE_RECIPIENT` and cluster-gated `declare_id!`; a third-party audit, or
 at minimum a paid external review of `distribute` and
