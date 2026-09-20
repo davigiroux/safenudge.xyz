@@ -9,7 +9,7 @@ use anchor_lang::prelude::*;
 // program. Keep `Anchor.toml` and the frontend's `VITE_PROGRAM_ID` in step
 // with whichever branch is built.
 #[cfg(not(feature = "mainnet"))]
-declare_id!("88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB");
+declare_id!("GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc");
 
 // A mainnet build is refused until it is configured, rather than producing
 // a deployable artifact pointed at placeholder values. Both of these must

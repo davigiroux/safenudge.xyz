@@ -14,7 +14,7 @@ function requireEnv(name: string, dev_fallback: string): string {
 }
 
 const SOLANA_DEVNET_USDC = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
-const SAFENUDGE_DEVNET_PROGRAM_ID = '88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB'
+const SAFENUDGE_DEVNET_PROGRAM_ID = 'GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc'
 const SOLANA_DEVNET_RPC = 'https://api.devnet.solana.com'
 
 export const PROGRAM_ID = new PublicKey(

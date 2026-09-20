@@ -41,7 +41,7 @@ Anchor 1.0 auto-publishes the IDL during `deploy` (stored in a metadata account 
 **Verify:**
 
 ```bash
-solana program show 88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB --url devnet
+solana program show GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc --url devnet
 ```
 
 Output should show `Last Deployed Slot` and the program data account. The program ID matches the one hardcoded in [app/src/utils/constants.ts](../app/src/utils/constants.ts) and [Anchor.toml](../Anchor.toml).
@@ -75,7 +75,19 @@ solana-keygen new -o keys/safenudge-devnet.json
 ```
 
 `keys/` is gitignored. Copy the file and its seed phrase somewhere
-off-machine before deploying. Anchor will otherwise generate a throwaway
+off-machine before deploying. Label the paper copy with the role, not just
+the project — a program keypair holds no funds, so restoring it later and
+seeing a zero balance looks like the wrong phrase unless the label says
+`PROGRAM ID`.
+
+Then put it where `anchor build` looks. The build validates
+`target/deploy/safenudge-keypair.json` against `declare_id!` no matter what
+`--program-keypair` the deploy is given, so without this copy the build
+stops with a program ID mismatch:
+
+```bash
+cp keys/safenudge-devnet.json target/deploy/safenudge-keypair.json
+``` Anchor will otherwise generate a throwaway
 keypair in `target/deploy/` on every build, which is what produces the
 `Program ID mismatch` error — resolve that with `anchor build --ignore-keys`,
 never with `anchor keys sync`, which rewrites `declare_id!` to the throwaway
@@ -124,6 +136,23 @@ anchor deploy \
   --provider.cluster devnet \
   --program-keypair keys/safenudge-devnet.json
 ```
+
+If the RPC drops the connection partway — common on
+`api.devnet.solana.com` — the SOL is not lost. The partial write sits in a
+buffer account you still control. Find it and resume into it rather than
+starting over:
+
+```bash
+solana program show --buffers          # note the buffer address and balance
+solana program deploy target/deploy/safenudge.so \
+  --buffer <BUFFER_ADDRESS> \
+  --program-id keys/safenudge-devnet.json \
+  --url devnet
+```
+
+Resuming keeps the chunks already written and costs no extra rent. If you
+would rather start clean, `solana program close --buffers` refunds the
+buffer balance first.
 
 Verify before doing anything else:
 
@@ -176,7 +205,7 @@ Production builds use `requireEnv` (see [app/src/utils/constants.ts](../app/src/
 
 | Name | Value |
 |------|-------|
-| `VITE_PROGRAM_ID` | `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB` |
+| `VITE_PROGRAM_ID` | `GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` |
 | `VITE_USDC_MINT` | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
 | `VITE_SOLANA_RPC_URL` | `https://api.devnet.solana.com` (or a private RPC URL) |
 
