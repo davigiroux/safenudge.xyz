@@ -21,7 +21,7 @@ The minimum viable product: a complete savings-group lifecycle on devnet with bi
 - [x] CI pipeline: anchor build/test, tsc, security-lint, i18n drift + audits (`.github/workflows/ci.yml`)
 - [x] README with setup instructions and devnet demo link
 - [ ] Ramp Network widget for Pix → USDC on-ramp (still a placeholder button in `JoinGroup.tsx`)
-- [ ] Devnet deployment finalized — program live at `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB`; upgrade authority not yet locked via `set-upgrade-authority --final`. Locking is deferred on purpose — authority moves to a 2-of-3 Squads multisig first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md). Execution tracked in issue #20
+- [ ] Devnet deployment finalized — redeployed at `GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` after the program keypair and upgrade authority for the original `88vmqe9y…` were lost with a machine rebuild (that program stays live but can never be upgraded; see [devnet-testing.md §2b](./docs/devnet-testing.md)). Upgrade authority not yet locked via `set-upgrade-authority --final`, deferred on purpose — authority moves to a 2-of-3 Squads multisig first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md). Execution tracked in issue #20
 
 ### v1.1 — Protocol fee · shipped (devnet)
 
@@ -99,7 +99,7 @@ The original sizing was 18–25 hours total. Numbers below are the original sizi
 ### Phase 4 — Polish & Deploy · ⚠️ partial
 
 20. ✅ CI workflow — `.github/workflows/ci.yml` (program build/test, frontend tsc/build, security-lint, i18n drift check)
-21. ⚠️ Devnet deployment — program live at `88vmqe9yLF4mYtamaX53Cwg66GaxzyH391bQudcA8FcB`; `set-upgrade-authority --final` still pending, and deliberately so — a one-way door with a downstream consumer and no audit behind it. Multisig first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md)
+21. ⚠️ Devnet deployment — program live at `GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` (redeployed 2026-09-19; the original `88vmqe9y…` is orphaned, its keys lost). `set-upgrade-authority --final` still pending, and deliberately so — a one-way door with a downstream consumer and no audit behind it. Multisig first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md)
 22. ⚠️ End-to-end testing on devnet — pending
 23. ✅ README — present with setup + demo instructions
 
