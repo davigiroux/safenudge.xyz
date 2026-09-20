@@ -31,7 +31,9 @@ Adds the v1 revenue stream so the protocol can sustain itself without yield infr
 - [x] PDA-controlled treasury USDC token account at seeds `[b"treasury"]`, created via one-shot `init_treasury` (issue #44 H-3)
 - [x] `withdraw_fees` instruction restricted to a compile-time `FEE_RECIPIENT`, gated per cluster via cargo features
 - [x] Fee disclosure in landing copy and Como Funciona, replacing the prior "zero fees" framing
-- [ ] Mainnet `FEE_RECIPIENT` real pubkey + multisig migration + cluster-gated `declare_id!` — tracked in issue #20. Also blocks SafePool's mainnet cutover: it has no mainnet program ID to target until `declare_id!` is cluster-gated
+- [x] Multisig migration — 2-of-3 Squads multisig created on mainnet, all three keys verified to sign; vault `3M4JicDn…` is the mainnet `FEE_RECIPIENT` (issue #20)
+- [x] Cluster-gated `declare_id!` — PR #52; an unconfigured `--features mainnet` build is refused at compile time
+- [ ] Mainnet program keypair, then set both constants and deploy — tracked in issue #20. Gated on sustained app-level devnet testing first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md). Also blocks SafePool's mainnet cutover: it has no mainnet program ID to target
 
 ### v2 — Yield Integration
 
