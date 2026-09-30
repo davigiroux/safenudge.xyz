@@ -257,7 +257,7 @@ The full distribute path is already covered by 9 unit tests with on-chain clock 
 
 ### Full distribute path (multi-week)
 
-Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math).
+Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math). To rehearse it in minutes first, see [5b](#5b-local-rehearsal-with-surfpool).
 
 1. Repeat steps 2–4 above with a new group code (e.g. `smoke-002`)
 2. Week 0: A, B, C all deposit
@@ -272,6 +272,91 @@ Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only
 - C receives <40 USDC (penalty applied, capped at total deposited)
 - Treasury gets 5% of the penalty pool
 - Sum of all payouts + fee = sum of all deposits (conservation invariant)
+
+## 5b. Local rehearsal with Surfpool
+
+[Surfpool](https://github.com/solana-foundation/surfpool) runs a local RPC
+that forks devnet on demand: accounts (the deployed program, the USDC mint,
+the treasury ATA) are fetched from devnet the first time they are read, and
+every write stays local. It adds two things devnet can't: a clock you can
+move forward, and token balances you can set without a faucet. That turns
+the multi-week distribute path above into a few minutes.
+
+It is a rehearsal, not a substitute. The mainnet gate in
+[ADR-0001](./adr/0001-defer-program-immutability-to-multisig.md) asks for
+sustained testing on devnet itself — real RPC latency, dropped transactions,
+real faucets. Nothing run here counts toward that.
+
+### Start it
+
+```bash
+curl -sL https://run.surfpool.run/ | bash    # one-time install
+surfpool start --network devnet --no-deploy
+```
+
+- `--network devnet` is required, not a preference. `useClusterCheck`
+  compares `getGenesisHash()` against devnet's hash; a forked Surfpool
+  returns the upstream hash, while `--offline` returns a local one and the
+  app shows the wrong-network banner.
+- `--no-deploy` keeps Surfpool from generating txtx runbooks in the repo and
+  deploying the local build. Without it you're testing whatever is in
+  `target/deploy/`, not the program on devnet. Real deploys go through the
+  steps in section 2, never through a Surfpool runbook.
+
+RPC is on `http://127.0.0.1:8899`, Studio (a local explorer) on
+`http://127.0.0.1:18488`.
+
+### Point the app at it
+
+```bash
+cd app && VITE_SOLANA_RPC_URL=http://127.0.0.1:8899 npm run dev
+```
+
+Program ID and USDC mint stay at their devnet defaults. In Phantom, switch
+Developer Settings → network to Localnet so the balances it shows match.
+
+### Fund the wallets
+
+SOL and USDC come from cheatcodes, not faucets. USDC amounts are base units
+(6 decimals), so `100000000` is 100 USDC:
+
+```bash
+RPC=http://127.0.0.1:8899
+USDC=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
+
+for W in <wallet A> <wallet B> <wallet C>; do
+  solana airdrop 10 $W --url $RPC
+  curl -s $RPC -H 'Content-Type: application/json' -d '{
+    "jsonrpc":"2.0","id":1,"method":"surfnet_setTokenAccount",
+    "params":["'$W'","'$USDC'",{"amount":100000000}]
+  }'
+done
+```
+
+### Move the clock
+
+`surfnet_timeTravel` only moves forward, and `absoluteTimestamp` is in
+**milliseconds**, while `GroupConfig` timestamps are in seconds. To jump
+one week ahead of now:
+
+```bash
+curl -s $RPC -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"surfnet_timeTravel",
+  "params":[{"absoluteTimestamp":'$(( ($(date +%s) + 7*86400) * 1000 ))'}]
+}'
+```
+
+For later weeks, compute from the previous jump, not from `date`: a second
+"now + 7 days" is behind the clock you already moved and gets rejected.
+
+Hard-refresh the dashboard after every jump. `useChainTimeOffset` reads the
+chain clock once on mount, so an open tab keeps showing the old period.
+
+### Run the full distribute path
+
+Follow "Full distribute path" above, replacing each "week N" wait with one
+time-travel jump. The expected end state is the same, including the
+conservation invariant and the 5% fee to the treasury.
 
 ## 6. Troubleshooting
 
