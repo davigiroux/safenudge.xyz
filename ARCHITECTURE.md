@@ -421,7 +421,7 @@ The fee CPI runs **before** any member-payout CPIs so the "last member gets vaul
 pub const FEE_RECIPIENT: Pubkey = pubkey!("111..."); // placeholder == Pubkey::default()
 
 #[cfg(all(feature = "devnet", not(feature = "mainnet")))]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("FobkDn4r...");
+pub const FEE_RECIPIENT: Pubkey = pubkey!("2jwEs8aP...");
 
 // Test-only fallback: matching private key is committed at
 // tests/fixtures/fee-recipient.json so CI exercises init_treasury and the
