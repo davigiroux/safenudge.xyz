@@ -301,6 +301,28 @@ describe("safenudge", () => {
 
       try {
         await program.methods
+          .createGroup(groupCode, new BN(10_000_000), 4, 4, 5, 0, new BN(2_000_000))
+          .accounts({
+            creator: payer.publicKey, groupConfig: groupConfigPda, vault: vaultPda,
+            mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          })
+          .rpc();
+        assert.fail("should have failed");
+      } catch (e: any) {
+        assert.include(e.message, "InvalidFrequency");
+      }
+    });
+
+    // Frequency 3 is the one-hour period that only exists in `--features devnet` builds, so a
+    // developer can drive a whole cycle through the app in an afternoon. This suite runs against
+    // the default build, which is what mainnet ships, and that build must refuse it.
+    it("fails with the devnet-only frequency in a default build", async () => {
+      const groupCode = "devnet-freq";
+      const [groupConfigPda] = getGroupPda(groupCode);
+      const [vaultPda] = getVaultPda(groupConfigPda);
+
+      try {
+        await program.methods
           .createGroup(groupCode, new BN(10_000_000), 3, 4, 5, 0, new BN(2_000_000))
           .accounts({
             creator: payer.publicKey, groupConfig: groupConfigPda, vault: vaultPda,

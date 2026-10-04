@@ -32,7 +32,7 @@ pub struct GroupConfig {
     pub creator: Pubkey,           // 32 — group creator, can start cycle / emergency cancel
     pub mint: Pubkey,              // 32 — USDC mint address
     pub deposit_amount: u64,       // 8  — fixed deposit per period (in token smallest unit)
-    pub frequency: u8,             // 1  — 0 = weekly, 1 = biweekly, 2 = monthly
+    pub frequency: u8,             // 1  — 0 = weekly, 1 = biweekly, 2 = monthly (3 = 1h, devnet builds)
     pub total_periods: u8,         // 1  — number of deposit periods in the cycle
     pub max_members: u8,           // 1  — max group size (2-10)
     pub current_members: u8,       // 1  — current member count
@@ -111,7 +111,7 @@ Creates a new savings group.
 **Args:**
 - `group_code: String` — human-readable code (max 32 chars, used as PDA seed)
 - `deposit_amount: u64` — amount per period
-- `frequency: u8` — 0/1/2 for weekly/biweekly/monthly
+- `frequency: u8` — 0/1/2 for weekly/biweekly/monthly. Devnet builds also accept 3, a one-hour period, so a full lifecycle can be driven through the app in an afternoon; the arm is compiled out of every other build
 - `total_periods: u8` — number of periods (1-52)
 - `max_members: u8` — max size (2-10)
 - `penalty_type: u8` — 0 = fixed, 1 = percentage
@@ -119,7 +119,7 @@ Creates a new savings group.
 
 **Validation:**
 - `deposit_amount > 0`
-- `frequency` in [0, 1, 2]
+- `frequency` in [0, 1, 2], or [0, 1, 2, 3] under `--features devnet` (see `MAX_FREQUENCY`)
 - `total_periods` in [1, 52]
 - `max_members` in [2, 10]
 - `penalty_type` in [0, 1]
@@ -209,11 +209,11 @@ A member makes a periodic deposit during an active cycle.
 **Period calculation:**
 ```
 elapsed = now - cycle_start
-period_duration = match frequency {
+period_duration = period_duration_secs(frequency)   // state/group_config.rs
     0 => 7 * 86400,     // weekly
-    1 => 14 * 86400,    // biweekly  
+    1 => 14 * 86400,    // biweekly
     2 => 30 * 86400,    // monthly (simplified to 30 days)
-}
+    3 => 3600,          // one hour, --features devnet only
 current_period = min(elapsed / period_duration, total_periods - 1)
 ```
 

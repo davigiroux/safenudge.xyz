@@ -4,7 +4,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
-use crate::state::{GroupConfig, MemberRecord, STATUS_ACTIVE};
+use crate::state::{period_duration_secs, GroupConfig, MemberRecord, STATUS_ACTIVE};
 
 #[derive(Accounts)]
 pub struct Deposit<'info> {
@@ -56,12 +56,7 @@ impl<'info> Deposit<'info> {
         // ── Checks ──────────────────────────────────────────
 
         // Calculate period duration in seconds
-        let period_duration: i64 = match self.group_config.frequency {
-            0 => 7_i64.checked_mul(86400).ok_or(SafeNudgeError::ArithmeticOverflow)?,
-            1 => 14_i64.checked_mul(86400).ok_or(SafeNudgeError::ArithmeticOverflow)?,
-            2 => 30_i64.checked_mul(86400).ok_or(SafeNudgeError::ArithmeticOverflow)?,
-            _ => return Err(SafeNudgeError::InvalidFrequency.into()),
-        };
+        let period_duration = period_duration_secs(self.group_config.frequency)?;
 
         // Check cycle hasn't ended
         let cycle_duration = (self.group_config.total_periods as i64)
