@@ -276,8 +276,8 @@ Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only
 ## 5b. Local rehearsal with Surfpool
 
 [Surfpool](https://github.com/solana-foundation/surfpool) runs a local RPC
-that forks devnet on demand: accounts (the deployed program, the USDC mint)
-are fetched from devnet the first time they are read, and
+that forks devnet on demand: accounts (the deployed program, the USDC mint,
+the treasury ATA) are fetched from devnet the first time they are read, and
 every write stays local. It adds two things devnet can't: a clock you can
 move forward, and token balances you can set without a faucet. That turns
 the multi-week distribute path above into a few minutes.
@@ -336,22 +336,6 @@ for W in <wallet A> <wallet B> <wallet C>; do
     "params":["'$W'","'$USDC'",{"amount":100000000}]
   }'
 done
-```
-
-### Create the treasury ATA
-
-`distribute` sends the 5% fee to the treasury ATA and fails with
-`TreasuryNotInitialized` when it doesn't exist. On devnet it doesn't exist yet
-for `GxruFda…`: the redeploy in 2b moved the treasury PDA, and `init_treasury`
-has not been run against the new ID. Create it locally, owned by the treasury
-PDA:
-
-```bash
-TREASURY_PDA=67dMACHuMtPxLyt913s297arVC6yMgSVt1gBnr5Us8R1   # seeds ["treasury"]
-curl -s $RPC -H 'Content-Type: application/json' -d '{
-  "jsonrpc":"2.0","id":1,"method":"surfnet_setTokenAccount",
-  "params":["'$TREASURY_PDA'","'$USDC'",{"amount":0}]
-}'
 ```
 
 ### Move the clock
