@@ -44,8 +44,9 @@ pub const MAX_FREQUENCY: u8 = if cfg!(feature = "devnet") { 3 } else { 2 };
 /// own copy of the table, which is a drift waiting to happen: a mismatch between them would let
 /// a deposit land in a cycle `distribute` already considers over.
 ///
-/// Devnet builds accept code 3, one hour, so a full lifecycle can be driven through the app in
-/// an afternoon instead of a fortnight. The arm is compiled out of any other build, so a mainnet
+/// Devnet builds accept code 3, five minutes, so a full lifecycle can be driven through the app
+/// in one sitting instead of a fortnight. Five is near the floor: a period still has to be long
+/// enough for two people to tap through a deposit on their phones. The arm is compiled out of any other build, so a mainnet
 /// binary has no such code to reach and `create_group` rejects it through `MAX_FREQUENCY`.
 pub fn period_duration_secs(frequency: u8) -> Result<i64> {
     const DAY: i64 = 86_400;
@@ -54,7 +55,7 @@ pub fn period_duration_secs(frequency: u8) -> Result<i64> {
         1 => 14_i64.checked_mul(DAY),
         2 => 30_i64.checked_mul(DAY),
         #[cfg(feature = "devnet")]
-        3 => Some(3_600),
+        3 => Some(300),
         _ => return Err(SafeNudgeError::InvalidFrequency.into()),
     };
     secs.ok_or(SafeNudgeError::ArithmeticOverflow.into())
@@ -80,7 +81,7 @@ mod tests {
     #[test]
     fn frequency_3_exists_only_in_devnet_builds() {
         if cfg!(feature = "devnet") {
-            assert_eq!(period_duration_secs(3).unwrap(), 3_600);
+            assert_eq!(period_duration_secs(3).unwrap(), 300);
             assert_eq!(MAX_FREQUENCY, 3);
         } else {
             assert!(period_duration_secs(3).is_err());
