@@ -5,7 +5,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
-use crate::state::{validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_COMPLETED};
+use crate::state::{period_duration_secs, validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_COMPLETED};
 use crate::PROTOCOL_FEE_BPS;
 
 #[derive(Accounts)]
@@ -76,12 +76,7 @@ impl<'info> Distribute<'info> {
         // ── Checks ──────────────────────────────────────────
 
         // Calculate period duration in seconds
-        let period_duration: i64 = match group.frequency {
-            0 => 7_i64.checked_mul(86400).ok_or(SafeNudgeError::ArithmeticOverflow)?,
-            1 => 14_i64.checked_mul(86400).ok_or(SafeNudgeError::ArithmeticOverflow)?,
-            2 => 30_i64.checked_mul(86400).ok_or(SafeNudgeError::ArithmeticOverflow)?,
-            _ => return Err(SafeNudgeError::InvalidFrequency.into()),
-        };
+        let period_duration = period_duration_secs(group.frequency)?;
 
         // Check cycle has ended
         let cycle_duration = (group.total_periods as i64)
