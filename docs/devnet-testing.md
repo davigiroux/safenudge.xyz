@@ -276,8 +276,8 @@ Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only
 ## 5b. Local rehearsal with Surfpool
 
 [Surfpool](https://github.com/solana-foundation/surfpool) runs a local RPC
-that forks devnet on demand: accounts (the deployed program, the USDC mint,
-the treasury ATA) are fetched from devnet the first time they are read, and
+that forks devnet on demand: accounts (the deployed program, the USDC mint)
+are fetched from devnet the first time they are read, and
 every write stays local. It adds two things devnet can't: a clock you can
 move forward, and token balances you can set without a faucet. That turns
 the multi-week distribute path above into a few minutes.
@@ -304,7 +304,12 @@ surfpool start --network devnet --no-deploy
   steps in section 2, never through a Surfpool runbook.
 
 RPC is on `http://127.0.0.1:8899`, Studio (a local explorer) on
-`http://127.0.0.1:18488`.
+`http://127.0.0.1:18488`. Surfpool writes logs to `.surfpool/` in the
+directory you start it from; that path is gitignored.
+
+If a transaction fails with `Failed to fetch accounts from remote`, the public
+devnet RPC dropped Surfpool's fetch. Restart Surfpool and retry, or fork from
+a private endpoint with `--rpc-url <url>` in place of `--network devnet`.
 
 ### Point the app at it
 
@@ -333,6 +338,22 @@ for W in <wallet A> <wallet B> <wallet C>; do
 done
 ```
 
+### Create the treasury ATA
+
+`distribute` sends the 5% fee to the treasury ATA and fails with
+`TreasuryNotInitialized` when it doesn't exist. On devnet it doesn't exist yet
+for `GxruFda…`: the redeploy in 2b moved the treasury PDA, and `init_treasury`
+has not been run against the new ID. Create it locally, owned by the treasury
+PDA:
+
+```bash
+TREASURY_PDA=67dMACHuMtPxLyt913s297arVC6yMgSVt1gBnr5Us8R1   # seeds ["treasury"]
+curl -s $RPC -H 'Content-Type: application/json' -d '{
+  "jsonrpc":"2.0","id":1,"method":"surfnet_setTokenAccount",
+  "params":["'$TREASURY_PDA'","'$USDC'",{"amount":0}]
+}'
+```
+
 ### Move the clock
 
 `surfnet_timeTravel` only moves forward, and `absoluteTimestamp` is in
@@ -349,14 +370,26 @@ curl -s $RPC -H 'Content-Type: application/json' -d '{
 For later weeks, compute from the previous jump, not from `date`: a second
 "now + 7 days" is behind the clock you already moved and gets rejected.
 
-Hard-refresh the dashboard after every jump. `useChainTimeOffset` reads the
-chain clock once on mount, so an open tab keeps showing the old period.
+The program reads the `Clock` sysvar, which lands exactly on the target.
+The dashboard does not: `useChainTimeOffset` uses `getBlockTime`, which
+Surfpool derives from the slot number, and it falls about one day behind per
+7-day jump. Right after a jump to a period boundary the dashboard still shows
+the previous period, while the program already accepts deposits for the new
+one. Treat the dashboard's period labels and button timing as untested here;
+check those on devnet. Hard-refresh after each jump in any case, because
+`useChainTimeOffset` reads the clock only on mount.
 
 ### Run the full distribute path
 
 Follow "Full distribute path" above, replacing each "week N" wait with one
 time-travel jump. The expected end state is the same, including the
 conservation invariant and the 5% fee to the treasury.
+
+Reference result (2026-10-04, Surfpool 1.6.0, driven by a script with three
+keypairs rather than Phantom): 5 USDC deposit, fixed 1 USDC penalty, C misses
+periods 1 and 2. Status `Concluído`, vault closed, A and B receive 20.95 USDC
+each, C receives 8, treasury 0.10. Payouts plus fee equal the 50 USDC
+deposited.
 
 ## 6. Troubleshooting
 
