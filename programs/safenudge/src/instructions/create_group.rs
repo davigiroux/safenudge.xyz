@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::errors::SafeNudgeError;
-use crate::state::{GroupConfig, STATUS_OPEN};
+use crate::state::{GroupConfig, MAX_FREQUENCY, STATUS_OPEN};
 
 #[derive(Accounts)]
 #[instruction(group_code: String)]
@@ -57,7 +57,7 @@ impl<'info> CreateGroup<'info> {
             SafeNudgeError::InvalidGroupCode
         );
         require!(deposit_amount > 0, SafeNudgeError::InvalidDepositAmount);
-        require!(frequency <= 2, SafeNudgeError::InvalidFrequency);
+        require!(frequency <= MAX_FREQUENCY, SafeNudgeError::InvalidFrequency);
         require!(
             total_periods >= 1 && total_periods <= 52,
             SafeNudgeError::InvalidPeriodCount

@@ -1,5 +1,7 @@
 use anchor_lang::prelude::*;
 
+use crate::errors::SafeNudgeError;
+
 #[account]
 #[derive(InitSpace)]
 pub struct GroupConfig {
@@ -30,6 +32,62 @@ pub struct GroupConfig {
     pub cycle_start: i64,
     /// PDA bump for group_config
     pub bump: u8,
+}
+
+/// Highest accepted `frequency` code. Devnet builds accept one more than mainnet; see
+/// `period_duration_secs`.
+pub const MAX_FREQUENCY: u8 = if cfg!(feature = "devnet") { 3 } else { 2 };
+
+/// Seconds in one deposit period, by `frequency` code.
+///
+/// `deposit` and `distribute` both derive the cycle's end from this. They used to carry their
+/// own copy of the table, which is a drift waiting to happen: a mismatch between them would let
+/// a deposit land in a cycle `distribute` already considers over.
+///
+/// Devnet builds accept code 3, five minutes, so a full lifecycle can be driven through the app
+/// in one sitting instead of a fortnight. Five is near the floor: a period still has to be long
+/// enough for two people to tap through a deposit on their phones. The arm is compiled out of any other build, so a mainnet
+/// binary has no such code to reach and `create_group` rejects it through `MAX_FREQUENCY`.
+pub fn period_duration_secs(frequency: u8) -> Result<i64> {
+    const DAY: i64 = 86_400;
+    let secs = match frequency {
+        0 => 7_i64.checked_mul(DAY),
+        1 => 14_i64.checked_mul(DAY),
+        2 => 30_i64.checked_mul(DAY),
+        #[cfg(feature = "devnet")]
+        3 => Some(300),
+        _ => return Err(SafeNudgeError::InvalidFrequency.into()),
+    };
+    secs.ok_or(SafeNudgeError::ArithmeticOverflow.into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn maps_each_frequency_to_its_period() {
+        assert_eq!(period_duration_secs(0).unwrap(), 604_800);
+        assert_eq!(period_duration_secs(1).unwrap(), 1_209_600);
+        assert_eq!(period_duration_secs(2).unwrap(), 2_592_000);
+    }
+
+    #[test]
+    fn rejects_an_unknown_frequency() {
+        assert!(period_duration_secs(4).is_err());
+        assert!(period_duration_secs(u8::MAX).is_err());
+    }
+
+    #[test]
+    fn frequency_3_exists_only_in_devnet_builds() {
+        if cfg!(feature = "devnet") {
+            assert_eq!(period_duration_secs(3).unwrap(), 300);
+            assert_eq!(MAX_FREQUENCY, 3);
+        } else {
+            assert!(period_duration_secs(3).is_err());
+            assert_eq!(MAX_FREQUENCY, 2);
+        }
+    }
 }
 
 /// Status constants
