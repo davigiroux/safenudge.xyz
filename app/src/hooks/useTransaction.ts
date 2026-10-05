@@ -67,7 +67,7 @@ export function useTransaction(): UseTransactionReturn {
       return sig
     } catch (err: unknown) {
       const classified = classifyTxError(err)
-      setErrorDetail(classified.raw ?? 'Transaction failed')
+      setErrorDetail(classified.raw ?? null)
       setErrorKind(classified.kind)
       setErrorProgramCode(classified.programCode ?? null)
       setTxState('error')

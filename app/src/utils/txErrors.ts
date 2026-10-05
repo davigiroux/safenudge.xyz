@@ -4,6 +4,29 @@
  * (e.g. "Saldo insuficiente" for a BlockhashNotFound RPC blip).
  */
 
+import type { TransactionError } from '@solana/web3.js'
+import idl from '../idl/safenudge.json'
+
+const PROGRAM_ERROR_NAMES = new Map(idl.errors.map((e) => [e.code, e.name]))
+
+export class TxConfirmError extends Error {
+  readonly txError: TransactionError
+
+  constructor(txError: TransactionError) {
+    super('Transaction failed on-chain')
+    this.name = 'TxConfirmError'
+    this.txError = txError
+  }
+}
+
+/** Reads the code out of `{ InstructionError: [index, { Custom: code }] }`. */
+function customErrorCode(txError: TransactionError): number | undefined {
+  if (typeof txError !== 'object' || !('InstructionError' in txError)) return undefined
+  const detail = (txError.InstructionError as unknown[])[1]
+  if (typeof detail !== 'object' || detail === null || !('Custom' in detail)) return undefined
+  return typeof detail.Custom === 'number' ? detail.Custom : undefined
+}
+
 export type TxErrorKind =
   | 'blockhashExpired'
   | 'insufficientBalance'
@@ -31,6 +54,12 @@ function extractMessage(err: unknown): string {
 }
 
 export function classifyTxError(err: unknown): ClassifiedTxError {
+  if (err instanceof TxConfirmError) {
+    const code = customErrorCode(err.txError)
+    const programCode = code === undefined ? undefined : PROGRAM_ERROR_NAMES.get(code)
+    return programCode ? { kind: 'programError', programCode } : { kind: 'unknown' }
+  }
+
   const raw = extractMessage(err)
 
   if (/BlockhashNotFound|blockhash not found/i.test(raw)) {
