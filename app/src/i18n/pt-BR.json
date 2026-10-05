@@ -421,7 +421,8 @@
       "DuplicateMemberRecord": "Um membro foi enviado mais de uma vez. Atualize a página e tente de novo.",
       "UnauthorizedRecipient": "Apenas o destinatário oficial das taxas pode fazer isso",
       "NoFeesToWithdraw": "Não há taxas para sacar no momento",
-      "TreasuryNotInitialized": "O cofre de taxas do protocolo ainda não foi criado. Tente de novo em instantes."
+      "TreasuryNotInitialized": "O cofre de taxas do protocolo ainda não foi criado. Tente de novo em instantes.",
+      "InvalidRentPayer": "O reembolso só pode ir para quem pagou a abertura desta conta. Atualize a página e tente de novo."
     }
   }
 }

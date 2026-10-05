@@ -10,7 +10,7 @@ import {
   createAssociatedTokenAccountIdempotentInstruction,
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token'
-import { runMethod, type MethodBuilder, type ProgramLike, type TxStages } from './runMethod'
+import { runMethod, type ProgramLike, type TxStages } from './runMethod'
 
 const MAX_TRANSACTION_BYTES = 1232
 /** One signature plus the one-byte signature count. */
@@ -18,10 +18,7 @@ const SINGLE_SIGNER_BYTES = 65
 
 type SettlementMember = { member: string; pda: string }
 
-type SettlementBuilder = MethodBuilder & {
-  instruction: () => Promise<TransactionInstruction>
-  preInstructions: (ixs: TransactionInstruction[]) => MethodBuilder
-}
+type InstructionBuilder = { instruction: () => Promise<TransactionInstruction> }
 
 function memberAccounts(members: SettlementMember[], mint: PublicKey) {
   return members.map((m) => {
@@ -66,8 +63,16 @@ async function sendInOwnTransaction(instructions: TransactionInstruction[], prog
   await stages.confirm(await stages.send())
 }
 
+/**
+ * Settles the group and, when it fits in the same transaction, sends the vault rent on to the
+ * wallet that paid it. Settlement leaves that rent in the group account; `refundVaultRent` is
+ * permissionless, so a refund left out here can be sent later by anyone.
+ *
+ * Member records stay open: the result screen reads them.
+ */
 export function settlementStages(
-  settle: SettlementBuilder,
+  settle: InstructionBuilder,
+  vaultRentRefund: InstructionBuilder,
   program: ProgramLike,
   members: SettlementMember[],
   mint: PublicKey,
@@ -78,15 +83,24 @@ export function settlementStages(
   }
   const payer = wallet.publicKey
 
-  const settleWithMissingTokenAccounts = async () => {
-    const creates = await missingTokenAccountCreates(connection, payer, members, mint)
-    if (creates.length === 0) return settle.transaction()
-    if (fitsInOneTransaction([...creates, await settle.instruction()], payer)) {
-      return settle.preInstructions(creates).transaction()
-    }
+  const settlementTransaction = async () => {
+    const [creates, settleIx, refundIx] = await Promise.all([
+      missingTokenAccountCreates(connection, payer, members, mint),
+      settle.instruction(),
+      vaultRentRefund.instruction(),
+    ])
+    const settleAndRefund = fitsInOneTransaction([settleIx, refundIx], payer) ? [settleIx, refundIx] : [settleIx]
+
+    if (creates.length === 0) return new Transaction().add(...settleAndRefund)
+
+    const inOneTransaction = [[...creates, ...settleAndRefund], [...creates, settleIx]].find((ixs) =>
+      fitsInOneTransaction(ixs, payer),
+    )
+    if (inOneTransaction) return new Transaction().add(...inOneTransaction)
+
     await sendInOwnTransaction(creates, program)
-    return settle.transaction()
+    return new Transaction().add(...settleAndRefund)
   }
 
-  return runMethod({ transaction: settleWithMissingTokenAccounts }, program)
+  return runMethod({ transaction: settlementTransaction }, program)
 }

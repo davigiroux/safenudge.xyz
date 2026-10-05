@@ -9,7 +9,7 @@ import { Button, Card, StatRow, Icon, NudgeToast, TransactionStatus } from '../c
 import { ProgressBar } from '../components/ProgressBar'
 import { DistributeSummary } from '../components/DistributeSummary'
 import { CancelGroupSheet } from '../components/CancelGroupSheet'
-import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { useAnchorProgram, type SafeNudgeProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
 import { settlementRemainingAccounts, settlementStages } from '../utils/settlement'
@@ -123,6 +123,12 @@ function CycleProgress({
       />
     </div>
   )
+}
+
+function vaultRentRefund(program: SafeNudgeProgram, groupPda: PublicKey, rentPayer: string) {
+  return program.methods
+    .refundVaultRent()
+    .accountsPartial({ groupConfig: groupPda, rentPayer: new PublicKey(rentPayer) })
 }
 
 export default function GroupDashboard() {
@@ -353,7 +359,6 @@ export default function GroupDashboard() {
           .distribute()
           .accountsPartial({
             payer: publicKey,
-            creator: new PublicKey(group.creator),
             groupConfig: groupPda,
             vault: vaultPda,
             mint: usdcMint,
@@ -361,6 +366,7 @@ export default function GroupDashboard() {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
+        vaultRentRefund(program, groupPda, group.rentPayer),
         program,
         members,
         usdcMint,
@@ -405,6 +411,7 @@ export default function GroupDashboard() {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
+        vaultRentRefund(program, groupPda, group.rentPayer),
         program,
         members,
         usdcMint,

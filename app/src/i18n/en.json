@@ -421,7 +421,8 @@
       "DuplicateMemberRecord": "A member was submitted more than once. Refresh the page and try again.",
       "UnauthorizedRecipient": "Only the official fee recipient can do this",
       "NoFeesToWithdraw": "There are no fees to withdraw right now",
-      "TreasuryNotInitialized": "The protocol fee vault hasn't been created yet. Try again shortly."
+      "TreasuryNotInitialized": "The protocol fee vault hasn't been created yet. Try again shortly.",
+      "InvalidRentPayer": "The refund can only go to the wallet that paid to open this account. Refresh the page and try again."
     }
   }
 }

@@ -8,7 +8,7 @@ import { EmptyState } from '../components/EmptyState'
 import { TextInput } from '../components/Input'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import type { GroupStatus } from '../hooks/useGroupConfig'
-import { MEMBER_RECORD_MEMBER_OFFSET } from '../utils/constants'
+import { GROUP_CONFIG_CREATOR_OFFSET, MEMBER_RECORD_MEMBER_OFFSET } from '../utils/constants'
 import { sanitizeGroupCodeInput } from '../utils/groupCode'
 
 type ListedStatus = GroupStatus | 'unknown'
@@ -66,32 +66,28 @@ export default function MyGroups() {
     async function fetchGroups() {
       setLoading(true)
       try {
-        // Fetch in parallel:
-        // 1. MemberRecord PDAs where member == connected wallet
-        // 2. All GroupConfig accounts (filter creator client-side — group_code
-        //    is a variable-length String, so creator's byte offset is dynamic
-        //    and not safe for memcmp filtering).
-        const [memberRecords, allGroups] = await Promise.all([
+        const wallet = publicKey!.toBase58()
+        const [memberRecords, createdGroups] = await Promise.all([
           program!.account.memberRecord.all([
-            { memcmp: { offset: MEMBER_RECORD_MEMBER_OFFSET, bytes: publicKey!.toBase58() } }
+            { memcmp: { offset: MEMBER_RECORD_MEMBER_OFFSET, bytes: wallet } }
           ]),
-          program!.account.groupConfig.all(),
+          program!.account.groupConfig.all([
+            { memcmp: { offset: GROUP_CONFIG_CREATOR_OFFSET, bytes: wallet } }
+          ]),
         ])
+        // One RPC call for every joined group, not one per record (issue #44 M-5).
+        const joinedGroups = await program!.account.groupConfig.fetchMultiple(
+          memberRecords.map((record) => record.account.group)
+        )
 
         if (cancelled) return
 
         const groupInfos: GroupInfo[] = []
         const seenCodes = new Set<string>()
 
-        // Resolve member-record groups from the already-fetched group list
-        // instead of one RPC fetch per record (issue #44 M-5).
-        const groupsByAddress = new Map(
-          allGroups.map((g) => [g.publicKey.toBase58(), g.account])
-        )
-
-        for (const record of memberRecords) {
-          const groupAccount = groupsByAddress.get(record.account.group.toBase58())
-          if (!groupAccount) continue // group closed or not visible — skip
+        for (const [i, record] of memberRecords.entries()) {
+          const groupAccount = joinedGroups[i]
+          if (!groupAccount) continue
           groupInfos.push({
             groupCode: groupAccount.groupCode,
             status: STATUS_MAP[groupAccount.status] || 'unknown',
@@ -103,8 +99,7 @@ export default function MyGroups() {
         }
 
         // Append creator-owned groups the wallet hasn't joined yet
-        for (const g of allGroups) {
-          if (!g.account.creator.equals(publicKey!)) continue
+        for (const g of createdGroups) {
           if (seenCodes.has(g.account.groupCode)) continue
           groupInfos.push({
             groupCode: g.account.groupCode,
