@@ -17,7 +17,7 @@ import { LeaveGroupSheet } from '../components/LeaveGroupSheet'
 import { useAnchorProgram, type SafeNudgeProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
-import { settlementRemainingAccounts, settlementStages } from '../utils/settlement'
+import { settlementRemainingAccounts, settlementStages, withWritableAccount } from '../utils/settlement'
 import { useGroupConfig, type GroupStatus } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
@@ -417,18 +417,21 @@ export default function GroupDashboard() {
     const groupHash = await hashId(code)
     track('emergency_cancel_submitted', { group_code_hash: groupHash })
 
+    const cancel = program.methods
+      .emergencyCancel()
+      .accountsPartial({
+        creator: publicKey,
+        groupConfig: groupPda,
+        vault: vaultPda,
+        mint: usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .remainingAccounts(settlementRemainingAccounts(members, usdcMint))
+
     const sig = await execute(
       settlementStages(
-        program.methods
-          .emergencyCancel()
-          .accountsPartial({
-            creator: publicKey,
-            groupConfig: groupPda,
-            vault: vaultPda,
-            mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID,
-          })
-          .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
+        // With no members the program burns any balance in the vault, and a burn writes the mint.
+        group.currentMembers === 0 ? withWritableAccount(cancel, usdcMint) : cancel,
         vaultRentRefund(program, groupPda, group.rentPayer),
         program,
         members,

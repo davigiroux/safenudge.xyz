@@ -63,6 +63,19 @@ async function sendInOwnTransaction(instructions: TransactionInstruction[], prog
   await stages.confirm(await stages.send())
 }
 
+/** Marks `account` writable in the instruction that `builder` produces. */
+export function withWritableAccount(builder: InstructionBuilder, account: PublicKey): InstructionBuilder {
+  return {
+    instruction: async () => {
+      const ix = await builder.instruction()
+      for (const key of ix.keys) {
+        if (key.pubkey.equals(account)) key.isWritable = true
+      }
+      return ix
+    },
+  }
+}
+
 /** Settles the group and sends the vault rent to its payer in one transaction. */
 export function settlementStages(
   settle: InstructionBuilder,
