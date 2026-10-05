@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useConnection, useWallet } from '@solana/wallet-adapter-react'
+import { useWallet } from '@solana/wallet-adapter-react'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getMemberRecordPDA, getGroupConfigPDA } from '../utils/pda'
-import type { PublicKey } from '@solana/web3.js'
-import type { BN } from '@coral-xyz/anchor'
 
 export type MemberRecordData = {
   group: string
@@ -14,66 +12,77 @@ export type MemberRecordData = {
   pda: string
 }
 
-/** Shape returned by program.account.memberRecord.fetch() */
-type MemberRecordAccount = {
-  group: PublicKey
-  member: PublicKey
-  totalDeposited: BN
-  depositsMade: number
-  periodsDeposited: boolean[]
-  bump: number
-}
+/**
+ * Whether the connected wallet belongs to a group.
+ *   - `idle`: no wallet or no group code, so there is nothing to look up.
+ *   - `loading`: the first lookup for this wallet and group has not answered.
+ *   - `notMember`: the lookup answered and no record exists.
+ *   - `error`: the RPC failed, so membership is unknown.
+ */
+export type MemberState =
+  | { kind: 'idle' }
+  | { kind: 'loading' }
+  | { kind: 'notMember' }
+  | { kind: 'member'; record: MemberRecordData }
+  | { kind: 'error'; message: string }
+
+type Settled = Exclude<MemberState, { kind: 'idle' | 'loading' }>
+
+const IDLE: MemberState = { kind: 'idle' }
+const LOADING: MemberState = { kind: 'loading' }
 
 export function useMemberRecord(groupCode: string | undefined) {
   const program = useAnchorProgram()
-  const { connection } = useConnection()
   const { publicKey } = useWallet()
-  const [data, setData] = useState<MemberRecordData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [settled, setSettled] = useState<{ lookup: string; state: Settled } | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const refetch = useCallback(() => setReloadKey((k) => k + 1), [])
 
+  const lookup = groupCode && program && publicKey ? `${groupCode}:${publicKey.toBase58()}` : null
+
   useEffect(() => {
-    if (!groupCode || !program || !publicKey) {
-      setData(null)
-      return
-    }
+    if (!lookup || !groupCode || !program || !publicKey) return
 
     let cancelled = false
+    const [groupPda] = getGroupConfigPDA(groupCode)
+    const [memberPda] = getMemberRecordPDA(groupPda, publicKey)
 
-    async function fetchMember() {
-      if (!program || !publicKey) return
-      setLoading(true)
-      setError(null)
-      try {
-        const [groupPda] = getGroupConfigPDA(groupCode!)
-        const [memberPda] = getMemberRecordPDA(groupPda, publicKey)
-        const account = await program.account.memberRecord.fetch(memberPda) as unknown as MemberRecordAccount
+    program.account.memberRecord
+      .fetchNullable(memberPda)
+      .then(
+        (account): Settled =>
+          account === null
+            ? { kind: 'notMember' }
+            : {
+                kind: 'member',
+                record: {
+                  group: account.group.toString(),
+                  member: account.member.toString(),
+                  totalDeposited: account.totalDeposited.toNumber(),
+                  depositsMade: account.depositsMade,
+                  periodsDeposited: account.periodsDeposited,
+                  pda: memberPda.toString(),
+                },
+              },
+        (err): Settled => ({
+          kind: 'error',
+          message: err instanceof Error ? err.message : String(err),
+        }),
+      )
+      .then((state) => {
+        if (!cancelled) setSettled({ lookup, state })
+      })
 
-        if (!cancelled) {
-          setData({
-            group: account.group.toString(),
-            member: account.member.toString(),
-            totalDeposited: account.totalDeposited.toNumber(),
-            depositsMade: account.depositsMade,
-            periodsDeposited: account.periodsDeposited,
-            pda: memberPda.toString(),
-          })
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch member record')
-          setData(null)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    fetchMember()
     return () => { cancelled = true }
-  }, [groupCode, program, publicKey, connection, reloadKey])
+  }, [lookup, groupCode, program, publicKey, reloadKey])
 
-  return { data, loading, error, isMember: !!data, refetch }
+  const state: MemberState =
+    lookup === null ? IDLE : settled?.lookup === lookup ? settled.state : LOADING
+
+  return {
+    state,
+    data: state.kind === 'member' ? state.record : null,
+    isMember: state.kind === 'member',
+    refetch,
+  }
 }
