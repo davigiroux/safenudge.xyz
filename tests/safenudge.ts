@@ -20,7 +20,9 @@ import {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
+  createTransferCheckedInstruction,
   AccountLayout,
+  MintLayout,
 } from "@solana/spl-token";
 import { createHash } from "crypto";
 import * as fs from "fs";
@@ -324,6 +326,15 @@ describe("safenudge", () => {
     return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
   }
 
+  function withWritable(ix: TransactionInstruction, account: PublicKey): TransactionInstruction {
+    const keys = ix.keys.map((k) => (k.pubkey.equals(account) ? { ...k, isWritable: true } : k));
+    return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
+  }
+
+  function mintSupply(mint: PublicKey): bigint {
+    return MintLayout.decode(context.banksClient.getAccount(mint).data).supply;
+  }
+
   function walletSigners(...actors: Keypair[]): Keypair[] {
     return [...new Set(actors)].filter((k) => k !== payer);
   }
@@ -453,17 +464,19 @@ describe("safenudge", () => {
       .rpc();
   }
 
+  function cancelMethod(
+    gPda: PublicKey, vPda: PublicKey, members: Member[], creator: PublicKey,
+    mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+  ) {
+    return program.methods.emergencyCancel()
+      .accounts({ creator, groupConfig: gPda, vault: vPda, mint, tokenProgram })
+      .remainingAccounts(memberPairs(members));
+  }
+
   function cancelCall(
     gPda: PublicKey, vPda: PublicKey, members: Member[], creator: Keypair = payer,
   ): Promise<string> {
-    return program.methods.emergencyCancel()
-      .accounts({
-        creator: creator.publicKey, groupConfig: gPda, vault: vPda,
-        mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .remainingAccounts(memberPairs(members))
-      .signers(walletSigners(creator))
-      .rpc();
+    return cancelMethod(gPda, vPda, members, creator.publicKey).signers(walletSigners(creator)).rpc();
   }
 
   function refundVaultRentMethod(gPda: PublicKey, rentPayer: PublicKey) {
@@ -1416,6 +1429,27 @@ describe("safenudge", () => {
       assert.equal((await program.account.groupConfig.fetch(gPda)).status, 3);
       assert.isNull(context.banksClient.getAccount(vPda));
       assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE) + vaultRent);
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+    });
+
+    it("pays exactly the recorded deposit when the vault holds extra tokens, and the empty-group cancel burns the rest", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-extra", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      await provider.sendAndConfirm(
+        new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 7)),
+        [payer, mintAuthority],
+      );
+      assert.equal(mintSupply(usdcMint), 10_000_007n);
+
+      await leaveCall(member, gPda, vPda);
+
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 7n);
+
+      sendAs(payer, [withWritable(await cancelMethod(gPda, vPda, [], payer.publicKey).instruction(), usdcMint)]);
+
+      assert.isNull(context.banksClient.getAccount(vPda));
+      assert.equal(mintSupply(usdcMint), 10_000_000n);
       assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
     });
 
@@ -4252,6 +4286,73 @@ describe("safenudge", () => {
       const group = await program.account.groupConfig.fetch(gPda);
       assert.equal(group.status, 3);
       assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
+    });
+
+    for (const [name, tokenProgram] of [
+      ["SPL Token", TOKEN_PROGRAM_ID],
+      ["Token-2022", TOKEN_2022_PROGRAM_ID],
+    ] as const) {
+      it(`burns tokens sent to the vault of a group with no members and closes the vault (${name})`, async () => {
+        const code = "cancel-empty-donated";
+        const mint = await createMint(tokenProgram);
+        const creator = await fundedKeypair();
+        await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.publicKey, creator.publicKey, mint, tokenProgram)
+          .signers([creator])
+          .rpc();
+        const [gPda] = getGroupPda(code);
+        const [vPda] = getVaultPda(gPda);
+        const donor = await createFundedMember(5, undefined, mint, tokenProgram);
+        sendAs(donor.keypair, [
+          createTransferCheckedInstruction(
+            donor.tokenAccount, mint, vPda, donor.keypair.publicKey, 1, DECIMALS, [], tokenProgram,
+          ),
+        ]);
+        assert.equal(await getTokenBalanceOrZero(vPda), 1n);
+        assert.equal(mintSupply(mint), 5n);
+        const vaultRent = lamportsOf(vPda);
+        const creatorBefore = lamportsOf(creator.publicKey);
+        const cancelIx = await cancelMethod(gPda, vPda, [], creator.publicKey, mint, tokenProgram).instruction();
+
+        sendAs(creator, [withWritable(cancelIx, mint)]);
+
+        assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
+        assert.equal(mintSupply(mint), 4n);
+        assert.equal(await getTokenBalanceOrZero(donor.tokenAccount), 4n);
+        assert.equal((await program.account.groupConfig.fetch(gPda)).status, 3);
+        assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE) + vaultRent);
+        assert.equal(creatorBefore - lamportsOf(creator.publicKey), SIGNATURE_FEE);
+      });
+    }
+
+    it("fails with ConstraintMut when the vault of an empty group holds tokens and the mint is read-only", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cancel-empty-readonly", { depositAmount: 10_000_000 });
+      await provider.sendAndConfirm(
+        new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 1)),
+        [payer, mintAuthority],
+      );
+
+      await expectError(cancelCall(gPda, vPda, []), "ConstraintMut");
+
+      assert.equal((await program.account.groupConfig.fetch(gPda)).status, 0);
+      assert.equal(await getTokenBalanceOrZero(vPda), 1n);
+      assert.equal(mintSupply(usdcMint), 1n);
+    });
+
+    it("pays tokens sent to the vault to the last-listed member and burns nothing when the group has members", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cancel-donated-members", { depositAmount: 10_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      await provider.sendAndConfirm(
+        new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 7)),
+        [payer, mintAuthority],
+      );
+
+      sendAs(payer, [withWritable(await cancelMethod(gPda, vPda, [m1, m2], payer.publicKey).instruction(), usdcMint)]);
+
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_007n);
+      assert.equal(mintSupply(usdcMint), 20_000_007n);
+      assert.isNull(context.banksClient.getAccount(vPda));
     });
 
     it("refunds each member exactly their total_deposited mid-cycle and closes the vault", async () => {

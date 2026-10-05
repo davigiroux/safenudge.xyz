@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{
-    close_account, transfer_checked, CloseAccount, Mint, TokenAccount, TokenInterface,
-    TransferChecked,
+    burn_checked, close_account, transfer_checked, BurnChecked, CloseAccount, Mint, TokenAccount,
+    TokenInterface, TransferChecked,
 };
 
 use crate::errors::SafeNudgeError;
@@ -80,6 +80,14 @@ impl<'info> EmergencyCancel<'info> {
             refund_amounts.push(member_record.total_deposited);
         }
 
+        let unowed_balance = unowed_vault_balance(member_count, ctx.accounts.vault.amount);
+        if unowed_balance > 0 {
+            require!(
+                ctx.accounts.mint.to_account_info().is_writable,
+                ErrorCode::ConstraintMut
+            );
+        }
+
         // ── Effects ─────────────────────────────────────────
 
         ctx.accounts.group_config.status = STATUS_CANCELLED;
@@ -124,6 +132,20 @@ impl<'info> EmergencyCancel<'info> {
             }
         }
 
+        if unowed_balance > 0 {
+            let burn_accounts = BurnChecked {
+                mint: ctx.accounts.mint.to_account_info(),
+                from: ctx.accounts.vault.to_account_info(),
+                authority: ctx.accounts.vault.to_account_info(),
+            };
+            let burn_ctx = CpiContext::new_with_signer(
+                ctx.accounts.token_program.key(),
+                burn_accounts,
+                signer,
+            );
+            burn_checked(burn_ctx, unowed_balance, decimals)?;
+        }
+
         let vault_rent_escrow = ctx.accounts.group_config.to_account_info();
         let close_cpi = CloseAccount {
             account: ctx.accounts.vault.to_account_info(),
@@ -138,5 +160,14 @@ impl<'info> EmergencyCancel<'info> {
         close_account(close_ctx)?;
 
         Ok(())
+    }
+}
+
+/// The vault tokens that no member deposited: the whole balance when the group has no members.
+fn unowed_vault_balance(member_count: usize, vault_balance: u64) -> u64 {
+    if member_count == 0 {
+        vault_balance
+    } else {
+        0
     }
 }
