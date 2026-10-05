@@ -137,10 +137,11 @@
     "pixComingSoon": "Pix on-ramp coming soon",
     "pixComingSoonTag": "coming soon",
     "nudgeStat": "Groups maintaining consistency in the first 4 weeks are 85% more likely to reach their goal",
-    "alreadyMember": "You are already a member of this group",
     "groupNotFound": "Group not found",
     "penaltyFixed": "{{value}} USDC per missed period",
-    "penaltyPercent": "{{value}}% of deposit per missed period"
+    "penaltyPercent": "{{value}}% of deposit per missed period",
+    "fundsNoTokenAccount": "Your wallet doesn't hold USDC yet. Add at least {{amount}} USDC, then come back to join the group.",
+    "fundsInsufficient": "You're {{missing}} USDC short of the first {{amount}} USDC deposit. Add funds and try again."
   },
   "groupDashboard": {
     "codeLabel": "Code",
@@ -386,6 +387,7 @@
     "generic": "Something went wrong. Shall we try again?",
     "walletNotConnected": "Connect your wallet to continue",
     "wrongNetwork": "Your wallet is on the wrong network. Switch to Devnet.",
+    "invalidGroupCode": "That invite code doesn't look valid. Check the link and try again.",
     "blockhashExpired": "The network took too long to respond. Please try again.",
     "insufficientBalance": "Insufficient balance for this operation",
     "userRejected": "You cancelled the signature.",

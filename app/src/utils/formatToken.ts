@@ -28,6 +28,11 @@ export function formatTokenAmount(
   })
 }
 
+/** Basis points as a percentage: 750 -> "7,5". */
+export function formatPercentBps(bps: number, locale: string = 'pt-BR'): string {
+  return (bps / 100).toLocaleString(locale, { maximumFractionDigits: 2 })
+}
+
 export function formatBrl(
   usdcAmount: BN | number | bigint,
   exchangeRate: number = BRL_PER_USD,

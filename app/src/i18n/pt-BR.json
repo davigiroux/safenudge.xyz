@@ -137,10 +137,11 @@
     "pixComingSoon": "On-ramp via Pix em breve",
     "pixComingSoonTag": "em breve",
     "nudgeStat": "Grupos que mantêm consistência nas primeiras 4 semanas têm 85% mais chance de atingir a meta",
-    "alreadyMember": "Você já é membro deste grupo",
     "groupNotFound": "Grupo não encontrado",
     "penaltyFixed": "{{value}} USDC por período perdido",
-    "penaltyPercent": "{{value}}% do depósito por período perdido"
+    "penaltyPercent": "{{value}}% do depósito por período perdido",
+    "fundsNoTokenAccount": "Sua carteira ainda não tem USDC. Adicione pelo menos {{amount}} USDC e volte aqui para entrar no grupo.",
+    "fundsInsufficient": "Faltam {{missing}} USDC para o primeiro depósito de {{amount}} USDC. Adicione saldo e tente de novo."
   },
   "groupDashboard": {
     "codeLabel": "Código",
@@ -386,6 +387,7 @@
     "generic": "Algo não deu certo. Vamos tentar de novo?",
     "walletNotConnected": "Conecte sua carteira para continuar",
     "wrongNetwork": "Sua carteira está na rede errada. Mude para Devnet.",
+    "invalidGroupCode": "Esse código de convite não parece válido. Confira o link e tente de novo.",
     "blockhashExpired": "A rede demorou a responder. Tente novamente.",
     "insufficientBalance": "Saldo insuficiente para esta operação",
     "userRejected": "Você cancelou a assinatura.",
