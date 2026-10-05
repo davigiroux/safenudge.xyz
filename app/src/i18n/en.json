@@ -100,6 +100,7 @@
     "weekly": "Weekly",
     "biweekly": "Biweekly",
     "monthly": "Monthly",
+    "fiveMinutes": "Every 5 minutes",
     "duration": "Cycle Duration",
     "periods": "{{count}} periods",
     "endsOn": "Ends on: {{date}}",
@@ -131,6 +132,8 @@
     "nudgeStat": "Groups maintaining consistency in the first 4 weeks are 85% more likely to reach their goal",
     "alreadyMember": "You are already a member of this group",
     "groupNotFound": "Group not found",
+    "groupUnsupported": "This group uses a newer version of SafeNudge. Refresh the page and try again.",
+    "membersLoadFailed": "We couldn't load the members right now. Shall we try again?",
     "penaltyFixed": "{{value}} USDC per missed period",
     "penaltyPercent": "{{value}}% of deposit per missed period"
   },
@@ -150,7 +153,8 @@
     "periodAmount": {
       "weekly": "Weekly Amount",
       "biweekly": "Biweekly Amount",
-      "monthly": "Monthly Amount"
+      "monthly": "Monthly Amount",
+      "fiveMinutes": "Amount per period"
     },
     "paymentDay": "Payment Day",
     "endDate": "End Date",
@@ -159,6 +163,7 @@
     "statusActive": "Active",
     "statusCompleted": "Completed",
     "statusCancelled": "Cancelled",
+    "statusUnknown": "Unavailable",
     "startCycle": "Start Cycle",
     "depositAlready": "Already deposited",
     "groupNotFound": "Group not found",

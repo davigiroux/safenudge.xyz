@@ -7,36 +7,41 @@ import { Button, Card, Icon } from '../components'
 import { EmptyState } from '../components/EmptyState'
 import { TextInput } from '../components/Input'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import type { GroupStatus } from '../hooks/useGroupConfig'
 import { MEMBER_RECORD_MEMBER_OFFSET } from '../utils/constants'
+
+type ListedStatus = GroupStatus | 'unknown'
 
 type GroupInfo = {
   groupCode: string
-  status: string
+  status: ListedStatus
   depositsMade: number
   totalPeriods: number
   depositAmount: number
   creatorOnly?: boolean
 }
 
-const STATUS_MAP: Record<number, string> = {
+const STATUS_MAP: Record<number, GroupStatus> = {
   0: 'open',
   1: 'active',
   2: 'completed',
   3: 'cancelled',
 }
 
-const STATUS_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<ListedStatus, string> = {
   open: 'groupDashboard.statusOpen',
   active: 'groupDashboard.statusActive',
   completed: 'groupDashboard.statusCompleted',
   cancelled: 'groupDashboard.statusCancelled',
+  unknown: 'groupDashboard.statusUnknown',
 }
 
-const STATUS_COLORS: Record<string, string> = {
+const STATUS_COLORS: Record<ListedStatus, string> = {
   open: 'bg-primary-fixed/20 text-primary',
   active: 'bg-secondary text-on-primary',
   completed: 'bg-surface-container-high text-on-surface-variant',
   cancelled: 'bg-error-container text-on-error-container',
+  unknown: 'bg-surface-container-high text-on-surface-variant',
 }
 
 export default function MyGroups() {
@@ -187,8 +192,8 @@ export default function MyGroups() {
                           <span className="font-headline text-title-md text-on-surface truncate">
                             {group.groupCode}
                           </span>
-                          <span className={`font-label text-label-sm px-2 py-0.5 rounded-full ${STATUS_COLORS[group.status] || STATUS_COLORS.open}`}>
-                            {t(STATUS_LABELS[group.status] || STATUS_LABELS.open)}
+                          <span className={`font-label text-label-sm px-2 py-0.5 rounded-full ${STATUS_COLORS[group.status]}`}>
+                            {t(STATUS_LABELS[group.status])}
                           </span>
                         </div>
                         {group.creatorOnly ? (
