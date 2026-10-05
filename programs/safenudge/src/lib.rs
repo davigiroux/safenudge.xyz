@@ -120,6 +120,10 @@ pub mod safenudge {
         ctx.accounts.handler(&ctx.bumps)
     }
 
+    pub fn leave_group(ctx: Context<LeaveGroup>) -> Result<()> {
+        ctx.accounts.handler(&ctx.bumps)
+    }
+
     pub fn start_cycle(ctx: Context<StartCycle>) -> Result<()> {
         ctx.accounts.handler()
     }

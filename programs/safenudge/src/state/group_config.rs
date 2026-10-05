@@ -30,7 +30,7 @@ pub struct GroupConfig {
     pub total_periods: u8,
     /// Offset 138. Max group size (2-10).
     pub max_members: u8,
-    /// Offset 139. Members who joined. Not decremented when a member record is closed.
+    /// Offset 139. Members with a seat.
     pub current_members: u8,
     /// Offset 140. 0 = fixed amount, 1 = percentage (basis points).
     pub penalty_type: u8,
