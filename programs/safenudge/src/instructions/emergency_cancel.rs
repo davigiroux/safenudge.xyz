@@ -9,11 +9,8 @@ use crate::state::{validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_CANC
 
 #[derive(Accounts)]
 pub struct EmergencyCancel<'info> {
-    /// Authorizes the cancel. Receives nothing.
     pub creator: Signer<'info>,
 
-    /// Also receives the vault's rent when the vault closes; `refund_vault_rent` pays it on to
-    /// the recorded rent payer.
     #[account(
         mut,
         seeds = [b"group", group_config.group_code.as_bytes()],
@@ -127,11 +124,10 @@ impl<'info> EmergencyCancel<'info> {
             }
         }
 
-        // The vault's rent goes to GroupConfig, never to the creator: a creator
-        // who did not pay the rent must gain nothing from create-then-cancel.
+        let vault_rent_escrow = ctx.accounts.group_config.to_account_info();
         let close_cpi = CloseAccount {
             account: ctx.accounts.vault.to_account_info(),
-            destination: ctx.accounts.group_config.to_account_info(),
+            destination: vault_rent_escrow,
             authority: ctx.accounts.vault.to_account_info(),
         };
         let close_ctx = CpiContext::new_with_signer(

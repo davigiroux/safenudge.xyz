@@ -5,13 +5,12 @@ use crate::state::{GroupConfig, MemberRecord, STATUS_CANCELLED, STATUS_COMPLETED
 
 /// Closes one MemberRecord of a settled group and returns its rent to the recorded rent payer.
 ///
-/// Permissionless. The caller chooses only which record to close; the destination is
+/// Permissionless. The caller chooses only which record to close. The destination is
 /// `member_record.rent_payer`. Settlement reads every record, so a record must not close while
 /// the group is Open or Active. Completed and Cancelled never revert and `join_group` needs
 /// Open, so a closed record cannot be created again.
 #[derive(Accounts)]
 pub struct CloseMemberRecord<'info> {
-    /// Read-only: closing a record changes nothing in the group, `current_members` included.
     #[account(
         seeds = [b"group", group_config.group_code.as_bytes()],
         bump = group_config.bump,
@@ -38,7 +37,6 @@ pub struct CloseMemberRecord<'info> {
 
 impl<'info> CloseMemberRecord<'info> {
     pub fn handler(_ctx: Context<CloseMemberRecord>) -> Result<()> {
-        // Every check is an account constraint and Anchor's `close` runs on exit.
         Ok(())
     }
 }

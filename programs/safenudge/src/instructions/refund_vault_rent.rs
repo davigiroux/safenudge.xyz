@@ -31,21 +31,17 @@ pub struct RefundVaultRent<'info> {
 impl<'info> RefundVaultRent<'info> {
     pub fn handler(ctx: Context<RefundVaultRent>) -> Result<()> {
         let group_config = &ctx.accounts.group_config;
+        let surplus = lamports_above_rent_floor(&group_config.to_account_info())?;
 
-        // ── Checks ──────────────────────────────────────────
-        let rent_floor = Rent::get()?.minimum_balance(group_config.to_account_info().data_len());
-        // Nothing above the floor is success, not an error: the refund already
-        // ran, or the rent rate rose. Callers batch this with other
-        // instructions and send it more than once.
-        let surplus = match group_config.get_lamports().checked_sub(rent_floor) {
-            Some(surplus) if surplus > 0 => surplus,
-            _ => return Ok(()),
-        };
-
-        // ── Effects ─────────────────────────────────────────
         group_config.sub_lamports(surplus)?;
         ctx.accounts.rent_payer.add_lamports(surplus)?;
 
         Ok(())
     }
+}
+
+/// Zero when the account holds its rent-exempt minimum or less.
+fn lamports_above_rent_floor(account: &AccountInfo) -> Result<u64> {
+    let rent_floor = Rent::get()?.minimum_balance(account.data_len());
+    Ok(account.lamports().saturating_sub(rent_floor))
 }

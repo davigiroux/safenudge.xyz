@@ -8,12 +8,10 @@ use crate::state::{GroupConfig, MemberRecord, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct JoinGroup<'info> {
-    /// Recorded as `member_record.member` and authority of the deposit transfer. Pays nothing in
-    /// SOL, so a member with no SOL can sign.
     pub member: Signer<'info>,
 
     /// Pays the member_record rent and is recorded as the destination of that rent when the
-    /// record is closed. May be the same key as `member`. It is not a token authority here.
+    /// record is closed. May be the same key as `member`.
     #[account(mut)]
     pub rent_payer: Signer<'info>,
 

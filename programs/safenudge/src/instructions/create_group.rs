@@ -7,7 +7,6 @@ use crate::state::{GroupConfig, MAX_FREQUENCY, STATUS_OPEN};
 #[derive(Accounts)]
 #[instruction(group_code: String)]
 pub struct CreateGroup<'info> {
-    /// Recorded as `group_config.creator`. Pays nothing, so a creator with no SOL can sign.
     pub creator: Signer<'info>,
 
     /// Pays the rent of group_config and of the vault, and is recorded as the destination of the

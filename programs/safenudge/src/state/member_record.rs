@@ -2,8 +2,6 @@ use anchor_lang::prelude::*;
 
 /// One member's participation in one group. Closed by `close_member_record` once the group is
 /// Completed or Cancelled; its rent goes to `rent_payer`.
-///
-/// The discriminator is explicit so records in the pre-rent-payer layout fail to load.
 #[account(discriminator = b"snMembr2")]
 #[derive(InitSpace)]
 pub struct MemberRecord {
@@ -24,7 +22,6 @@ pub struct MemberRecord {
     pub bump: u8,
 }
 
-// Clients and ARCHITECTURE.md publish this size; a field change must be deliberate.
 const _: () = assert!(8 + MemberRecord::INIT_SPACE == 166);
 
 #[cfg(test)]

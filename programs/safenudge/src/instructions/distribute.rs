@@ -15,8 +15,6 @@ pub struct Distribute<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// Also receives the vault's rent when the vault closes; `refund_vault_rent` pays it on to
-    /// the recorded rent payer.
     #[account(
         mut,
         seeds = [b"group", group_config.group_code.as_bytes()],
@@ -321,12 +319,10 @@ impl<'info> Distribute<'info> {
             }
         }
 
-        // The vault's rent goes to GroupConfig, not to a wallet, so settlement
-        // credits no address outside the program. distribute is
-        // permissionless: the rent must not go to the caller either.
+        let vault_rent_escrow = ctx.accounts.group_config.to_account_info();
         let close_cpi = CloseAccount {
             account: ctx.accounts.vault.to_account_info(),
-            destination: ctx.accounts.group_config.to_account_info(),
+            destination: vault_rent_escrow,
             authority: ctx.accounts.vault.to_account_info(),
         };
         let close_ctx = CpiContext::new_with_signer(

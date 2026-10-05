@@ -2,13 +2,10 @@ use anchor_lang::prelude::*;
 
 use crate::errors::SafeNudgeError;
 
-/// One savings group. Never closed: its PDA is what keeps a group code from being reused, and a
-/// reused code would let the old group's member records validate against the new group.
+/// One savings group. Never closed.
 ///
 /// Every fixed-size field comes before `group_code`, the only variable-length one, so each field
 /// above it sits at the same byte offset in every group and clients can `memcmp`-filter on it.
-/// The discriminator is explicit so accounts in the pre-rent-payer layout (default discriminator,
-/// `group_code` first) fail to load instead of decoding into the wrong fields.
 #[account(discriminator = b"snGroup2")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
@@ -46,7 +43,6 @@ pub struct GroupConfig {
     pub group_code: String,
 }
 
-// Clients and ARCHITECTURE.md publish this size; a field change must be deliberate.
 const _: () = assert!(8 + GroupConfig::INIT_SPACE == 179);
 
 /// Highest accepted `frequency` code. Devnet builds accept one more than mainnet; see

@@ -302,8 +302,6 @@ describe("safenudge", () => {
     return provider.client.getBalance(address) ?? 0n;
   }
 
-  // `.rpc()` always charges the provider wallet. This sends with any fee payer and reports what
-  // the transaction cost.
   function sendAs(
     feePayer: Keypair, ixs: TransactionInstruction[], signers: Keypair[] = [],
   ): { bytes: number; computeUnits: bigint } {
@@ -453,7 +451,6 @@ describe("safenudge", () => {
     return program.methods.closeMemberRecord().accounts({ groupConfig: gPda, memberRecord: recordPda, rentPayer });
   }
 
-  // Two compliant members, one period, then settled. With a sponsor, the sponsor pays every rent.
   async function settledGroup(
     code: string, how: "distribute" | "cancel", sponsor?: Keypair,
   ): Promise<{ gPda: PublicKey; vPda: PublicKey; members: Member[] }> {
@@ -3903,8 +3900,6 @@ describe("safenudge", () => {
     });
   });
 
-  // ─── refund_vault_rent tests ──────────────────────────────
-
   describe("refund_vault_rent", () => {
     for (const how of ["distribute", "cancel"] as const) {
       it(`pays the vault rent to the recorded rent payer after ${how}`, async () => {
@@ -4064,8 +4059,6 @@ describe("safenudge", () => {
     });
   });
 
-  // ─── close_member_record tests ────────────────────────────
-
   describe("close_member_record", () => {
     it("closes a record after distribute and pays its rent to the recorded rent payer", async () => {
       const sponsor = await fundedKeypair();
@@ -4198,8 +4191,6 @@ describe("safenudge", () => {
       await closeRecordMethod(gPda, member.recordPda, member.keypair.publicKey).rpc();
       const tokensBefore = await getTokenBalanceOrZero(member.tokenAccount);
 
-      // distribute closed the vault. A live token account in the vault slot gets the call past
-      // account loading, so the status constraint is what rejects it.
       const liveTokenAccountInVaultSlot = members[1].tokenAccount;
       await expectError(joinCall(member, gPda, liveTokenAccountInVaultSlot), "InvalidGroupStatus");
 
@@ -4247,14 +4238,11 @@ describe("safenudge", () => {
     }
   });
 
-  // ─── accounts in the layout before rent_payer ─────────────
-
   describe("accounts in the previous layout", () => {
     function defaultDiscriminator(accountName: string): Buffer {
       return createHash("sha256").update(`account:${accountName}`).digest().subarray(0, 8);
     }
 
-    // The layout before rent_payer: group_code first, 139 bytes, Anchor's default discriminator.
     function plantPreviousLayoutGroup(code: string): PublicKey {
       const [gPda, bump] = getGroupPda(code);
       const data = Buffer.alloc(139);
@@ -4275,7 +4263,6 @@ describe("safenudge", () => {
       return gPda;
     }
 
-    // The layout before rent_payer: 134 bytes, no rent_payer, Anchor's default discriminator.
     function plantPreviousLayoutRecord(gPda: PublicKey, member: Member): void {
       const [, bump] = getMemberPda(gPda, member.keypair.publicKey);
       const data = Buffer.alloc(134);
@@ -4336,8 +4323,6 @@ describe("safenudge", () => {
       await expectError(createGroupCall("legacy-code", { depositAmount: 10_000_000 }), "already in use");
     });
   });
-
-  // ─── rent accounting across a whole group ─────────────────
 
   describe("rent accounting", () => {
     const TEN = { depositAmount: 3_000_000, totalPeriods: 2, maxMembers: 10, penaltyValue: 1_000_000 };
@@ -4484,8 +4469,7 @@ describe("safenudge", () => {
     });
 
     // The runtime rejects a transaction that adds lamports to an account and still leaves it
-    // below the rent-exempt minimum. The vault closes into GroupConfig, so a rent rate that rose
-    // far enough since create_group blocks settlement until GroupConfig is topped up.
+    // below the rent-exempt minimum.
     it("settles after a rent rate increase once anyone tops GroupConfig up to the new floor", async () => {
       const sponsor = await fundedKeypair();
       const { gPda, vPda } = await createWeeklyGroup(
