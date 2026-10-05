@@ -63,11 +63,7 @@ async function sendInOwnTransaction(instructions: TransactionInstruction[], prog
   await stages.confirm(await stages.send())
 }
 
-/**
- * Settles the group and, in the same transaction, sends the vault rent on to the wallet that
- * paid it. Settlement leaves that rent in the group account, and no other part of the app
- * sends the refund later.
- */
+/** Settles the group and sends the vault rent to its payer in one transaction. */
 export function settlementStages(
   settle: InstructionBuilder,
   vaultRentRefund: InstructionBuilder,
