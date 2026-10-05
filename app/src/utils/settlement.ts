@@ -64,9 +64,9 @@ async function sendInOwnTransaction(instructions: TransactionInstruction[], prog
 }
 
 /**
- * Settles the group and, when it fits in the same transaction, sends the vault rent on to the
- * wallet that paid it. Settlement leaves that rent in the group account. `refundVaultRent` is
- * permissionless, so anyone can send later a refund that did not fit here.
+ * Settles the group and, in the same transaction, sends the vault rent on to the wallet that
+ * paid it. Settlement leaves that rent in the group account, and no other part of the app
+ * sends the refund later.
  */
 export function settlementStages(
   settle: InstructionBuilder,
@@ -87,15 +87,11 @@ export function settlementStages(
       settle.instruction(),
       vaultRentRefund.instruction(),
     ])
-    const settleAndRefund = fitsInOneTransaction([settleIx, refundIx], payer) ? [settleIx, refundIx] : [settleIx]
+    const settleAndRefund = [settleIx, refundIx]
 
-    if (creates.length === 0) return new Transaction().add(...settleAndRefund)
-
-    const inOneTransaction = [[...creates, ...settleAndRefund], [...creates, settleIx]].find((ixs) =>
-      fitsInOneTransaction(ixs, payer),
-    )
-    if (inOneTransaction) return new Transaction().add(...inOneTransaction)
-
+    if (creates.length === 0 || fitsInOneTransaction([...creates, ...settleAndRefund], payer)) {
+      return new Transaction().add(...creates, ...settleAndRefund)
+    }
     await sendInOwnTransaction(creates, program)
     return new Transaction().add(...settleAndRefund)
   }
