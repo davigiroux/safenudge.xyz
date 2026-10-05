@@ -21,9 +21,24 @@ import {
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
   createTransferCheckedInstruction,
+  createFreezeAccountInstruction,
+  createInitializeTransferFeeConfigInstruction,
+  createInitializePermanentDelegateInstruction,
+  createInitializeTransferHookInstruction,
+  createInitializeDefaultAccountStateInstruction,
+  createInitializeInterestBearingMintInstruction,
+  createInitializeMetadataPointerInstruction,
+  getMintLen,
+  getExtensionTypes,
+  unpackMint,
   AccountLayout,
+  AccountState,
+  ExtensionType,
   MintLayout,
+  NATIVE_MINT,
+  NATIVE_MINT_2022,
 } from "@solana/spl-token";
+import { createInitializeInstruction as createInitializeMetadataInstruction } from "@solana/spl-token-metadata";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -97,21 +112,27 @@ describe("safenudge", () => {
     usdcMint = await createMint(TOKEN_PROGRAM_ID);
   });
 
-  async function createMint(tokenProgram: PublicKey): Promise<PublicKey> {
+  type MintOpts = {
+    extensions?: ExtensionType[];
+    configure?: (mint: PublicKey) => TransactionInstruction[];
+    freezeAuthority?: PublicKey;
+  };
+
+  async function createMint(tokenProgram: PublicKey, opts: MintOpts = {}): Promise<PublicKey> {
     const mintKeypair = Keypair.generate();
-    const lamports = await provider.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+    const mint = mintKeypair.publicKey;
+    const space = getMintLen(opts.extensions ?? []);
+    const roomForMetadata = 400;
+    const lamports = await provider.connection.getMinimumBalanceForRentExemption(space + roomForMetadata);
     const tx = new Transaction().add(
       SystemProgram.createAccount({
-        fromPubkey: payer.publicKey,
-        newAccountPubkey: mintKeypair.publicKey,
-        space: MINT_SIZE,
-        lamports,
-        programId: tokenProgram,
+        fromPubkey: payer.publicKey, newAccountPubkey: mint, space, lamports, programId: tokenProgram,
       }),
-      createInitializeMintInstruction(mintKeypair.publicKey, DECIMALS, mintAuthority.publicKey, null, tokenProgram),
+      ...(opts.configure?.(mint) ?? []),
+      createInitializeMintInstruction(mint, DECIMALS, mintAuthority.publicKey, opts.freezeAuthority ?? null, tokenProgram),
     );
     await provider.sendAndConfirm(tx, [payer, mintKeypair]);
-    return mintKeypair.publicKey;
+    return mint;
   }
 
   // No manual `global.gc()` here on purpose. Forcing GCs from JS lands in
@@ -264,6 +285,43 @@ describe("safenudge", () => {
     await provider.sendAndConfirm(tokenTx, [payer, mintAuthority]);
 
     return { keypair, tokenAccount: ata };
+  }
+
+  async function createTokenAccountFor(owner: PublicKey, mint: PublicKey = usdcMint): Promise<PublicKey> {
+    const account = Keypair.generate();
+    await provider.sendAndConfirm(
+      new Transaction().add(
+        SystemProgram.createAccount({
+          fromPubkey: payer.publicKey, newAccountPubkey: account.publicKey,
+          space: ACCOUNT_SIZE, lamports: Number(rentFor(ACCOUNT_SIZE)), programId: TOKEN_PROGRAM_ID,
+        }),
+        createInitializeAccountInstruction(account.publicKey, mint, owner),
+      ),
+      [payer, account],
+    );
+    return account.publicKey;
+  }
+
+  async function freezeTokenAccount(tokenAccount: PublicKey, mint: PublicKey): Promise<void> {
+    await provider.sendAndConfirm(
+      new Transaction().add(createFreezeAccountInstruction(tokenAccount, mint, mintAuthority.publicKey)),
+      [payer, mintAuthority],
+    );
+  }
+
+  function plantMint(address: PublicKey, tokenProgram: PublicKey, extensionBytes: Buffer = Buffer.alloc(0)): void {
+    const base = Buffer.alloc(MINT_SIZE);
+    MintLayout.encode({
+      mintAuthorityOption: 0, mintAuthority: PublicKey.default, supply: 0n, decimals: DECIMALS,
+      isInitialized: true, freezeAuthorityOption: 0, freezeAuthority: PublicKey.default,
+    }, base);
+    const MINT_ACCOUNT_TYPE = 1;
+    const data = extensionBytes.length === 0
+      ? base
+      : Buffer.concat([base, Buffer.alloc(ACCOUNT_SIZE - MINT_SIZE), Buffer.from([MINT_ACCOUNT_TYPE]), extensionBytes]);
+    provider.client.setAccount(address, {
+      lamports: Number(rentFor(data.length)), data, owner: tokenProgram, executable: false, rentEpoch: 0,
+    });
   }
 
   const WEEK_SECS = 7 * 86400;
@@ -860,6 +918,131 @@ describe("safenudge", () => {
   });
 
   // ─── join_group tests ─────────────────────────────────────
+
+  describe("create_group mint rules", () => {
+    const GROUP = { depositAmount: 10_000_000 };
+
+    function createOn(code: string, mint: PublicKey, tokenProgram: PublicKey): Promise<string> {
+      return createGroupMethod(code, GROUP, payer.publicKey, payer.publicKey, mint, tokenProgram).rpc();
+    }
+
+    const rejectedExtensions: [string, MintOpts][] = [
+      ["a transfer fee", {
+        extensions: [ExtensionType.TransferFeeConfig],
+        configure: (m) => [
+          createInitializeTransferFeeConfigInstruction(m, null, null, 100, 1_000_000_000n, TOKEN_2022_PROGRAM_ID),
+        ],
+      }],
+      ["a permanent delegate", {
+        extensions: [ExtensionType.PermanentDelegate],
+        configure: (m) => [createInitializePermanentDelegateInstruction(m, payer.publicKey, TOKEN_2022_PROGRAM_ID)],
+      }],
+      ["a transfer hook", {
+        extensions: [ExtensionType.TransferHook],
+        configure: (m) => [
+          createInitializeTransferHookInstruction(m, payer.publicKey, program.programId, TOKEN_2022_PROGRAM_ID),
+        ],
+      }],
+      ["token accounts frozen by default", {
+        extensions: [ExtensionType.DefaultAccountState],
+        configure: (m) => [
+          createInitializeDefaultAccountStateInstruction(m, AccountState.Frozen, TOKEN_2022_PROGRAM_ID),
+        ],
+      }],
+    ];
+
+    rejectedExtensions.forEach(([what, opts], i) => {
+      it(`fails with UnsupportedMint for a Token-2022 mint with ${what}`, async () => {
+        const mint = await createMint(TOKEN_2022_PROGRAM_ID, { ...opts, freezeAuthority: mintAuthority.publicKey });
+        const code = `mint-rejected-${i}`;
+
+        await expectError(createOn(code, mint, TOKEN_2022_PROGRAM_ID), "UnsupportedMint");
+
+        assert.isNull(context.banksClient.getAccount(getGroupPda(code)[0]));
+      });
+    });
+
+    it("fails for a Token-2022 mint with an extension type this build does not know, at vault creation", async () => {
+      const mint = Keypair.generate().publicKey;
+      const unknownType = Buffer.alloc(4);
+      unknownType.writeUInt16LE(9_999, 0);
+      plantMint(mint, TOKEN_2022_PROGRAM_ID, unknownType);
+
+      await expectError(createOn("mint-unknown", mint, TOKEN_2022_PROGRAM_ID), "Error Code: InvalidAccountData");
+
+      assert.isNull(context.banksClient.getAccount(getGroupPda("mint-unknown")[0]));
+    });
+
+    for (const [name, tokenProgram, nativeMint] of [
+      ["SPL Token", TOKEN_PROGRAM_ID, NATIVE_MINT],
+      ["Token-2022", TOKEN_2022_PROGRAM_ID, NATIVE_MINT_2022],
+    ] as const) {
+      it(`fails with UnsupportedMint for the native mint of ${name}`, async () => {
+        plantMint(nativeMint, tokenProgram);
+        const code = `mint-native-${tokenProgram.toBase58().slice(0, 6)}`;
+
+        await expectError(createOn(code, nativeMint, tokenProgram), "UnsupportedMint");
+
+        assert.isNull(context.banksClient.getAccount(getGroupPda(code)[0]));
+      });
+    }
+
+    it("accepts a Token-2022 mint with no extension", async () => {
+      const mint = await createMint(TOKEN_2022_PROGRAM_ID);
+
+      await createOn("mint-plain-2022", mint, TOKEN_2022_PROGRAM_ID);
+
+      const group = await program.account.groupConfig.fetch(getGroupPda("mint-plain-2022")[0]);
+      assert.equal(group.mint.toBase58(), mint.toBase58());
+      assert.equal(group.status, 0);
+    });
+
+    it("accepts a legacy SPL mint with a freeze authority", async () => {
+      const mint = await createMint(TOKEN_PROGRAM_ID, { freezeAuthority: mintAuthority.publicKey });
+
+      await createOn("mint-freeze-authority", mint, TOKEN_PROGRAM_ID);
+
+      const group = await program.account.groupConfig.fetch(getGroupPda("mint-freeze-authority")[0]);
+      assert.equal(group.mint.toBase58(), mint.toBase58());
+    });
+
+    it("accepts an interest-bearing Token-2022 mint with metadata, and a member joins and leaves", async () => {
+      const mint = await createMint(TOKEN_2022_PROGRAM_ID, {
+        extensions: [ExtensionType.MetadataPointer, ExtensionType.InterestBearingConfig],
+        configure: (m) => [
+          createInitializeMetadataPointerInstruction(m, mintAuthority.publicKey, m, TOKEN_2022_PROGRAM_ID),
+          createInitializeInterestBearingMintInstruction(m, mintAuthority.publicKey, 500, TOKEN_2022_PROGRAM_ID),
+        ],
+      });
+      await provider.sendAndConfirm(
+        new Transaction().add(createInitializeMetadataInstruction({
+          programId: TOKEN_2022_PROGRAM_ID, metadata: mint, updateAuthority: mintAuthority.publicKey,
+          mint, mintAuthority: mintAuthority.publicKey, name: "Real Token", symbol: "BRT", uri: "https://example.com/brt.json",
+        })),
+        [payer, mintAuthority],
+      );
+      const mintAccount = context.banksClient.getAccount(mint);
+      const mintExtensions = getExtensionTypes(
+        unpackMint(mint, { ...mintAccount, data: Buffer.from(mintAccount.data) }, TOKEN_2022_PROGRAM_ID).tlvData,
+      );
+      assert.sameMembers(
+        mintExtensions,
+        [ExtensionType.MetadataPointer, ExtensionType.InterestBearingConfig, ExtensionType.TokenMetadata],
+      );
+
+      await createOn("mint-interest", mint, TOKEN_2022_PROGRAM_ID);
+
+      const [gPda] = getGroupPda("mint-interest");
+      const [vPda] = getVaultPda(gPda);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint, TOKEN_2022_PROGRAM_ID);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      await joinMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      await leaveMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+    });
+  });
 
   describe("join_group", () => {
     it("member joins with deposit", async () => {

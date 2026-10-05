@@ -1305,6 +1305,11 @@ export type Safenudge = {
       "code": 6024,
       "name": "recordRetentionNotElapsed",
       "msg": "Member records stay open for the retention period after settlement"
+    },
+    {
+      "code": 6025,
+      "name": "unsupportedMint",
+      "msg": "This mint cannot be used for a group"
     }
   ],
   "types": [
