@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
@@ -41,6 +41,15 @@ const statusConfig: Record<MemberStatus, { icon: string; color: string }> = {
 /** A short, deterministic display label for a wallet pubkey. */
 function shortPubkey(pubkey: string): string {
   return `${pubkey.slice(0, 4)}…${pubkey.slice(-4)}`
+}
+
+/** Whether this tab already dismissed the nudge stored under `key`. */
+function readNudgeDismissed(key: string): boolean {
+  try {
+    return sessionStorage.getItem(key) === '1'
+  } catch {
+    return false
+  }
 }
 
 /** Compute member status given how many of the elapsed periods they covered. */
@@ -150,7 +159,7 @@ export default function GroupDashboard() {
   const { connection } = useConnection()
   const program = useAnchorProgram()
   const { txState, errorKind, errorProgramCode, execute, reset } = useTransaction()
-  const [nudgeDismissed, setNudgeDismissed] = useState(false)
+  const [dismissedNudgeKey, setDismissedNudgeKey] = useState<string | null>(null)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [txIsLeave, setTxIsLeave] = useState(false)
@@ -249,18 +258,12 @@ export default function GroupDashboard() {
 
   const nudgeStorageKey = code ? `safenudge:nudge-dismissed:${code}:${currentPeriod}` : null
 
-  useEffect(() => {
-    if (!nudgeStorageKey) return
-    try {
-      setNudgeDismissed(sessionStorage.getItem(nudgeStorageKey) === '1')
-    } catch {
-      setNudgeDismissed(false)
-    }
-  }, [nudgeStorageKey])
+  const nudgeDismissed = nudgeStorageKey !== null
+    && (dismissedNudgeKey === nudgeStorageKey || readNudgeDismissed(nudgeStorageKey))
 
   const dismissNudge = () => {
-    setNudgeDismissed(true)
     if (nudgeStorageKey) {
+      setDismissedNudgeKey(nudgeStorageKey)
       try {
         sessionStorage.setItem(nudgeStorageKey, '1')
       } catch {
