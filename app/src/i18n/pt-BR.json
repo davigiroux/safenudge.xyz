@@ -422,7 +422,8 @@
       "UnauthorizedRecipient": "Apenas o destinatário oficial das taxas pode fazer isso",
       "NoFeesToWithdraw": "Não há taxas para sacar no momento",
       "TreasuryNotInitialized": "O cofre de taxas do protocolo ainda não foi criado. Tente de novo em instantes.",
-      "InvalidRentPayer": "O reembolso só pode ir para quem pagou a abertura desta conta. Atualize a página e tente de novo."
+      "InvalidRentPayer": "O reembolso só pode ir para quem pagou a abertura desta conta. Atualize a página e tente de novo.",
+      "RecordRetentionNotElapsed": "Ainda é cedo para fechar os registros deste grupo. Eles ficam guardados por um tempo depois do encerramento. Tente de novo mais tarde."
     }
   }
 }

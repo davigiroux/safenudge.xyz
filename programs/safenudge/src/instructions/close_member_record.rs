@@ -1,20 +1,24 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::SafeNudgeError;
-use crate::state::{GroupConfig, MemberRecord, STATUS_CANCELLED, STATUS_COMPLETED};
+use crate::state::{
+    record_retention_end, GroupConfig, MemberRecord, STATUS_CANCELLED, STATUS_COMPLETED,
+};
 
 /// Closes one MemberRecord of a settled group and returns its rent to the recorded rent payer.
 ///
 /// Permissionless. The caller chooses only which record to close. The destination is
 /// `member_record.rent_payer`. Settlement reads every record, so a record must not close while
 /// the group is Open or Active. Completed and Cancelled never revert and `join_group` needs
-/// Open, so a closed record cannot be created again.
+/// Open, so a closed record cannot be created again. After settlement the record stays open
+/// for `RECORD_RETENTION_SECS`.
 #[derive(Accounts)]
 pub struct CloseMemberRecord<'info> {
     #[account(
         seeds = [b"group", group_config.group_code.as_bytes()],
         bump = group_config.bump,
         constraint = (group_config.status == STATUS_COMPLETED || group_config.status == STATUS_CANCELLED) @ SafeNudgeError::InvalidGroupStatus,
+        constraint = Clock::get()?.unix_timestamp >= record_retention_end(group_config.settled_at)? @ SafeNudgeError::RecordRetentionNotElapsed,
     )]
     pub group_config: Account<'info, GroupConfig>,
 

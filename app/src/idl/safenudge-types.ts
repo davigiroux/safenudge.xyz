@@ -1137,6 +1137,11 @@ export type Safenudge = {
       "code": 6023,
       "name": "invalidRentPayer",
       "msg": "Rent refund destination does not match the recorded rent payer"
+    },
+    {
+      "code": 6024,
+      "name": "recordRetentionNotElapsed",
+      "msg": "Member records stay open for the retention period after settlement"
     }
   ],
   "types": [

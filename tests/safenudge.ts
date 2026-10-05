@@ -447,6 +447,12 @@ describe("safenudge", () => {
     return program.methods.refundVaultRent().accounts({ groupConfig: gPda, rentPayer });
   }
 
+  const RECORD_RETENTION_SECS = 30 * 86400;
+
+  function passRecordRetention(): void {
+    advanceClock(RECORD_RETENTION_SECS);
+  }
+
   function closeRecordMethod(gPda: PublicKey, recordPda: PublicKey, rentPayer: PublicKey) {
     return program.methods.closeMemberRecord().accounts({ groupConfig: gPda, memberRecord: recordPda, rentPayer });
   }
@@ -4064,6 +4070,7 @@ describe("safenudge", () => {
       const sponsor = await fundedKeypair();
       const stranger = await fundedKeypair();
       const { gPda, members } = await settledGroup("close-distribute", "distribute", sponsor);
+      passRecordRetention();
       const sponsorBefore = lamportsOf(sponsor.publicKey);
       const strangerBefore = lamportsOf(stranger.publicKey);
       const groupBefore = context.banksClient.getAccount(gPda);
@@ -4084,6 +4091,7 @@ describe("safenudge", () => {
 
     it("closes a record the member paid for after cancel and pays the member", async () => {
       const { gPda, members } = await settledGroup("close-cancel", "cancel");
+      passRecordRetention();
       const member = members[1];
       const before = lamportsOf(member.keypair.publicKey);
 
@@ -4121,6 +4129,7 @@ describe("safenudge", () => {
       const sponsor = await fundedKeypair();
       const attacker = await fundedKeypair();
       const { gPda, members } = await settledGroup("close-redirect", "distribute", sponsor);
+      passRecordRetention();
       const attackerBefore = lamportsOf(attacker.publicKey);
       const member = members[0];
 
@@ -4139,11 +4148,42 @@ describe("safenudge", () => {
       await expectError(closeRecordMethod(gPda, m1.recordPda, attacker.publicKey).rpc(), "InvalidGroupStatus");
     });
 
+    for (const how of ["distribute", "cancel"] as const) {
+      it(`fails one second before the retention period ends after ${how} and succeeds at the boundary`, async () => {
+        const sponsor = await fundedKeypair();
+        const { gPda, members } = await settledGroup(`close-retention-${how}`, how, sponsor);
+        const settledAt = BigInt((await program.account.groupConfig.fetch(gPda)).settledAt.toString());
+        const close = () => closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).rpc();
+        const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+        setUnixTime(settledAt + 2_592_000n - 1n);
+        await expectError(close(), "RecordRetentionNotElapsed");
+        assert.equal(lamportsOf(members[0].recordPda), rentFor(MEMBER_RECORD_SIZE));
+        assert.equal(lamportsOf(sponsor.publicKey), sponsorBefore);
+
+        setUnixTime(settledAt + 2_592_000n);
+        await close();
+        assert.isNull(context.banksClient.getAccount(members[0].recordPda));
+        assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(MEMBER_RECORD_SIZE));
+      });
+    }
+
+    it("checks the retention period before the rent payer", async () => {
+      const { gPda, members } = await settledGroup("close-retention-order", "distribute");
+      const attacker = await fundedKeypair();
+
+      await expectError(
+        closeRecordMethod(gPda, members[0].recordPda, attacker.publicKey).rpc(),
+        "RecordRetentionNotElapsed",
+      );
+    });
+
     it("fails for a record of another group, settled or live", async () => {
       const settled = await settledGroup("close-settled-a", "distribute");
       const otherSettled = await settledGroup("close-settled-b", "cancel");
       const live = await createWeeklyGroup("close-live", { depositAmount: 10_000_000 });
       const liveMember = await joinNewMember(live.gPda, live.vPda, 10_000_000);
+      passRecordRetention();
 
       const foreign = otherSettled.members[0];
       await expectError(
@@ -4164,6 +4204,7 @@ describe("safenudge", () => {
     it("fails on a second close of the same record and moves nothing", async () => {
       const sponsor = await fundedKeypair();
       const { gPda, members } = await settledGroup("close-twice", "distribute", sponsor);
+      passRecordRetention();
       const close = () => closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).rpc();
       await close();
       const sponsorAfterFirst = lamportsOf(sponsor.publicKey);
@@ -4176,6 +4217,7 @@ describe("safenudge", () => {
     it("fails as a whole when one transaction closes the same record twice", async () => {
       const sponsor = await fundedKeypair();
       const { gPda, members } = await settledGroup("close-dup-in-tx", "distribute", sponsor);
+      passRecordRetention();
       const sponsorBefore = lamportsOf(sponsor.publicKey);
       const ix = await closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).instruction();
 
@@ -4187,6 +4229,7 @@ describe("safenudge", () => {
 
     it("does not let a closed record be created again", async () => {
       const { gPda, members } = await settledGroup("close-rejoin", "distribute");
+      passRecordRetention();
       const member = members[0];
       await closeRecordMethod(gPda, member.recordPda, member.keypair.publicKey).rpc();
       const tokensBefore = await getTokenBalanceOrZero(member.tokenAccount);
@@ -4200,6 +4243,7 @@ describe("safenudge", () => {
 
     it("keeps the group code taken after every record is closed", async () => {
       const { gPda, members } = await settledGroup("close-code", "distribute");
+      passRecordRetention();
       await refundVaultRentMethod(gPda, payer.publicKey).rpc();
       for (const m of members) {
         await closeRecordMethod(gPda, m.recordPda, m.keypair.publicKey).rpc();
@@ -4229,6 +4273,7 @@ describe("safenudge", () => {
 
         await joinCall({ keypair, tokenAccount, recordPda }, gPda, vPda, usdcMint, sponsor);
         await cancelCall(gPda, vPda, [{ keypair, tokenAccount, recordPda }]);
+        passRecordRetention();
         await closeRecordMethod(gPda, recordPda, sponsor.publicKey).rpc();
 
         assert.isNull(context.banksClient.getAccount(recordPda));
@@ -4394,6 +4439,7 @@ describe("safenudge", () => {
     it("refunds the vault rent and closes 10 records with 10 different rent payers in one transaction", async () => {
       const { gPda, vPda, members } = await tenMemberActiveGroup("size-teardown");
       await distributeCall(gPda, vPda, members, await initTreasury());
+      passRecordRetention();
       const stranger = await fundedKeypair();
       const creatorBefore = lamportsOf(payer.publicKey);
       const membersBefore = members.map((m) => lamportsOf(m.keypair.publicKey));
@@ -4442,6 +4488,7 @@ describe("safenudge", () => {
       const cycleStart = BigInt((await program.account.groupConfig.fetch(gPda)).cycleStart.toString());
       setUnixTime(cycleStart + BigInt(WEEK_SECS));
       await distributeCall(gPda, vPda, members, null);
+      passRecordRetention();
 
       const ixs = [await refundVaultRentMethod(gPda, sponsor.publicKey).instruction()];
       for (const m of members) {

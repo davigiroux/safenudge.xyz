@@ -72,9 +72,33 @@ pub fn period_duration_secs(frequency: u8) -> Result<i64> {
     secs.ok_or(SafeNudgeError::ArithmeticOverflow.into())
 }
 
+/// Seconds a member record stays open after its group settles. Clients read the records of a
+/// settled group to show each member's result, so `close_member_record` waits this long.
+/// Devnet builds wait five minutes so the close path can be driven in one sitting.
+pub const RECORD_RETENTION_SECS: i64 = if cfg!(feature = "devnet") { 300 } else { 2_592_000 };
+
+/// First unix timestamp at which the records of a group settled at `settled_at` can close.
+pub fn record_retention_end(settled_at: i64) -> Result<i64> {
+    settled_at
+        .checked_add(RECORD_RETENTION_SECS)
+        .ok_or(SafeNudgeError::ArithmeticOverflow.into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_retention_is_30_days_except_in_devnet_builds() {
+        let expected = if cfg!(feature = "devnet") { 300 } else { 2_592_000 };
+        assert_eq!(RECORD_RETENTION_SECS, expected);
+        assert_eq!(record_retention_end(1_000).unwrap(), 1_000 + expected);
+    }
+
+    #[test]
+    fn record_retention_end_rejects_a_timestamp_that_overflows() {
+        assert!(record_retention_end(i64::MAX).is_err());
+    }
 
     #[test]
     fn maps_each_frequency_to_its_period() {

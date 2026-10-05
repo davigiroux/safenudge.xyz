@@ -50,4 +50,6 @@ pub enum SafeNudgeError {
     TreasuryNotInitialized,
     #[msg("Rent refund destination does not match the recorded rent payer")]
     InvalidRentPayer,
+    #[msg("Member records stay open for the retention period after settlement")]
+    RecordRetentionNotElapsed,
 }
