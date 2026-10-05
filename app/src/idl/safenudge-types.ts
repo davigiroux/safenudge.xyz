@@ -840,6 +840,169 @@ export type Safenudge = {
       "args": []
     },
     {
+      "name": "leaveGroup",
+      "discriminator": [
+        10,
+        4,
+        125,
+        28,
+        46,
+        23,
+        233,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "member",
+          "signer": true
+        },
+        {
+          "name": "groupConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  111,
+                  117,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config.group_code",
+                "account": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "memberRecord",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  109,
+                  98,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              },
+              {
+                "kind": "account",
+                "path": "member"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "not a signer or an authority. The constraint on `member_record` pins its key to the",
+            "wallet that signed and paid at join_group, so the member cannot redirect the rent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "memberTokenAccount",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "member"
+              },
+              {
+                "kind": "account",
+                "path": "tokenProgram"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "refundVaultRent",
       "discriminator": [
         190,
@@ -1230,7 +1393,7 @@ export type Safenudge = {
           {
             "name": "currentMembers",
             "docs": [
-              "Offset 139. Members who joined. Not decremented when a member record is closed."
+              "Offset 139. Members with a seat."
             ],
             "type": "u8"
           },
@@ -1268,8 +1431,7 @@ export type Safenudge = {
     {
       "name": "memberRecord",
       "docs": [
-        "One member's participation in one group. Closed by `close_member_record` once the group is",
-        "Completed or Cancelled; its rent goes to `rent_payer`."
+        "One member's participation in one group."
       ],
       "type": {
         "kind": "struct",
@@ -1334,4 +1496,3 @@ export type Safenudge = {
     }
   ]
 };
-

@@ -92,6 +92,10 @@ export type EventMap = {
   group_joined: { group_code_hash: string; signature: string }
   group_join_failed: { group_code_hash: string } & TxErrorProps
 
+  group_leave_submitted: { group_code_hash: string }
+  group_left: { group_code_hash: string; signature: string }
+  group_leave_failed: { group_code_hash: string } & TxErrorProps
+
   cycle_start_submitted: { group_code_hash: string; member_count: number }
   cycle_started: { group_code_hash: string; signature: string }
   cycle_start_failed: { group_code_hash: string } & TxErrorProps

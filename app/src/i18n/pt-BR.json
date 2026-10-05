@@ -335,6 +335,25 @@
     "confirmCta": "Cancelar e devolver tudo",
     "signNote": "Você vai assinar uma transação Solana. A SafeNudge não toca no dinheiro — a devolução é feita direto pelo contrato."
   },
+  "leaveGroup": {
+    "trigger": "Sair do grupo",
+    "sheetLabel": "Sair do grupo",
+    "kicker": "Sair do grupo",
+    "titleA": "Tudo bem mudar de ideia.",
+    "titleB": "Seu depósito volta inteiro.",
+    "intro": "O ciclo de {{groupName}} ainda não começou, então dá pra sair sem multa. A gente devolve o que você depositou, direto pra sua carteira.",
+    "refundTitle": "Você recebe {{amount}} de volta",
+    "refundBody": "Na mesma carteira que você usou pra entrar. Sem multa e sem taxa.",
+    "seatTitle": "Sua vaga fica livre",
+    "seatBody": "Outra pessoa pode entrar no seu lugar. O grupo continua aberto pra quem ficou.",
+    "returnTitle": "Dá pra voltar depois",
+    "returnBody": "Enquanto o ciclo não começar e tiver vaga, é só entrar de novo com o código do grupo.",
+    "confirmCta": "Sair e receber meu depósito",
+    "stay": "Ficar no grupo",
+    "signNote": "Você confirma na sua carteira. A SafeNudge não toca no dinheiro: a devolução sai direto do cofre do grupo.",
+    "successTitle": "Você saiu do grupo",
+    "successDetail": "Seu depósito já voltou pra sua carteira. Quando quiser, é só entrar de novo."
+  },
   "seguranca": {
     "kicker": "Segurança",
     "h1l1": "Confiança não é promessa.",

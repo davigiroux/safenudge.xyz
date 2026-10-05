@@ -834,6 +834,169 @@
       "args": []
     },
     {
+      "name": "leave_group",
+      "discriminator": [
+        10,
+        4,
+        125,
+        28,
+        46,
+        23,
+        233,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "member",
+          "signer": true
+        },
+        {
+          "name": "group_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  111,
+                  117,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config.group_code",
+                "account": "GroupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "member_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  109,
+                  98,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config"
+              },
+              {
+                "kind": "account",
+                "path": "member"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_payer",
+          "docs": [
+            "not a signer or an authority. The constraint on `member_record` pins its key to the",
+            "wallet that signed and paid at join_group, so the member cannot redirect the rent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "member_token_account",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "member"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "token_program"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "refund_vault_rent",
       "discriminator": [
         190,
@@ -1224,7 +1387,7 @@
           {
             "name": "current_members",
             "docs": [
-              "Offset 139. Members who joined. Not decremented when a member record is closed."
+              "Offset 139. Members with a seat."
             ],
             "type": "u8"
           },
@@ -1262,8 +1425,7 @@
     {
       "name": "MemberRecord",
       "docs": [
-        "One member's participation in one group. Closed by `close_member_record` once the group is",
-        "Completed or Cancelled; its rent goes to `rent_payer`."
+        "One member's participation in one group."
       ],
       "type": {
         "kind": "struct",

@@ -12,6 +12,8 @@ type TransactionStatusProps = {
   errorDetail?: string
   errorKind?: TxErrorKind | null
   errorProgramCode?: string | null
+  successTitle?: string
+  successDetail?: string
   onRetry?: () => void
   onClose?: () => void
 }
@@ -45,6 +47,8 @@ export function TransactionStatus({
   errorDetail,
   errorKind,
   errorProgramCode,
+  successTitle,
+  successDetail,
   onRetry,
   onClose,
 }: TransactionStatusProps) {
@@ -57,7 +61,8 @@ export function TransactionStatus({
     const resolved = t(key, { defaultValue: fallback })
     return resolved
   })()
-  const title = state === 'error' ? errorTitle : t(NON_ERROR_TITLE_KEYS[state])
+  const defaultTitle = state === 'error' ? errorTitle : t(NON_ERROR_TITLE_KEYS[state])
+  const title = state === 'success' && successTitle ? successTitle : defaultTitle
   // Only show raw detail when it adds info beyond the localized title.
   const showRawDetail =
     state === 'error' && !!errorDetail && errorDetail.trim() !== '' && errorDetail !== title
@@ -96,7 +101,7 @@ export function TransactionStatus({
         </h2>
 
         <p className="font-body text-body-md text-on-surface-variant mb-6">
-          {state === 'success' && t('transaction.successDetail')}
+          {state === 'success' && (successDetail ?? t('transaction.successDetail'))}
           {state === 'error' && (showRawDetail ? errorDetail : t('errors.generic'))}
           {state === 'signing' && t('transaction.securityNote')}
         </p>

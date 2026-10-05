@@ -1,14 +1,19 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useParams } from 'react-router-dom'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import { PublicKey } from '@solana/web3.js'
-import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
+import {
+  TOKEN_PROGRAM_ID,
+  createAssociatedTokenAccountIdempotentInstruction,
+  getAssociatedTokenAddressSync,
+} from '@solana/spl-token'
 import { PageLayout } from '../components/PageLayout'
 import { Button, Card, StatRow, Icon, NudgeToast, TransactionStatus } from '../components'
 import { ProgressBar } from '../components/ProgressBar'
 import { DistributeSummary } from '../components/DistributeSummary'
 import { CancelGroupSheet } from '../components/CancelGroupSheet'
+import { LeaveGroupSheet } from '../components/LeaveGroupSheet'
 import { useAnchorProgram, type SafeNudgeProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
@@ -140,6 +145,12 @@ export default function GroupDashboard() {
   const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
   const [nudgeDismissed, setNudgeDismissed] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
+  const [leaveOpen, setLeaveOpen] = useState(false)
+  const [txIsLeave, setTxIsLeave] = useState(false)
+  const closeTxStatus = useCallback(() => {
+    reset()
+    setTxIsLeave(false)
+  }, [reset])
   const chainTimeOffset = useChainTimeOffset()
   const { wrongCluster } = useClusterCheck()
   // The action that started the in-flight/failed transaction, so "retry"
@@ -211,6 +222,7 @@ export default function GroupDashboard() {
   const canCancel = isCreator
     && !membersError
     && (group?.status === 'open' || group?.status === 'active')
+  const canLeave = group?.status === 'open' && !!memberRecord
 
   const projection = useMemo(
     () => (showSettlement && group ? projectDistribution(group, members) : null),
@@ -434,6 +446,52 @@ export default function GroupDashboard() {
     if (sig) {
       track('emergency_cancel_completed', { group_code_hash: groupHash, signature: sig })
       setCancelOpen(false)
+      refetchAll()
+    }
+  }
+
+  async function handleLeave() {
+    if (!program || !publicKey || !code || !memberRecord || wrongCluster) return
+    lastActionRef.current = handleLeave
+    setTxIsLeave(true)
+    const [groupPda] = getGroupConfigPDA(code)
+    const [vaultPda] = getVaultPDA(groupPda)
+    const memberAta = getAssociatedTokenAddressSync(usdcMint, publicKey)
+
+    const groupHash = await hashId(code)
+    track('group_leave_submitted', { group_code_hash: groupHash })
+
+    const sig = await execute(
+      runMethod(
+        program.methods
+          .leaveGroup()
+          .accountsPartial({
+            member: publicKey,
+            groupConfig: groupPda,
+            memberRecord: new PublicKey(memberRecord.pda),
+            rentPayer: new PublicKey(memberRecord.rentPayer),
+            memberTokenAccount: memberAta,
+            vault: vaultPda,
+            mint: usdcMint,
+            tokenProgram: TOKEN_PROGRAM_ID,
+          })
+          .preInstructions([
+            createAssociatedTokenAccountIdempotentInstruction(publicKey, memberAta, publicKey, usdcMint),
+          ]),
+        program,
+      ),
+      {
+        onError: (err) =>
+          track('group_leave_failed', {
+            group_code_hash: groupHash,
+            error_kind: err.kind,
+            program_code: err.programCode ?? null,
+          }),
+      },
+    )
+    if (sig) {
+      track('group_left', { group_code_hash: groupHash, signature: sig })
+      setLeaveOpen(false)
       refetchAll()
     }
   }
@@ -744,6 +802,19 @@ export default function GroupDashboard() {
           </div>
         </div>
 
+        {canLeave && (
+          <div className="mt-8 flex justify-center">
+            <button
+              type="button"
+              onClick={() => setLeaveOpen(true)}
+              className="font-label text-label-md text-on-surface-variant hover:text-tertiary transition-colors inline-flex items-center gap-1.5 py-2 px-3"
+            >
+              <Icon name="logout" size={16} />
+              {t('leaveGroup.trigger')}
+            </button>
+          </div>
+        )}
+
         {/* Discreet emergency cancel — creator only, open or active groups */}
         {canCancel && (
           <div className="mt-8 flex justify-center">
@@ -769,6 +840,15 @@ export default function GroupDashboard() {
         onClose={() => setCancelOpen(false)}
       />
 
+      <LeaveGroupSheet
+        open={leaveOpen}
+        groupName={code ?? ''}
+        refundAmount={`${formatTokenAmount(memberRecord?.totalDeposited ?? 0)} USDC`}
+        loading={txState === 'signing' || txState === 'confirming'}
+        onConfirm={handleLeave}
+        onClose={() => setLeaveOpen(false)}
+      />
+
       {/* Nudge Toast */}
       {showNudge && (
         <NudgeToast
@@ -792,10 +872,12 @@ export default function GroupDashboard() {
           errorDetail={errorDetail || undefined}
           errorKind={errorKind}
           errorProgramCode={errorProgramCode}
+          successTitle={txIsLeave ? t('leaveGroup.successTitle') : undefined}
+          successDetail={txIsLeave ? t('leaveGroup.successDetail') : undefined}
           onRetry={() => {
             void lastActionRef.current?.()
           }}
-          onClose={reset}
+          onClose={closeTxStatus}
         />
       )}
     </PageLayout>
