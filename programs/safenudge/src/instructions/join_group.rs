@@ -63,6 +63,7 @@ impl<'info> JoinGroup<'info> {
         let member_record = &mut self.member_record;
         member_record.group = self.group_config.key();
         member_record.member = self.member.key();
+        member_record.rent_payer = self.member.key();
         member_record.total_deposited = self.group_config.deposit_amount;
         member_record.deposits_made = 1;
         member_record.periods_deposited = [false; 52];

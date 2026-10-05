@@ -83,19 +83,21 @@ impl<'info> CreateGroup<'info> {
 
         // ── Effects ─────────────────────────────────────────
         let group = &mut self.group_config;
-        group.group_code = group_code;
         group.creator = self.creator.key();
+        group.rent_payer = self.creator.key();
         group.mint = self.mint.key();
         group.deposit_amount = deposit_amount;
+        group.penalty_value = penalty_value;
+        group.cycle_start = 0;
+        group.settled_at = 0;
         group.frequency = frequency;
         group.total_periods = total_periods;
         group.max_members = max_members;
         group.current_members = 0;
         group.penalty_type = penalty_type;
-        group.penalty_value = penalty_value;
         group.status = STATUS_OPEN;
-        group.cycle_start = 0;
         group.bump = bumps.group_config;
+        group.group_code = group_code;
 
         Ok(())
     }
