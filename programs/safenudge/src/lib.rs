@@ -68,8 +68,11 @@ pub const PROTOCOL_FEE_BPS: u64 = 500;
 #[cfg(feature = "mainnet")]
 pub const FEE_RECIPIENT: Pubkey = pubkey!("11111111111111111111111111111111");
 
+// Devnet recipient. It replaced FobkDn4r…, whose key was lost. With no signer for the old
+// recipient, `init_treasury` was uncallable on devnet: no treasury could be created, so every
+// fee-bearing `distribute` failed with `TreasuryNotInitialized`.
 #[cfg(all(feature = "devnet", not(feature = "mainnet")))]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("FobkDn4rY18j5UAhigt5kAGsMyqP8PDxXGMH94TgG2sh");
+pub const FEE_RECIPIENT: Pubkey = pubkey!("2jwEs8aP8TvdDFeDJL5bYdnXZkbnexaCJTVns3dqeS3e");
 
 // Test-only fallback. The matching private key is committed at
 // tests/fixtures/fee-recipient.json so CI can exercise the withdraw_fees happy
