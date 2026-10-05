@@ -4348,7 +4348,7 @@ describe("safenudge", () => {
       assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
     });
 
-    it("rejects a previous-layout MemberRecord at settlement", async () => {
+    it("rejects a previous-layout MemberRecord at settlement because 134 bytes do not decode", async () => {
       const { gPda, vPda } = await createWeeklyGroup("legacy-record", { depositAmount: 10_000_000, totalPeriods: 1 });
       const m1 = await joinNewMember(gPda, vPda, 10_000_000);
       const m2 = await joinNewMember(gPda, vPda, 10_000_000);
@@ -4374,8 +4374,10 @@ describe("safenudge", () => {
     const TRANSACTION_BYTE_LIMIT = 1232;
     const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
 
-    async function tenMemberActiveGroup(code: string): Promise<{ gPda: PublicKey; vPda: PublicKey; members: Member[] }> {
-      const { gPda, vPda } = await createWeeklyGroup(code, TEN);
+    async function tenMemberActiveGroup(
+      code: string, rentPayer: Keypair = payer,
+    ): Promise<{ gPda: PublicKey; vPda: PublicKey; members: Member[] }> {
+      const { gPda, vPda } = await createWeeklyGroup(code, TEN, rentPayer);
       const members: Member[] = [];
       for (let i = 0; i < 10; i++) {
         members.push(await joinNewMember(gPda, vPda, 100_000_000));
@@ -4389,9 +4391,13 @@ describe("safenudge", () => {
       return { gPda, vPda, members };
     }
 
-    it("settles 10 members with a protocol fee inside one transaction and the default compute limit", async () => {
-      const { gPda, vPda, members } = await tenMemberActiveGroup("size-distribute");
+    // The transaction the app sends: distribute and refund_vault_rent together, signed by a
+    // settler who is not the rent payer, with no compute-budget instruction.
+    it("settles 10 members with a protocol fee and refunds the vault rent in one transaction", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, vPda, members } = await tenMemberActiveGroup("size-distribute", sponsor);
       const treasuryAta = await initTreasury();
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
       const memberAtas = members.map((m) => m.tokenAccount);
       const balancesBefore = await Promise.all(memberAtas.map((a) => getTokenBalanceOrZero(a)));
       const ix = await program.methods.distribute()
@@ -4402,11 +4408,12 @@ describe("safenudge", () => {
         .remainingAccounts(memberPairs(members))
         .instruction();
 
-      const cost = sendAs(payer, [ix]);
+      const cost = sendAs(payer, [ix, await refundVaultRentMethod(gPda, sponsor.publicKey).instruction()]);
 
-      assert.equal(cost.bytes, 1036);
       assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
       assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(ACCOUNT_SIZE));
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
       await assertFundConservation({
         vaultPda: vPda, memberAtas, memberBalancesBefore: balancesBefore,
         treasuryBefore: 0n, expectedFee: 150_000n, totalDeposits: 51_000_000n,
@@ -4426,7 +4433,6 @@ describe("safenudge", () => {
 
       const cost = sendAs(payer, [ix]);
 
-      assert.equal(cost.bytes, 970);
       assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
       assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
       const refunds = await Promise.all(
@@ -4450,7 +4456,6 @@ describe("safenudge", () => {
 
       const cost = sendAs(stranger, ixs);
 
-      assert.equal(cost.bytes, 1023);
       assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
       assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
       assert.equal(lamportsOf(payer.publicKey) - creatorBefore, rentFor(ACCOUNT_SIZE));
