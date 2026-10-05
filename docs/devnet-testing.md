@@ -46,7 +46,7 @@ solana program show GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc --url devnet
 
 Output should show `Last Deployed Slot` and the program data account. The program ID matches the one hardcoded in [app/src/utils/constants.ts](../app/src/utils/constants.ts) and [Anchor.toml](../Anchor.toml).
 
-**Before you upgrade a deployed program to a build that changes an account layout:** settle or cancel every live group first, with the binary that is deployed now. The `rent_payer` change re-ordered `GroupConfig` and `MemberRecord` and gave both new discriminators. After the upgrade, every instruction rejects an account in the previous layout with `AccountDiscriminatorMismatch`, so the tokens in such a group's vault cannot be withdrawn and its group code stays taken. There is no migration instruction.
+**Before you upgrade a deployed program to a build that changes an account layout:** settle or cancel every live group first. The rule and the reason are in [ARCHITECTURE.md, "Upgrades that change an account layout"](../ARCHITECTURE.md#upgrades-that-change-an-account-layout). It applies to every cluster.
 
 ## 2b. Redeploying devnet under a new program ID
 

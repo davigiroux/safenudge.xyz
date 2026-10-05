@@ -82,13 +82,13 @@ pub struct MemberRecord {
 |------|---------|-------------|-------------|
 | GroupConfig (179 bytes) | `create_group` | Never. GroupConfig stays open | — |
 | Vault (165 bytes) | `create_group` | `refund_vault_rent`, after `distribute` or `emergency_cancel` closed the vault into GroupConfig | `group_config.rent_payer` |
-| MemberRecord (166 bytes) | `join_group` | `close_member_record` | `member_record.rent_payer` |
+| MemberRecord (166 bytes) | `join_group` | `close_member_record`, 30 days after settlement | `member_record.rent_payer` |
 
 `distribute` and `emergency_cancel` name no rent recipient. They close the vault into the GroupConfig PDA, so the instructions that move member tokens credit no lamports to an address outside the program.
 
 #### Accounts in the previous layout
 
-Both accounts use explicit discriminators (`snGroup2`, `snMembr2`). An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. Settle or cancel such groups with the old program binary before an in-place upgrade.
+Both accounts use explicit discriminators (`snGroup2`, `snMembr2`). An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. See "Upgrades that change an account layout" under Deployment.
 
 #### GroupVault
 
@@ -436,7 +436,7 @@ The amount follows the rent rate at the time of the call. If the rate is lower t
 
 #### 10. `close_member_record`
 
-Closes one `MemberRecord` of a settled group and returns its rent to the wallet that paid it. Anyone can call it. One record per instruction: a client puts up to 10 of them, plus `refund_vault_rent`, in one transaction (1,023 bytes with 10 different rent payers).
+Closes one `MemberRecord` of a settled group and returns its rent to the wallet that paid it. Anyone can call it, once the retention period after settlement has passed. One record per instruction: a client puts up to 10 of them, plus `refund_vault_rent`, in one transaction (1,023 bytes with 10 different rent payers).
 
 **Accounts:**
 - `group_config` — read-only. Closing a record changes nothing in the group
@@ -447,6 +447,7 @@ Closes one `MemberRecord` of a settled group and returns its rent to the wallet 
 
 **Validation, in this order:**
 - `group_config.status == Completed (2) || group_config.status == Cancelled (3)` (`InvalidGroupStatus`)
+- `Clock::get().unix_timestamp >= group_config.settled_at + RECORD_RETENTION_SECS` (`RecordRetentionNotElapsed`)
 - `member_record` is the canonical PDA for this group (`ConstraintSeeds`). The seeds include the group key, so a record of another group cannot pass
 - `rent_payer.key() == member_record.rent_payer` (`InvalidRentPayer`)
 
@@ -455,7 +456,7 @@ Closes one `MemberRecord` of a settled group and returns its rent to the wallet 
 
 Settlement reads every member record, so a record cannot close while the group is Open or Active. Completed and Cancelled never revert, `join_group` requires Open, and `GroupConfig` is never closed. A closed record therefore cannot be created again, and its group code cannot be reused. A second close of the same record fails with `AccountNotInitialized`.
 
-No retention period is enforced. Once a group is settled, anyone can close its records, and clients that list a wallet's groups through its member records stop listing that group. `group_config.settled_at` records the settlement time for a future retention rule.
+`RECORD_RETENTION_SECS` is 2,592,000 (30 days). Devnet builds use 300, in the same `cfg!(feature = "devnet")` style as `MAX_FREQUENCY`. Clients read the member records of a settled group to show each member's result, so the records stay open for that period. After it, anyone can close them. A client that lists a wallet's groups through its member records then stops listing that group, and a client must not compute payouts from the records that remain.
 
 ---
 
@@ -580,6 +581,8 @@ pub enum SafeNudgeError {
     TreasuryNotInitialized,
     #[msg("Rent refund destination does not match the recorded rent payer")]
     InvalidRentPayer,
+    #[msg("Member records stay open for the retention period after settlement")]
+    RecordRetentionNotElapsed,
 }
 ```
 
@@ -721,6 +724,21 @@ anchor deploy --provider.cluster devnet
 - Frontend: Vercel, connected to GitHub repo, auto-deploys from `main`
 - Environment variables: `VITE_SOLANA_RPC_URL`, `VITE_PROGRAM_ID`, `VITE_USDC_MINT`, `VITE_RAMP_API_KEY`
 
+### Upgrades that change an account layout
+
+This rule applies to every cluster, not only devnet.
+
+Before you upgrade a deployed program to a build that changes the layout or the discriminator of `GroupConfig` or `MemberRecord`, settle or cancel every live group with the binary that is deployed now. After the upgrade, every instruction rejects an account in the previous layout with `AccountDiscriminatorMismatch`. The tokens in the vault of such a group cannot be withdrawn, and its group code stays taken. There is no migration instruction.
+
+The `rent_payer` change is such an upgrade. It also changes the interface that every client compiles against, so each client must repin the IDL and change its calls in the same release window:
+
+- `create_group` and `join_group` take a new required signer, `rent_payer`, in the second account position. Later accounts move down one position.
+- `distribute` no longer takes `creator`. `group_config` and every later account move up one position.
+- `creator` in `create_group` and `emergency_cancel`, and `member` in `join_group`, are no longer writable.
+- `GroupConfig` and `MemberRecord` have new field orders, sizes (179 and 166 bytes), and discriminators. Any hard-coded `memcmp` offset or account decoder must change.
+- Vault rent is no longer paid inside settlement. A client that wants it returned sends `refund_vault_rent`.
+- Two instructions and two error codes are new: `refund_vault_rent`, `close_member_record`, `InvalidRentPayer`, `RecordRetentionNotElapsed`.
+
 ### Testing Strategy
 
 **Program (Anchor tests in TypeScript):**
@@ -811,6 +829,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Rent payer drained by the creator | `emergency_cancel` and `distribute` pay no lamports to the creator or the caller. The vault rent goes to `GroupConfig` and from there only to `group_config.rent_payer`. What a rent payer does not get back is the `GroupConfig` rent, 179 bytes per group. |
 | Group code reuse after close | `GroupConfig` is never closed and `refund_vault_rent` leaves it rent-exempt, so `["group", code]` stays allocated and old member records cannot validate against a new group. |
 | Record closed before settlement | `close_member_record` requires Completed or Cancelled. Settlement needs every record, and both statuses are final. |
+| Records closed while clients still show the result | `close_member_record` also requires 30 days since `settled_at` (300 seconds in devnet builds). |
 | Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 179 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 
@@ -827,7 +846,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | `withdraw_fees` | `FEE_RECIPIENT` only | Treasury -> Recipient | N/A (no group) | `recipient == FEE_RECIPIENT`, treasury balance > 0 |
 | `init_treasury` | `FEE_RECIPIENT` only | None (signer pays ATA rent) | N/A (no group) | `fee_recipient == FEE_RECIPIENT` |
 | `refund_vault_rent` | Anyone | Lamports only: GroupConfig surplus -> `group_config.rent_payer` | Completed or Cancelled | `rent_payer == group_config.rent_payer` |
-| `close_member_record` | Anyone | Lamports only: MemberRecord rent -> `member_record.rent_payer` | Completed or Cancelled | Canonical record PDA for the group, `rent_payer == member_record.rent_payer` |
+| `close_member_record` | Anyone | Lamports only: MemberRecord rent -> `member_record.rent_payer` | Completed or Cancelled, and 30 days since `settled_at` | Canonical record PDA for the group, `rent_payer == member_record.rent_payer` |
 
 ### Program Constraints Template
 
