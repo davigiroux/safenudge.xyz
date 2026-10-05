@@ -84,7 +84,7 @@ impl<'info> EmergencyCancel<'info> {
         if unowed_balance > 0 {
             require!(
                 ctx.accounts.mint.to_account_info().is_writable,
-                ErrorCode::ConstraintMut
+                SafeNudgeError::MintNotWritable
             );
         }
 

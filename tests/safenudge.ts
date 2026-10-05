@@ -4523,36 +4523,39 @@ describe("safenudge", () => {
       });
     }
 
-    it("fails with ConstraintMut when the vault of an empty group holds tokens and the mint is read-only", async () => {
+    it("fails with MintNotWritable when the vault of an empty group holds tokens and the mint is read-only", async () => {
       const { gPda, vPda } = await createWeeklyGroup("cancel-empty-readonly", { depositAmount: 10_000_000 });
       await provider.sendAndConfirm(
         new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 1)),
         [payer, mintAuthority],
       );
 
-      await expectError(cancelCall(gPda, vPda, []), "ConstraintMut");
+      await expectError(cancelCall(gPda, vPda, []), "MintNotWritable");
 
       assert.equal((await program.account.groupConfig.fetch(gPda)).status, 0);
       assert.equal(await getTokenBalanceOrZero(vPda), 1n);
       assert.equal(mintSupply(usdcMint), 1n);
     });
 
-    it("pays tokens sent to the vault to the last-listed member and burns nothing when the group has members", async () => {
-      const { gPda, vPda } = await createWeeklyGroup("cancel-donated-members", { depositAmount: 10_000_000 });
-      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
-      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
-      await provider.sendAndConfirm(
-        new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 7)),
-        [payer, mintAuthority],
-      );
+    for (const mintFlag of ["read-only", "writable"] as const) {
+      it(`pays a token sent to the vault to the last-listed of two members and burns nothing (${mintFlag} mint)`, async () => {
+        const { gPda, vPda } = await createWeeklyGroup("cancel-donated-members", { depositAmount: 10_000_000 });
+        const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+        const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+        await provider.sendAndConfirm(
+          new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 1)),
+          [payer, mintAuthority],
+        );
+        const cancelIx = await cancelMethod(gPda, vPda, [m1, m2], payer.publicKey).instruction();
 
-      sendAs(payer, [withWritable(await cancelMethod(gPda, vPda, [m1, m2], payer.publicKey).instruction(), usdcMint)]);
+        sendAs(payer, [mintFlag === "writable" ? withWritable(cancelIx, usdcMint) : cancelIx]);
 
-      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
-      assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_007n);
-      assert.equal(mintSupply(usdcMint), 20_000_007n);
-      assert.isNull(context.banksClient.getAccount(vPda));
-    });
+        assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_001n);
+        assert.equal(mintSupply(usdcMint), 20_000_001n);
+        assert.isNull(context.banksClient.getAccount(vPda));
+      });
+    }
 
     it("refunds each member exactly their total_deposited mid-cycle and closes the vault", async () => {
       const { gPda, vPda } = await createWeeklyGroup("cancel-uneven", { depositAmount: 10_000_000 });

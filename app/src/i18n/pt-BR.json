@@ -444,7 +444,8 @@
       "TreasuryNotInitialized": "O cofre de taxas do protocolo ainda não foi criado. Tente de novo em instantes.",
       "InvalidRentPayer": "O reembolso só pode ir para quem pagou a abertura desta conta. Atualize a página e tente de novo.",
       "RecordRetentionNotElapsed": "Ainda é cedo para fechar os registros deste grupo. Eles ficam guardados por um tempo depois do encerramento. Tente de novo mais tarde.",
-      "UnsupportedMint": "Essa moeda ainda não pode ser usada em grupos. Escolha outra e tente de novo."
+      "UnsupportedMint": "Essa moeda ainda não pode ser usada em grupos. Escolha outra e tente de novo.",
+      "MintNotWritable": "Não conseguimos encerrar o grupo dessa vez. Atualize a página e tente de novo."
     }
   }
 }

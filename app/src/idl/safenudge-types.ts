@@ -470,6 +470,11 @@ export type Safenudge = {
     },
     {
       "name": "emergencyCancel",
+      "docs": [
+        "Returns every member's deposits and closes the vault. With no members, burns any",
+        "balance in the vault first: `mint` must then be writable, or it fails with",
+        "`MintNotWritable`."
+      ],
       "discriminator": [
         92,
         73,
@@ -1257,6 +1262,11 @@ export type Safenudge = {
       "code": 6025,
       "name": "unsupportedMint",
       "msg": "This mint cannot be used for a group"
+    },
+    {
+      "code": 6026,
+      "name": "mintNotWritable",
+      "msg": "Mint must be writable to cancel a group with no members whose vault holds tokens"
     }
   ],
   "types": [

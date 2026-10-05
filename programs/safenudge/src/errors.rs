@@ -54,4 +54,6 @@ pub enum SafeNudgeError {
     RecordRetentionNotElapsed,
     #[msg("This mint cannot be used for a group")]
     UnsupportedMint,
+    #[msg("Mint must be writable to cancel a group with no members whose vault holds tokens")]
+    MintNotWritable,
 }
