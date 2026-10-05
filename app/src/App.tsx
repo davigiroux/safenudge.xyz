@@ -4,6 +4,7 @@ import { SpeedInsights } from '@vercel/speed-insights/react'
 import { WalletProvider } from './components/WalletProvider'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { useAnalyticsIdentify } from './hooks/useAnalyticsIdentify'
+import { maskGroupCode } from './utils/analytics'
 import Landing from './pages/Landing'
 import ComoFunciona from './pages/ComoFunciona'
 import CreateGroup from './pages/CreateGroup'
@@ -11,6 +12,10 @@ import JoinGroup from './pages/JoinGroup'
 import GroupDashboard from './pages/GroupDashboard'
 import MyGroups from './pages/MyGroups'
 import Seguranca from './pages/Seguranca'
+
+function maskUrl<E extends { url: string }>(event: E): E {
+  return { ...event, url: maskGroupCode(event.url) }
+}
 
 function AnalyticsBridge() {
   useAnalyticsIdentify()
@@ -34,8 +39,8 @@ export function App() {
           </Routes>
         </BrowserRouter>
       </WalletProvider>
-      <Analytics />
-      <SpeedInsights />
+      <Analytics beforeSend={maskUrl} />
+      <SpeedInsights beforeSend={maskUrl} />
     </ErrorBoundary>
   )
 }

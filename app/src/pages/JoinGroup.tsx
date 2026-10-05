@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useParams, useNavigate } from 'react-router-dom'
+import { Navigate, useParams, useNavigate } from 'react-router-dom'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { SystemProgram } from '@solana/web3.js'
 import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync } from '@solana/spl-token'
@@ -13,7 +13,9 @@ import { runMethod } from '../utils/runMethod'
 import { useGroupConfig } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA } from '../utils/pda'
-import { formatTokenAmount } from '../utils/formatToken'
+import { formatPercentBps, formatTokenAmount } from '../utils/formatToken'
+import { parseGroupCode } from '../utils/groupCode'
+import { readJoinFunds, type JoinFunds } from '../utils/joinFunds'
 import { USDC_MINT } from '../utils/constants'
 import { bucketAmount, hashId, track } from '../utils/analytics'
 
@@ -25,25 +27,19 @@ const FREQUENCY_LABELS: Record<string, string> = {
 
 export default function JoinGroup() {
   const { t } = useTranslation()
-  const { code } = useParams<{ code: string }>()
+  const { code: rawCode } = useParams<{ code: string }>()
   const navigate = useNavigate()
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
   const { wrongCluster } = useClusterCheck()
   const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
 
-  const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
-  const { data: group, loading: groupLoading, error: groupError } = useGroupConfig(isValidCode ? code : undefined)
-  const { isMember } = useMemberRecord(isValidCode ? code : undefined)
+  const code = parseGroupCode(rawCode)
+  const { data: group, loading: groupLoading, error: groupError } = useGroupConfig(code ?? undefined)
+  const { state: member } = useMemberRecord(code ?? undefined)
+  const [funds, setFunds] = useState<JoinFunds | { kind: 'checking' }>({ kind: 'ready' })
 
   const usdcMint = USDC_MINT
-
-  // Redirect if already a member
-  useEffect(() => {
-    if (isMember && code) {
-      navigate(`/grupo/${code}`, { replace: true })
-    }
-  }, [isMember, code, navigate])
 
   async function handleJoin() {
     if (!program || !publicKey || !code || !group || wrongCluster) return
@@ -56,6 +52,11 @@ export default function JoinGroup() {
     const groupHash = await hashId(code)
     const depositBucket = bucketAmount(group.depositAmount / 1_000_000)
     track('group_join_attempted', { group_code_hash: groupHash, deposit_bucket: depositBucket })
+
+    setFunds({ kind: 'checking' })
+    const checked = await readJoinFunds(program.provider.connection, memberAta, group.depositAmount)
+    setFunds(checked)
+    if (checked.kind === 'noTokenAccount' || checked.kind === 'insufficientBalance') return
 
     const sig = await execute(
       runMethod(
@@ -89,7 +90,7 @@ export default function JoinGroup() {
     }
   }
 
-  if (!isValidCode) {
+  if (!code) {
     return (
       <PageLayout>
         <div className="flex flex-col items-center justify-center min-h-[60vh] px-6">
@@ -102,7 +103,11 @@ export default function JoinGroup() {
     )
   }
 
-  if (groupLoading) {
+  if (member.kind === 'member') {
+    return <Navigate to={`/grupo/${code}`} replace />
+  }
+
+  if (groupLoading || member.kind === 'loading') {
     return (
       <PageLayout>
         <div className="flex flex-col items-center justify-center min-h-[60vh] px-6">
@@ -133,7 +138,7 @@ export default function JoinGroup() {
   function formatPenalty(): string {
     if (!group) return '—'
     if (group.penaltyType === 1) {
-      return t('joinGroup.penaltyPercent', { value: (group.penaltyValue / 100).toFixed(0) })
+      return t('joinGroup.penaltyPercent', { value: formatPercentBps(group.penaltyValue) })
     }
     return t('joinGroup.penaltyFixed', { value: formatTokenAmount(group.penaltyValue) })
   }
@@ -243,16 +248,18 @@ export default function JoinGroup() {
           </div>
         </div>
 
-        {/* Already member notice */}
-        {isMember && (
-          <Card variant="surface" className="mb-6">
-            <div className="flex items-center gap-3">
-              <Icon name="check_circle" size={20} className="text-secondary" />
-              <p className="font-body text-body-md text-on-surface-variant">
-                {t('joinGroup.alreadyMember')}
-              </p>
-            </div>
-          </Card>
+        {(funds.kind === 'noTokenAccount' || funds.kind === 'insufficientBalance') && (
+          <div className="mb-6 rounded-xl bg-tertiary-fixed/20 p-4 flex items-start gap-3" role="alert">
+            <Icon name="account_balance_wallet" size={20} className="text-tertiary flex-shrink-0 mt-0.5" />
+            <p className="font-body text-body-md text-on-surface">
+              {funds.kind === 'noTokenAccount'
+                ? t('joinGroup.fundsNoTokenAccount', { amount: formatTokenAmount(group.depositAmount) })
+                : t('joinGroup.fundsInsufficient', {
+                    missing: formatTokenAmount(funds.missing),
+                    amount: formatTokenAmount(group.depositAmount),
+                  })}
+            </p>
+          </div>
         )}
 
         {/* CTA */}
@@ -261,8 +268,8 @@ export default function JoinGroup() {
           icon="login"
           className="w-full py-3 mb-3"
           onClick={handleJoin}
-          disabled={!publicKey || isMember || !isGroupOpen}
-          loading={txState === 'signing' || txState === 'confirming'}
+          disabled={!publicKey || !isGroupOpen}
+          loading={funds.kind === 'checking' || txState === 'signing' || txState === 'confirming'}
         >
           {publicKey ? t('joinGroup.joinAndDeposit') : t('common.connectWallet')}
         </Button>

@@ -13,12 +13,15 @@ import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
 import { getGroupConfigPDA, getVaultPDA } from '../utils/pda'
 import { USDC_MINT, BRL_PER_USD } from '../utils/constants'
+import { sanitizeGroupCodeInput } from '../utils/groupCode'
+import { MAX_PENALTY_PERCENT, parseCreateGroup, type PenaltyKind } from '../utils/createGroupForm'
 import { bucketAmount, FREQUENCY_NAMES, hashId, track } from '../utils/analytics'
 
 type Frequency = '0' | '1' | '2'
 
 const FREQUENCY_DAYS: Record<Frequency, number> = { '0': 7, '1': 14, '2': 30 }
 const FREQUENCY_LABELS: Record<Frequency, string> = { '0': 'weekly', '1': 'biweekly', '2': 'monthly' }
+const PENALTY_TYPE_ARG: Record<PenaltyKind, number> = { fixed: 0, percent: 1 }
 
 function estimateEndDate(frequency: Frequency, periods: number): string {
   const now = new Date()
@@ -47,32 +50,32 @@ export default function CreateGroup() {
   const [frequency, setFrequency] = useState<Frequency>('0')
   const [totalPeriods, setTotalPeriods] = useState(12)
   const [maxMembers, setMaxMembers] = useState(5)
-  const [penaltyType, setPenaltyType] = useState<'0' | '1'>('1')
+  const [penaltyKind, setPenaltyKind] = useState<PenaltyKind>('percent')
   const [penaltyValue, setPenaltyValue] = useState('10')
+
+  const form = parseCreateGroup({ groupCode, depositAmount, penaltyKind, penaltyValue })
+  const issues = form.kind === 'invalid' ? form.issues : {}
 
   const amount = parseFloat(depositAmount) || 0
   const individualGoal = amount * totalPeriods
   const groupTotal = individualGoal * maxMembers
 
   async function handleSubmit() {
-    if (!program || !publicKey || !groupCode || amount <= 0 || wrongCluster) return
+    if (!program || !publicKey || form.kind !== 'valid' || wrongCluster) return
+    const { params } = form
+    const penaltyArg = params.penalty.kind === 'percent' ? params.penalty.bps : params.penalty.baseUnits
 
-    const depositAmountBN = new BN(Math.round(amount * 1_000_000))
-    const penaltyBN = penaltyType === '1'
-      ? new BN(Math.round(parseFloat(penaltyValue) * 100))
-      : new BN(Math.round(parseFloat(penaltyValue) * 1_000_000))
-
-    const [groupConfigPda] = getGroupConfigPDA(groupCode)
+    const [groupConfigPda] = getGroupConfigPDA(params.groupCode)
     const [vaultPda] = getVaultPDA(groupConfigPda)
 
-    const groupHash = await hashId(groupCode)
+    const groupHash = await hashId(params.groupCode)
     const groupProps = {
       group_code_hash: groupHash,
       frequency: FREQUENCY_NAMES[parseInt(frequency)],
       total_periods: totalPeriods,
       max_members: maxMembers,
       deposit_bucket: bucketAmount(amount),
-      penalty_type: penaltyType === '1' ? ('percent' as const) : ('fixed' as const),
+      penalty_type: params.penalty.kind,
     }
     track('group_create_submitted', groupProps)
 
@@ -80,13 +83,13 @@ export default function CreateGroup() {
       runMethod(
         program.methods
           .createGroup(
-            groupCode,
-            depositAmountBN,
+            params.groupCode,
+            new BN(params.depositBaseUnits),
             parseInt(frequency),
             totalPeriods,
             maxMembers,
-            parseInt(penaltyType),
-            penaltyBN,
+            PENALTY_TYPE_ARG[params.penalty.kind],
+            new BN(penaltyArg),
           )
           .accountsPartial({
             creator: publicKey,
@@ -110,7 +113,7 @@ export default function CreateGroup() {
 
     if (sig) {
       track('group_created', { ...groupProps, signature: sig })
-      setTimeout(() => navigate(`/grupo/${groupCode}`), 1500)
+      setTimeout(() => navigate(`/grupo/${params.groupCode}`), 1500)
     }
   }
 
@@ -142,7 +145,7 @@ export default function CreateGroup() {
               placeholder="viagem-japao-2025"
               hint={t('createGroup.groupCodeHint')}
               value={groupCode}
-              onChange={(e) => setGroupCode(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32))}
+              onChange={(e) => setGroupCode(sanitizeGroupCodeInput(e.target.value))}
               maxLength={32}
             />
 
@@ -154,6 +157,7 @@ export default function CreateGroup() {
               placeholder="0.00"
               suffix={t('createGroup.depositAmountUnit')}
               hint={amount > 0 ? t('createGroup.estimatedBrl', { value: (amount * BRL_PER_USD).toFixed(2) }) : undefined}
+              error={issues.depositAmount && t(`createGroup.validation.${issues.depositAmount}`)}
               value={depositAmount}
               onChange={(e) => setDepositAmount(e.target.value)}
             />
@@ -224,19 +228,20 @@ export default function CreateGroup() {
 
               <RadioGroup
                 options={[
-                  { value: '1', label: t('createGroup.penaltyPercent'), icon: 'percent' },
-                  { value: '0', label: t('createGroup.penaltyFixed'), icon: 'payments' },
+                  { value: 'percent', label: t('createGroup.penaltyPercent'), icon: 'percent' },
+                  { value: 'fixed', label: t('createGroup.penaltyFixed'), icon: 'payments' },
                 ]}
-                value={penaltyType}
-                onChange={(v) => setPenaltyType(v as '0' | '1')}
+                value={penaltyKind}
+                onChange={(v) => setPenaltyKind(v as PenaltyKind)}
               />
 
               <TextInput
                 type="number"
-                placeholder={penaltyType === '1' ? '10' : '2.00'}
-                suffix={penaltyType === '1' ? '%' : 'USDC'}
+                placeholder={penaltyKind === 'percent' ? '10' : '2.00'}
+                suffix={penaltyKind === 'percent' ? '%' : 'USDC'}
                 value={penaltyValue}
                 onChange={(e) => setPenaltyValue(e.target.value)}
+                error={issues.penaltyValue && t(`createGroup.validation.${issues.penaltyValue}`, { max: MAX_PENALTY_PERCENT })}
               />
 
               <Card variant="surface" className="flex items-start gap-3">
@@ -253,7 +258,7 @@ export default function CreateGroup() {
               icon="group_add"
               className="w-full py-3"
               onClick={handleSubmit}
-              disabled={!publicKey || !groupCode || amount <= 0}
+              disabled={!publicKey || form.kind !== 'valid'}
               loading={txState === 'signing' || txState === 'confirming'}
             >
               {publicKey ? t('createGroup.submit') : t('common.connectWallet')}

@@ -19,6 +19,7 @@ import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA, getTreasuryAuthorityPDA } from '../utils/pda'
 import { useChainTimeOffset } from '../hooks/useChainTimeOffset'
 import { useClusterCheck } from '../hooks/useClusterCheck'
+import { parseGroupCode } from '../utils/groupCode'
 import { formatTokenAmount } from '../utils/formatToken'
 import { projectDistribution, cycleEndUnix } from '../utils/distribution'
 import { USDC_MINT } from '../utils/constants'
@@ -126,7 +127,7 @@ function CycleProgress({
 
 export default function GroupDashboard() {
   const { t } = useTranslation()
-  const { code } = useParams<{ code: string }>()
+  const { code: rawCode } = useParams<{ code: string }>()
   const { publicKey } = useWallet()
   const { connection } = useConnection()
   const program = useAnchorProgram()
@@ -140,7 +141,8 @@ export default function GroupDashboard() {
   // predicate chain happens to select (issue #44 B-1).
   const lastActionRef = useRef<(() => Promise<void>) | null>(null)
 
-  const isValidCode = code && /^[a-zA-Z0-9-]{1,32}$/.test(code)
+  const code = parseGroupCode(rawCode) ?? undefined
+  const isValidCode = code !== undefined
   const {
     data: group,
     loading: groupLoading,
