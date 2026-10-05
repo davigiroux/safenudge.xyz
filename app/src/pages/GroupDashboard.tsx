@@ -142,7 +142,7 @@ export default function GroupDashboard() {
   const { publicKey } = useWallet()
   const { connection } = useConnection()
   const program = useAnchorProgram()
-  const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
+  const { txState, errorKind, errorProgramCode, execute, reset } = useTransaction()
   const [nudgeDismissed, setNudgeDismissed] = useState(false)
   const [cancelOpen, setCancelOpen] = useState(false)
   const [leaveOpen, setLeaveOpen] = useState(false)
@@ -872,7 +872,6 @@ export default function GroupDashboard() {
         <TransactionStatus
           state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
           groupCode={code}
-          errorDetail={errorDetail || undefined}
           errorKind={errorKind}
           errorProgramCode={errorProgramCode}
           successTitle={txIsLeave ? t('leaveGroup.successTitle') : undefined}

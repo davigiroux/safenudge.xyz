@@ -41,7 +41,7 @@ export default function CreateGroup() {
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
   const { wrongCluster } = useClusterCheck()
-  const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
+  const { txState, errorKind, errorProgramCode, execute, reset } = useTransaction()
 
   const usdcMint = USDC_MINT
 
@@ -340,7 +340,6 @@ export default function CreateGroup() {
         <TransactionStatus
           state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
           groupCode={groupCode}
-          errorDetail={errorDetail || undefined}
           errorKind={errorKind}
           errorProgramCode={errorProgramCode}
           onRetry={handleSubmit}

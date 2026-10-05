@@ -9,7 +9,6 @@ type TxState = 'signing' | 'confirming' | 'success' | 'error'
 type TransactionStatusProps = {
   state: TxState
   groupCode?: string
-  errorDetail?: string
   errorKind?: TxErrorKind | null
   errorProgramCode?: string | null
   successTitle?: string
@@ -44,7 +43,6 @@ function errorTitleKey(kind: TxErrorKind | null | undefined, programCode: string
 export function TransactionStatus({
   state,
   groupCode,
-  errorDetail,
   errorKind,
   errorProgramCode,
   successTitle,
@@ -63,9 +61,6 @@ export function TransactionStatus({
   })()
   const defaultTitle = state === 'error' ? errorTitle : t(NON_ERROR_TITLE_KEYS[state])
   const title = state === 'success' && successTitle ? successTitle : defaultTitle
-  // Only show raw detail when it adds info beyond the localized title.
-  const showRawDetail =
-    state === 'error' && !!errorDetail && errorDetail.trim() !== '' && errorDetail !== title
   const dialogRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -102,7 +97,7 @@ export function TransactionStatus({
 
         <p className="font-body text-body-md text-on-surface-variant mb-6">
           {state === 'success' && (successDetail ?? t('transaction.successDetail'))}
-          {state === 'error' && (showRawDetail ? errorDetail : t('errors.generic'))}
+          {state === 'error' && t('errors.generic')}
           {state === 'signing' && t('transaction.securityNote')}
         </p>
 
