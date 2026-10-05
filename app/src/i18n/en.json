@@ -417,6 +417,8 @@
     "insufficientBalance": "Insufficient balance for this operation",
     "userRejected": "You cancelled the signature.",
     "simulationFailed": "Simulation failed. Check your connection.",
+    "relayUnavailable": "The service that covers network fees is down. Try again in a few minutes.",
+    "relayRefused": "We couldn't cover the fees for this action. Try again later or get in touch.",
     "unknown": "Something went wrong. Try again in a few seconds.",
     "programError": {
       "InvalidGroupStatus": "The group isn't in the right stage for this action. Check whether the cycle has started.",

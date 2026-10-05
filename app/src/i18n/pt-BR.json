@@ -417,6 +417,8 @@
     "insufficientBalance": "Saldo insuficiente para esta operação",
     "userRejected": "Você cancelou a assinatura.",
     "simulationFailed": "A simulação falhou. Verifique sua conexão.",
+    "relayUnavailable": "O serviço que cobre as taxas de rede está fora do ar. Tente de novo em alguns minutos.",
+    "relayRefused": "Não conseguimos cobrir as taxas desta operação. Tente de novo mais tarde ou fale com a gente.",
     "unknown": "Algo não deu certo. Tente novamente em alguns segundos.",
     "programError": {
       "InvalidGroupStatus": "O grupo não está na fase certa para essa ação. Confira se o ciclo já começou.",
