@@ -1,5 +1,4 @@
 import { PublicKey } from '@solana/web3.js'
-import { fixedOffset } from './accountLayout'
 
 const isProd = import.meta.env.PROD
 
@@ -32,9 +31,13 @@ export const SOLANA_RPC_URL = requireEnv('VITE_SOLANA_RPC_URL', SOLANA_DEVNET_RP
 // connection.getGenesisHash() to detect wallets pointed at the wrong network.
 export const EXPECTED_GENESIS_HASH = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'
 
-export const MEMBER_RECORD_GROUP_OFFSET = fixedOffset('MemberRecord', 'group')
-export const MEMBER_RECORD_MEMBER_OFFSET = fixedOffset('MemberRecord', 'member')
-export const GROUP_CONFIG_CREATOR_OFFSET = fixedOffset('GroupConfig', 'creator')
+// memcmp offsets into account data. The Rust unit tests
+// `serializes_member_record_fields_at_the_documented_offsets` and
+// `serializes_group_config_fields_at_the_documented_offsets` in
+// programs/safenudge/src/state/ pin the same numbers. Change both together.
+export const MEMBER_RECORD_GROUP_OFFSET = 8
+export const MEMBER_RECORD_MEMBER_OFFSET = 40
+export const GROUP_CONFIG_CREATOR_OFFSET = 8
 
 // Display-only BRL conversion for PT-BR users; not used in any on-chain math.
 // Last updated 2026-07. Replace with a daily-cached FX feed post-MVP.
