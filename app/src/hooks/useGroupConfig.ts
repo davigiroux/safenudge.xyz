@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useConnection } from '@solana/wallet-adapter-react'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getGroupConfigPDA } from '../utils/pda'
 import { frequencyFromCode, type FrequencyName } from '../utils/frequency'
@@ -76,49 +75,47 @@ function parseGroupConfig(account: GroupConfigAccount, pda: PublicKey): GroupCon
   }
 }
 
+type GroupConfigResult =
+  | { kind: 'loaded'; group: GroupConfigData }
+  | { kind: 'error'; error: GroupConfigError }
+
+/** Fetch and parse a group's config account. */
 export function useGroupConfig(groupCode: string | undefined) {
   const program = useAnchorProgram()
-  const { connection } = useConnection()
-  const [data, setData] = useState<GroupConfigData | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<GroupConfigError | null>(null)
+  const [settled, setSettled] = useState<{ lookup: string; result: GroupConfigResult } | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const refetch = useCallback(() => setReloadKey((k) => k + 1), [])
 
+  const lookup = groupCode && program ? `${groupCode}:${reloadKey}` : null
+
   useEffect(() => {
-    if (!groupCode || !program) {
-      setData(null)
-      return
-    }
+    if (!lookup || !groupCode || !program) return
 
     let cancelled = false
+    const [pda] = getGroupConfigPDA(groupCode)
 
-    async function fetchGroup() {
-      if (!program) return
-      setLoading(true)
-      setError(null)
-      try {
-        const [pda] = getGroupConfigPDA(groupCode!)
-        const account = await program.account.groupConfig.fetch(pda) as unknown as GroupConfigAccount
+    program.account.groupConfig
+      .fetch(pda)
+      .then(
+        (account): GroupConfigResult => {
+          const group = parseGroupConfig(account, pda)
+          return group ? { kind: 'loaded', group } : { kind: 'error', error: 'unsupported' }
+        },
+        (): GroupConfigResult => ({ kind: 'error', error: 'unavailable' }),
+      )
+      .then((result) => {
+        if (!cancelled) setSettled({ lookup, result })
+      })
 
-        if (!cancelled) {
-          const parsed = parseGroupConfig(account, pda)
-          setData(parsed)
-          if (!parsed) setError('unsupported')
-        }
-      } catch {
-        if (!cancelled) {
-          setError('unavailable')
-          setData(null)
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    fetchGroup()
     return () => { cancelled = true }
-  }, [groupCode, program, connection, reloadKey])
+  }, [lookup, groupCode, program])
 
-  return { data, loading, error, refetch }
+  const result = lookup !== null && settled?.lookup === lookup ? settled.result : null
+
+  return {
+    data: result?.kind === 'loaded' ? result.group : null,
+    loading: lookup !== null && result === null,
+    error: result?.kind === 'error' ? result.error : null,
+    refetch,
+  }
 }

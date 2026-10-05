@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useConnection } from '@solana/wallet-adapter-react'
-import { PublicKey } from '@solana/web3.js'
-import type { BN } from '@coral-xyz/anchor'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getGroupConfigPDA } from '../utils/pda'
 import { MEMBER_RECORD_GROUP_OFFSET } from '../utils/constants'
@@ -14,78 +11,60 @@ export type GroupMemberData = {
   periodsDeposited: boolean[]
 }
 
-type RawMemberRecord = {
-  group: PublicKey
-  member: PublicKey
-  totalDeposited: BN
-  depositsMade: number
-  periodsDeposited: boolean[]
-  bump: number
-}
+type GroupMembersResult =
+  | { kind: 'loaded'; members: GroupMemberData[] }
+  | { kind: 'error'; message: string }
 
-/**
- * Fetch every MemberRecord whose `group` field matches the given group_code.
- */
+const NO_MEMBERS: GroupMemberData[] = []
+
+/** Fetch every MemberRecord of a group. */
 export function useGroupMembers(groupCode: string | undefined) {
   const program = useAnchorProgram()
-  const { connection } = useConnection()
-  const [data, setData] = useState<GroupMemberData[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [settled, setSettled] = useState<{ lookup: string; result: GroupMembersResult } | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
-
   const refetch = useCallback(() => setReloadKey((k) => k + 1), [])
 
+  const lookup = groupCode && program ? `${groupCode}:${reloadKey}` : null
+
   useEffect(() => {
-    if (!groupCode || !program) {
-      setData([])
-      return
-    }
+    if (!lookup || !groupCode || !program) return
 
     let cancelled = false
+    const [groupPda] = getGroupConfigPDA(groupCode)
 
-    async function run() {
-      if (!program) return
-      setLoading(true)
-      setError(null)
-      try {
-        const [groupPda] = getGroupConfigPDA(groupCode!)
-        const records = await program.account.memberRecord.all([
-          { memcmp: { offset: MEMBER_RECORD_GROUP_OFFSET, bytes: groupPda.toBase58() } },
-        ])
+    program.account.memberRecord
+      .all([{ memcmp: { offset: MEMBER_RECORD_GROUP_OFFSET, bytes: groupPda.toBase58() } }])
+      .then(
+        (records): GroupMembersResult => {
+          const members: GroupMemberData[] = records.map(({ account, publicKey }) => ({
+            member: account.member.toString(),
+            pda: publicKey.toString(),
+            totalDeposited: account.totalDeposited.toNumber(),
+            depositsMade: account.depositsMade,
+            periodsDeposited: account.periodsDeposited,
+          }))
+          // Stable order — sort by pubkey so the UI doesn't reshuffle on each fetch.
+          members.sort((a, b) => (a.member < b.member ? -1 : a.member > b.member ? 1 : 0))
+          return { kind: 'loaded', members }
+        },
+        (err): GroupMembersResult => ({
+          kind: 'error',
+          message: err instanceof Error ? err.message : 'Failed to fetch members',
+        }),
+      )
+      .then((result) => {
+        if (!cancelled) setSettled({ lookup, result })
+      })
 
-        if (cancelled) return
+    return () => { cancelled = true }
+  }, [lookup, groupCode, program])
 
-        const mapped: GroupMemberData[] = records.map((r) => {
-          const acc = r.account as unknown as RawMemberRecord
-          return {
-            member: acc.member.toString(),
-            pda: r.publicKey.toString(),
-            totalDeposited: acc.totalDeposited.toNumber(),
-            depositsMade: acc.depositsMade,
-            periodsDeposited: acc.periodsDeposited,
-          }
-        })
+  const result = lookup !== null && settled?.lookup === lookup ? settled.result : null
 
-        // Stable order — sort by pubkey so the UI doesn't reshuffle on each fetch.
-        mapped.sort((a, b) => (a.member < b.member ? -1 : a.member > b.member ? 1 : 0))
-
-        setData(mapped)
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch members')
-          setData([])
-        }
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    run()
-    return () => {
-      cancelled = true
-    }
-  }, [groupCode, program, connection, reloadKey])
-
-  return { data, loading, error, refetch }
+  return {
+    data: result?.kind === 'loaded' ? result.members : NO_MEMBERS,
+    loading: lookup !== null && result === null,
+    error: result?.kind === 'error' ? result.message : null,
+    refetch,
+  }
 }
