@@ -29,7 +29,7 @@ solana airdrop 2 && sleep 5 && solana airdrop 2 && sleep 5 && solana airdrop 2
 solana balance                  # confirm you have >= 5 SOL
 
 # Anchor 1.0 routes cargo flags through `--`; both deploy + IDL publish happen in one step:
-anchor build -- --features devnet     # resolves FEE_RECIPIENT to FobkDn4… (devnet treasury)
+anchor build -- --features devnet     # resolves FEE_RECIPIENT to 2jwEs8a… (the CLI wallet)
 anchor deploy \
   --program-name safenudge \
   --provider.cluster devnet \
@@ -165,6 +165,17 @@ solana program show <NEW_PROGRAM_ID> --url devnet
 `getAccountInfo` on the ProgramData address returns the authority at byte
 offset 13, after a 4-byte enum, an 8-byte slot and a 1-byte option tag.
 
+### Step 3b — create the treasury again
+
+The treasury authority is a PDA of the program ID, so a new program ID means a new, empty
+treasury. Until `init_treasury` runs for each mint in use, any `distribute` that owes a
+protocol fee fails with `TreasuryNotInitialized`. All-compliant cycles still settle, which
+makes this easy to miss in a smoke test.
+
+`init_treasury` must be signed by the devnet `FEE_RECIPIENT`, which is the CLI wallet
+(`~/.config/solana/id.json`). Run it once per mint: the SafePool mock BRS mint and the web
+app's test USDC mint. It is one-shot per mint and fails on a second call.
+
 ### Step 4 — tell SafePool, in the same window
 
 SafePool (`davigiroux/safepool`, private) pins a copy of this repo's IDL and
@@ -253,7 +264,7 @@ The full distribute path is already covered by 9 unit tests with on-chain clock 
 - Group status: `Cancelado`
 - All three wallets get exactly 5 USDC back (the single join deposit that doubles as period-0). Verify in Phantom.
 - Solscan shows vault account closed; no residual funds.
-- Treasury (`FobkDn4rY18j5UAhigt5kAGsMyqP8PDxXGMH94TgG2sh`) balance unchanged — cancel never charges the protocol fee.
+- Treasury balance unchanged — cancel never charges the protocol fee.
 
 ### Full distribute path (multi-week)
 
