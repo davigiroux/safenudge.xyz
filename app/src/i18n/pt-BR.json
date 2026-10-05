@@ -132,8 +132,6 @@
     "nudgeStat": "Grupos que mantêm consistência nas primeiras 4 semanas têm 85% mais chance de atingir a meta",
     "alreadyMember": "Você já é membro deste grupo",
     "groupNotFound": "Grupo não encontrado",
-    "groupUnsupported": "Este grupo usa uma versão mais nova do SafeNudge. Atualize a página e tente de novo.",
-    "membersLoadFailed": "Não conseguimos carregar os membros agora. Vamos tentar de novo?",
     "penaltyFixed": "{{value}} USDC por período perdido",
     "penaltyPercent": "{{value}}% do depósito por período perdido"
   },
@@ -146,6 +144,8 @@
     "distribute": "Distribuir",
     "emergencyCancel": "Cancelar Grupo",
     "membersList": "Membros",
+    "groupUnsupported": "Este grupo usa uma versão mais nova do SafeNudge. Atualize a página e tente de novo.",
+    "membersLoadFailed": "Não conseguimos carregar os membros agora. Vamos tentar de novo?",
     "totalDeposited": "Total depositado",
     "streak": "sequência",
     "sendNudge": "Enviar cutucada",

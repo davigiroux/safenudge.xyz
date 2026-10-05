@@ -132,8 +132,6 @@
     "nudgeStat": "Groups maintaining consistency in the first 4 weeks are 85% more likely to reach their goal",
     "alreadyMember": "You are already a member of this group",
     "groupNotFound": "Group not found",
-    "groupUnsupported": "This group uses a newer version of SafeNudge. Refresh the page and try again.",
-    "membersLoadFailed": "We couldn't load the members right now. Shall we try again?",
     "penaltyFixed": "{{value}} USDC per missed period",
     "penaltyPercent": "{{value}}% of deposit per missed period"
   },
@@ -146,6 +144,8 @@
     "distribute": "Distribute",
     "emergencyCancel": "Cancel Group",
     "membersList": "Members",
+    "groupUnsupported": "This group uses a newer version of SafeNudge. Refresh the page and try again.",
+    "membersLoadFailed": "We couldn't load the members right now. Shall we try again?",
     "totalDeposited": "Total deposited",
     "streak": "streak",
     "sendNudge": "Send nudge",
