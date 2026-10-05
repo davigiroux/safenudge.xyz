@@ -12,6 +12,7 @@ import { CancelGroupSheet } from '../components/CancelGroupSheet'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
+import { settlementRemainingAccounts, settlementStages } from '../utils/settlement'
 import { useGroupConfig, type GroupStatus } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
@@ -324,17 +325,6 @@ export default function GroupDashboard() {
     }
   }
 
-  function buildSettlementRemainingAccounts(memberList: GroupMemberData[]) {
-    return memberList.flatMap((m) => {
-      const memberPk = new PublicKey(m.member)
-      const ata = getAssociatedTokenAddressSync(usdcMint, memberPk)
-      return [
-        { pubkey: new PublicKey(m.pda), isWritable: false, isSigner: false },
-        { pubkey: ata, isWritable: true, isSigner: false },
-      ]
-    })
-  }
-
   async function handleDistribute() {
     if (!program || !publicKey || !code || !group || wrongCluster) return
     lastActionRef.current = handleDistribute
@@ -356,7 +346,7 @@ export default function GroupDashboard() {
     })
 
     const sig = await execute(
-      runMethod(
+      settlementStages(
         program.methods
           .distribute()
           .accountsPartial({
@@ -368,8 +358,10 @@ export default function GroupDashboard() {
             treasuryTokenAccount,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
-          .remainingAccounts(buildSettlementRemainingAccounts(members)),
+          .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
         program,
+        members,
+        usdcMint,
       ),
       {
         onError: (err) =>
@@ -400,7 +392,7 @@ export default function GroupDashboard() {
     track('emergency_cancel_submitted', { group_code_hash: groupHash })
 
     const sig = await execute(
-      runMethod(
+      settlementStages(
         program.methods
           .emergencyCancel()
           .accountsPartial({
@@ -410,8 +402,10 @@ export default function GroupDashboard() {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
-          .remainingAccounts(buildSettlementRemainingAccounts(members)),
+          .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
         program,
+        members,
+        usdcMint,
       ),
       {
         onError: (err) =>
