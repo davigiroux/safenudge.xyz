@@ -15,17 +15,12 @@ pub struct Distribute<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
 
-    /// CHECK: rent recipient. Validated by `has_one = creator` on group_config —
-    /// must match the wallet stored at group creation time. distribute is
-    /// permissionless so the creator does not sign; we only need their pubkey.
-    #[account(mut)]
-    pub creator: UncheckedAccount<'info>,
-
+    /// Also receives the vault's rent when the vault closes; `refund_vault_rent` pays it on to
+    /// the recorded rent payer.
     #[account(
         mut,
         seeds = [b"group", group_config.group_code.as_bytes()],
         bump = group_config.bump,
-        has_one = creator,
         constraint = group_config.status == STATUS_ACTIVE @ SafeNudgeError::InvalidGroupStatus,
     )]
     pub group_config: Account<'info, GroupConfig>,
@@ -263,6 +258,7 @@ impl<'info> Distribute<'info> {
         // ── Effects ─────────────────────────────────────────
 
         ctx.accounts.group_config.status = STATUS_COMPLETED;
+        ctx.accounts.group_config.settled_at = clock.unix_timestamp;
 
         // ── Interactions ────────────────────────────────────
 
@@ -325,12 +321,12 @@ impl<'info> Distribute<'info> {
             }
         }
 
-        // Close vault, return rent to creator (matches emergency_cancel and
-        // ARCHITECTURE.md). distribute is permissionless, so the rent must
-        // not go to the caller.
+        // The vault's rent goes to GroupConfig, not to a wallet, so settlement
+        // credits no address outside the program. distribute is
+        // permissionless: the rent must not go to the caller either.
         let close_cpi = CloseAccount {
             account: ctx.accounts.vault.to_account_info(),
-            destination: ctx.accounts.creator.to_account_info(),
+            destination: ctx.accounts.group_config.to_account_info(),
             authority: ctx.accounts.vault.to_account_info(),
         };
         let close_ctx = CpiContext::new_with_signer(

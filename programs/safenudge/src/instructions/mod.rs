@@ -4,6 +4,7 @@ pub mod distribute;
 pub mod emergency_cancel;
 pub mod init_treasury;
 pub mod join_group;
+pub mod refund_vault_rent;
 pub mod start_cycle;
 pub mod withdraw_fees;
 
@@ -13,5 +14,6 @@ pub use distribute::*;
 pub use emergency_cancel::*;
 pub use init_treasury::*;
 pub use join_group::*;
+pub use refund_vault_rent::*;
 pub use start_cycle::*;
 pub use withdraw_fees::*;

@@ -48,4 +48,6 @@ pub enum SafeNudgeError {
     NoFeesToWithdraw,
     #[msg("Protocol treasury token account for this mint has not been initialized")]
     TreasuryNotInitialized,
+    #[msg("Rent refund destination does not match the recorded rent payer")]
+    InvalidRentPayer,
 }

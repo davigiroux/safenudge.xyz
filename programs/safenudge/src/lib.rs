@@ -143,4 +143,8 @@ pub mod safenudge {
     pub fn init_treasury(ctx: Context<InitTreasury>) -> Result<()> {
         InitTreasury::handler(ctx)
     }
+
+    pub fn refund_vault_rent(ctx: Context<RefundVaultRent>) -> Result<()> {
+        RefundVaultRent::handler(ctx)
+    }
 }

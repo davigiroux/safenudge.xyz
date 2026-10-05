@@ -5,7 +5,7 @@ import { Program } from "@coral-xyz/anchor";
 import BN from "bn.js";
 import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { LiteSVMProvider, fromWorkspace } from "anchor-litesvm";
-import { Clock, FailedTransactionMetadata } from "litesvm";
+import { Clock, FailedTransactionMetadata, Rent } from "litesvm";
 import {
   PublicKey, Keypair, SystemProgram, Transaction, TransactionInstruction, ComputeBudgetProgram,
 } from "@solana/web3.js";
@@ -424,21 +424,56 @@ describe("safenudge", () => {
     return program.methods.distribute()
       .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })])
       .accounts({
-        payer: payer.publicKey, creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+        payer: payer.publicKey, groupConfig: gPda, vault: vPda,
         mint: usdcMint, treasuryTokenAccount: treasuryAta, tokenProgram: TOKEN_PROGRAM_ID,
       })
       .remainingAccounts(memberPairs(members))
       .rpc();
   }
 
-  function cancelCall(gPda: PublicKey, vPda: PublicKey, members: Member[]): Promise<string> {
+  function cancelCall(
+    gPda: PublicKey, vPda: PublicKey, members: Member[], creator: Keypair = payer,
+  ): Promise<string> {
     return program.methods.emergencyCancel()
       .accounts({
-        creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+        creator: creator.publicKey, groupConfig: gPda, vault: vPda,
         mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID,
       })
       .remainingAccounts(memberPairs(members))
+      .signers(walletSigners(creator))
       .rpc();
+  }
+
+  function refundVaultRentMethod(gPda: PublicKey, rentPayer: PublicKey) {
+    return program.methods.refundVaultRent().accounts({ groupConfig: gPda, rentPayer });
+  }
+
+  // Two compliant members, one period, then settled. With a sponsor, the sponsor pays every rent.
+  async function settledGroup(
+    code: string, how: "distribute" | "cancel", sponsor?: Keypair,
+  ): Promise<{ gPda: PublicKey; vPda: PublicKey; members: Member[] }> {
+    const { gPda, vPda } = await createWeeklyGroup(
+      code, { depositAmount: 10_000_000, totalPeriods: 1 }, sponsor ?? payer,
+    );
+    const members = [
+      await joinNewMember(gPda, vPda, 10_000_000, sponsor),
+      await joinNewMember(gPda, vPda, 10_000_000, sponsor),
+    ];
+    if (how === "cancel") {
+      await cancelCall(gPda, vPda, members);
+    } else {
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await distributeCall(gPda, vPda, members, null);
+    }
+    return { gPda, vPda, members };
+  }
+
+  function scaleRentRate(numerator: bigint, denominator: bigint): void {
+    const rent = provider.client.getRent();
+    provider.client.setRent(
+      new Rent((rent.lamportsPerByteYear * numerator) / denominator, rent.exemptionThreshold, rent.burnPercent),
+    );
   }
 
   async function settleGroupWithOneMiss(code: string, penaltyValue: number, treasuryAta: PublicKey): Promise<void> {
@@ -1668,7 +1703,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -1774,7 +1808,6 @@ describe("safenudge", () => {
         .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -1885,7 +1918,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2011,7 +2043,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2117,7 +2148,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2250,7 +2280,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2337,7 +2366,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -2409,7 +2437,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -2477,7 +2504,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -2546,7 +2572,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -2632,7 +2657,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2721,7 +2745,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2798,7 +2821,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2897,7 +2919,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -2920,7 +2941,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -2988,7 +3008,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -3065,7 +3084,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPda,
             vault: vPda,
             mint: usdcMint,
@@ -3148,7 +3166,6 @@ describe("safenudge", () => {
         await program.methods.distribute()
           .accounts({
             payer: payer.publicKey,
-            creator: payer.publicKey,
             groupConfig: gPdaA,
             vault: vPdaA,
             mint: usdcMint,
@@ -3166,6 +3183,35 @@ describe("safenudge", () => {
       } catch (e: any) {
         assert.include(e.message, "InvalidMemberRecord");
       }
+    });
+
+    it("leaves the vault rent in GroupConfig and pays no lamports to the rent payer or the caller", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, vPda } = await createWeeklyGroup(
+        "dist-escrow", { depositAmount: 10_000_000, totalPeriods: 1 }, sponsor,
+      );
+      const members = [
+        await joinNewMember(gPda, vPda, 10_000_000, sponsor),
+        await joinNewMember(gPda, vPda, 10_000_000, sponsor),
+      ];
+      const cycleStart = await startCycle(gPda);
+      const settleTime = cycleStart + BigInt(WEEK_SECS) + 17n;
+      setUnixTime(settleTime);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const callerBefore = lamportsOf(payer.publicKey);
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+
+      await distributeCall(gPda, vPda, members, null);
+
+      assert.isNull(context.banksClient.getAccount(vPda));
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE) + rentFor(ACCOUNT_SIZE));
+      assert.equal(lamportsOf(sponsor.publicKey), sponsorBefore);
+      assert.equal(callerBefore - lamportsOf(payer.publicKey), SIGNATURE_FEE);
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+      assert.equal(group.settledAt.toString(), settleTime.toString());
+      assert.equal(await getTokenBalanceOrZero(members[0].tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(members[1].tokenAccount), 10_000_000n);
     });
   });
 
@@ -3273,7 +3319,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
@@ -3811,6 +3856,180 @@ describe("safenudge", () => {
       assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
       assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_000n);
     });
+
+    it("leaves the vault rent in GroupConfig and pays the creator nothing", async () => {
+      const creator = await fundedKeypair();
+      await createGroupCall("cancel-escrow", { depositAmount: 10_000_000 }, creator);
+      const [gPda] = getGroupPda("cancel-escrow");
+      const [vPda] = getVaultPda(gPda);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      const creatorBefore = lamportsOf(creator.publicKey);
+      const cancelTime = context.banksClient.getClock().unixTimestamp + 99n;
+      setUnixTime(cancelTime);
+
+      await cancelCall(gPda, vPda, [member], creator);
+
+      assert.isNull(context.banksClient.getAccount(vPda));
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE) + rentFor(ACCOUNT_SIZE));
+      assert.equal(lamportsOf(creator.publicKey), creatorBefore);
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 3);
+      assert.equal(group.settledAt.toString(), cancelTime.toString());
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+    });
+
+    it("create-then-cancel moves no lamports from the rent payer to the creator", async () => {
+      const creator = Keypair.generate();
+      const sponsor = await fundedKeypair();
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+      for (const code of ["drain-1", "drain-2", "drain-3"]) {
+        await createGroupCall(code, { depositAmount: 10_000_000 }, creator, sponsor);
+        const [gPda] = getGroupPda(code);
+        await cancelCall(gPda, getVaultPda(gPda)[0], [], creator);
+        assert.equal(lamportsOf(creator.publicKey), 0n, `creator gained lamports from ${code}`);
+
+        await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+        assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+      }
+
+      assert.equal(lamportsOf(creator.publicKey), 0n);
+      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), 3n * rentFor(GROUP_CONFIG_SIZE));
+    });
+  });
+
+  // ─── refund_vault_rent tests ──────────────────────────────
+
+  describe("refund_vault_rent", () => {
+    for (const how of ["distribute", "cancel"] as const) {
+      it(`pays the vault rent to the recorded rent payer after ${how}`, async () => {
+        const sponsor = await fundedKeypair();
+        const stranger = await fundedKeypair();
+        const { gPda } = await settledGroup(`refund-${how}`, how, sponsor);
+        const sponsorBefore = lamportsOf(sponsor.publicKey);
+        const strangerBefore = lamportsOf(stranger.publicKey);
+        const dataBefore = Buffer.from(context.banksClient.getAccount(gPda).data);
+
+        sendAs(stranger, [await refundVaultRentMethod(gPda, sponsor.publicKey).instruction()]);
+
+        assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(ACCOUNT_SIZE));
+        assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+        assert.equal(strangerBefore - lamportsOf(stranger.publicKey), SIGNATURE_FEE);
+        assert.deepEqual(Buffer.from(context.banksClient.getAccount(gPda).data), dataBefore);
+      });
+    }
+
+    it("succeeds and moves nothing on a second call", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await settledGroup("refund-twice", "distribute", sponsor);
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+      const sponsorAfterFirst = lamportsOf(sponsor.publicKey);
+
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+
+      assert.equal(lamportsOf(sponsor.publicKey), sponsorAfterFirst);
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+    });
+
+    it("pays lamports donated to GroupConfig after settlement to the rent payer", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await settledGroup("refund-donation", "distribute", sponsor);
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: gPda, lamports: 1_000_000 }),
+        ),
+        [payer],
+      );
+
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 1_000_000n);
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+    });
+
+    it("re-creates a rent payer account that holds zero lamports", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await settledGroup("refund-empty-payer", "cancel", sponsor);
+      const everything = lamportsOf(sponsor.publicKey) - SIGNATURE_FEE;
+      sendAs(sponsor, [
+        SystemProgram.transfer({ fromPubkey: sponsor.publicKey, toPubkey: payer.publicKey, lamports: everything }),
+      ]);
+      assert.isNull(context.banksClient.getAccount(sponsor.publicKey));
+
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+
+      const account = context.banksClient.getAccount(sponsor.publicKey);
+      assert.equal(BigInt(account.lamports), rentFor(ACCOUNT_SIZE));
+      assert.equal(account.owner.toBase58(), SystemProgram.programId.toBase58());
+    });
+
+    it("fails while the group is Open", async () => {
+      const { gPda } = await createWeeklyGroup("refund-open", { depositAmount: 10_000_000 });
+
+      await expectError(refundVaultRentMethod(gPda, payer.publicKey).rpc(), "InvalidGroupStatus");
+    });
+
+    it("fails while the group is Active and leaves the vault open", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("refund-active", { depositAmount: 10_000_000 });
+      await joinNewMember(gPda, vPda, 10_000_000);
+      await joinNewMember(gPda, vPda, 10_000_000);
+      await startCycle(gPda);
+
+      await expectError(refundVaultRentMethod(gPda, payer.publicKey).rpc(), "InvalidGroupStatus");
+
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+    });
+
+    it("fails when the destination is not the recorded rent payer", async () => {
+      const sponsor = await fundedKeypair();
+      const attacker = await fundedKeypair();
+      const { gPda } = await settledGroup("refund-redirect", "distribute", sponsor);
+      const attackerBefore = lamportsOf(attacker.publicKey);
+
+      await expectError(refundVaultRentMethod(gPda, attacker.publicKey).rpc(), "InvalidRentPayer");
+      await expectError(refundVaultRentMethod(gPda, payer.publicKey).rpc(), "InvalidRentPayer");
+
+      assert.equal(lamportsOf(attacker.publicKey), attackerBefore);
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE) + rentFor(ACCOUNT_SIZE));
+    });
+
+    it("checks the group status before the rent payer", async () => {
+      const { gPda } = await createWeeklyGroup("refund-order", { depositAmount: 10_000_000 });
+      const attacker = await fundedKeypair();
+
+      await expectError(refundVaultRentMethod(gPda, attacker.publicKey).rpc(), "InvalidGroupStatus");
+    });
+
+    it("succeeds and moves nothing when the rent rate rose above the balance", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await settledGroup("refund-rate-up", "distribute", sponsor);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const groupBefore = lamportsOf(gPda);
+      scaleRentRate(3n, 1n);
+      assert.isAbove(Number(rentFor(GROUP_CONFIG_SIZE)), Number(groupBefore));
+
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+
+      assert.equal(lamportsOf(sponsor.publicKey), sponsorBefore);
+      assert.equal(lamportsOf(gPda), groupBefore);
+    });
+
+    it("pays everything above the current floor when the rent rate fell", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await settledGroup("refund-rate-down", "distribute", sponsor);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const groupBefore = lamportsOf(gPda);
+      scaleRentRate(1n, 2n);
+      const lowerFloor = rentFor(GROUP_CONFIG_SIZE);
+
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+
+      assert.equal(lamportsOf(gPda), lowerFloor);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, groupBefore - lowerFloor);
+    });
   });
 
   // ─── integration tests ────────────────────────────────────
@@ -3984,7 +4203,6 @@ describe("safenudge", () => {
       await program.methods.distribute()
         .accounts({
           payer: payer.publicKey,
-          creator: payer.publicKey,
           groupConfig: gPda,
           vault: vPda,
           mint: usdcMint,
