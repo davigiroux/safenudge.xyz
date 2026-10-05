@@ -1,4 +1,12 @@
-import type { Connection, PublicKey, Transaction, TransactionError } from '@solana/web3.js'
+import {
+  VersionedTransaction,
+  type Connection,
+  type PublicKey,
+  type Transaction,
+  type TransactionError,
+} from '@solana/web3.js'
+import { payerAddress, sessionPayer } from './payer'
+import { RelayError } from './relay'
 import { TxConfirmError } from './txErrors'
 
 export type TxStages = {
@@ -20,6 +28,21 @@ export type ProgramLike = {
   }
 }
 
+/** Throws what the cluster answers to `tx`, so a sponsored transaction that cannot succeed never reaches the wallet. */
+async function preflight(connection: Connection, tx: Transaction): Promise<void> {
+  const { value } = await connection.simulateTransaction(new VersionedTransaction(tx.compileMessage()), {
+    sigVerify: false,
+    replaceRecentBlockhash: true,
+  })
+  if (!value.err) return
+  const detail = [JSON.stringify(value.err), ...(value.logs ?? [])].join('\n')
+  // The relay pays every lamport of a sponsored transaction, so a lamport shortfall is the relay's.
+  if (/insufficient lamports|InsufficientFundsFor|AccountNotFound/.test(detail)) {
+    throw new RelayError('relayUnavailable', detail)
+  }
+  throw new Error(`Simulation failed: ${detail}`)
+}
+
 /**
  * Splits an Anchor methods-builder call into two awaitable phases so the UI
  * can render distinct `signing` and `confirming` states. `.rpc()` bundles
@@ -28,9 +51,12 @@ export type ProgramLike = {
  *
  * The send phase resolves once the network has accepted the signed tx; the
  * confirm phase resolves once the cluster reaches the provider's commitment.
+ *
+ * `build` receives the account that pays fees and rent: the wallet, or the
+ * relay when one is configured. With a relay the wallet only signs.
  */
 export function runMethod(
-  builder: MethodBuilder,
+  build: (payer: PublicKey) => MethodBuilder,
   program: ProgramLike,
 ): TxStages {
   const provider = program.provider
@@ -42,13 +68,24 @@ export function runMethod(
 
   return {
     send: async () => {
-      const tx = await builder.transaction()
-      const bh = await provider.connection.getLatestBlockhash()
-      blockhashCtx = bh
-      tx.recentBlockhash = bh.blockhash
-      tx.feePayer = wallet.publicKey
-      const signed = await wallet.signTransaction(tx)
-      return await provider.connection.sendRawTransaction(signed.serialize())
+      const payer = await sessionPayer()
+      const feePayer = payerAddress(payer, wallet.publicKey)
+      const tx = await build(feePayer).transaction()
+      tx.feePayer = feePayer
+
+      if (payer.kind === 'wallet') {
+        blockhashCtx = await provider.connection.getLatestBlockhash()
+        tx.recentBlockhash = blockhashCtx.blockhash
+        const signed = await wallet.signTransaction(tx)
+        return await provider.connection.sendRawTransaction(signed.serialize())
+      }
+
+      // The relay's blockhash comes without an expiry height, so the cluster's own bounds the confirm wait.
+      const [latest, blockhash] = await Promise.all([provider.connection.getLatestBlockhash(), payer.blockhash()])
+      blockhashCtx = { ...latest, blockhash }
+      tx.recentBlockhash = blockhash
+      await preflight(provider.connection, tx)
+      return await payer.signAndSend(await wallet.signTransaction(tx), wallet.publicKey)
     },
     confirm: async (sig: string) => {
       if (!blockhashCtx) throw new Error('runMethod.confirm called before send')

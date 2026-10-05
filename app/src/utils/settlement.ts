@@ -13,8 +13,8 @@ import {
 import { runMethod, type ProgramLike, type TxStages } from './runMethod'
 
 const MAX_TRANSACTION_BYTES = 1232
-/** One signature plus the one-byte signature count. */
-const SINGLE_SIGNER_BYTES = 65
+const SIGNATURE_BYTES = 64
+const SIGNATURE_COUNT_BYTES = 1
 
 type SettlementMember = { member: string; pda: string }
 
@@ -55,11 +55,13 @@ function fitsInOneTransaction(instructions: TransactionInstruction[], feePayer: 
   const tx = new Transaction().add(...instructions)
   tx.feePayer = feePayer
   tx.recentBlockhash = PublicKey.default.toBase58()
-  return tx.serializeMessage().length + SINGLE_SIGNER_BYTES <= MAX_TRANSACTION_BYTES
+  const message = tx.compileMessage()
+  const signatureBytes = SIGNATURE_COUNT_BYTES + SIGNATURE_BYTES * message.header.numRequiredSignatures
+  return message.serialize().length + signatureBytes <= MAX_TRANSACTION_BYTES
 }
 
 async function sendInOwnTransaction(instructions: TransactionInstruction[], program: ProgramLike): Promise<void> {
-  const stages = runMethod({ transaction: async () => new Transaction().add(...instructions) }, program)
+  const stages = runMethod(() => ({ transaction: async () => new Transaction().add(...instructions) }), program)
   await stages.confirm(await stages.send())
 }
 
@@ -84,13 +86,9 @@ export function settlementStages(
   members: SettlementMember[],
   mint: PublicKey,
 ): TxStages {
-  const { connection, wallet } = program.provider
-  if (!wallet) {
-    throw new Error('settlementStages requires a provider with a connected wallet')
-  }
-  const payer = wallet.publicKey
+  const { connection } = program.provider
 
-  const settlementTransaction = async () => {
+  const settlementTransaction = async (payer: PublicKey) => {
     const [creates, settleIx, refundIx] = await Promise.all([
       missingTokenAccountCreates(connection, payer, members, mint),
       settle.instruction(),
@@ -105,5 +103,5 @@ export function settlementStages(
     return new Transaction().add(...settleAndRefund)
   }
 
-  return runMethod({ transaction: settlementTransaction }, program)
+  return runMethod((payer) => ({ transaction: () => settlementTransaction(payer) }), program)
 }
