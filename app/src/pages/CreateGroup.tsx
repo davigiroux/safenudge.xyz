@@ -81,7 +81,7 @@ export default function CreateGroup() {
 
     const sig = await execute(
       runMethod(
-        program.methods
+        (payer) => program.methods
           .createGroup(
             params.groupCode,
             new BN(params.depositBaseUnits),
@@ -93,7 +93,7 @@ export default function CreateGroup() {
           )
           .accountsPartial({
             creator: publicKey,
-            rentPayer: publicKey,
+            rentPayer: payer,
             groupConfig: groupConfigPda,
             vault: vaultPda,
             mint: usdcMint,

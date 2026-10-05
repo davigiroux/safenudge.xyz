@@ -6,6 +6,7 @@
 
 import type { TransactionError } from '@solana/web3.js'
 import idl from '../idl/safenudge.json'
+import { RelayError, type RelayErrorKind } from './relay'
 
 const ANCHOR_ACCOUNT_NOT_INITIALIZED = 3012
 
@@ -38,6 +39,7 @@ export type TxErrorKind =
   | 'userRejected'
   | 'simulationFailed'
   | 'programError'
+  | RelayErrorKind
   | 'unknown'
 
 export type ClassifiedTxError = {
@@ -64,6 +66,8 @@ export function classifyTxError(err: unknown): ClassifiedTxError {
     const programCode = code === undefined ? undefined : PROGRAM_ERROR_NAMES.get(code)
     return programCode ? { kind: 'programError', programCode } : { kind: 'unknown' }
   }
+
+  if (err instanceof RelayError) return { kind: err.kind }
 
   const raw = extractMessage(err)
 

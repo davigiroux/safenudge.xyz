@@ -253,7 +253,7 @@
         "points": [
           { "title": "Everyone in the same moment", "body": "It's not a rotating caixinha. Each person receives the total they deposited plus their share of the group's accumulated penalty bonus." },
           { "title": "Instant", "body": "The transaction happens in seconds on Solana. No business days, no clearing, no manual release — just the contract executing." },
-          { "title": "Almost everything goes back to people who showed up", "body": "You get your full deposit back. The only deductions are Solana network fees (fractions of a cent) and the 5% protocol fee on the penalty pool — the other 95% of penalties becomes a bonus for compliant members." },
+          { "title": "Almost everything goes back to people who showed up", "body": "You get your full deposit back. The only deduction is the 5% protocol fee on the penalty pool — the other 95% of penalties becomes a bonus for compliant members. Solana network fees are fractions of a cent, and when SafeNudge doesn't cover them for you, they come out of your wallet." },
           { "title": "And it cycles again", "body": "At cycle end, the group decides: run again with the same crew, change the amount, or wrap. It's a caixinha, not a prison." }
         ]
       }
@@ -272,7 +272,7 @@
     "faq": [
       { "q": "Do I have to trust everyone in the group?", "a": "You need to trust the vault. The escrow and automatic rules cover the moments when human trust fails — because it does sometimes." },
       { "q": "Who holds the money while it waits?", "a": "The contract. Not SafeNudge, not the group creator, not a partner bank. The balance is visible on-chain the whole time." },
-      { "q": "Are there fees?", "a": "Not on your deposit. SafeNudge takes 5% of the penalty pool — only on what gets deducted from latecomers. The other 95% becomes a bonus for members who followed through. If nobody is late in a cycle, we don't charge anything. You still pay Solana network fees, which are fractions of a cent per transaction." },
+      { "q": "Are there fees?", "a": "Not on your deposit. SafeNudge takes 5% of the penalty pool — only on what gets deducted from latecomers. The other 95% becomes a bonus for members who followed through. If nobody is late in a cycle, we don't charge anything. Solana network fees are fractions of a cent per transaction. When SafeNudge doesn't cover them for you, they come out of your wallet." },
       { "q": "Can I leave mid-cycle?", "a": "Before the cycle starts, yes: you leave the group and get your deposit back. Once the cycle starts, you can't leave. Deposits stay in the vault until the end, and each deposit you miss is penalized at the final settlement." },
       { "q": "What if SafeNudge goes out of business?", "a": "The vault keeps working. It's an open contract on the blockchain — you can recover everything directly, even without the app. We make things easier, but we don't lock you in." },
       { "q": "Does the money earn yield while it waits?", "a": "If the group wants, yes — there's a stablecoin yield option with treasury-rate returns. Opt-in, with a visible button to turn it off." }
@@ -417,6 +417,8 @@
     "insufficientBalance": "Insufficient balance for this operation",
     "userRejected": "You cancelled the signature.",
     "simulationFailed": "Simulation failed. Check your connection.",
+    "relayUnavailable": "The service that covers network fees is down. Try again in a few minutes.",
+    "relayRefused": "We couldn't cover the fees for this action. Try again later or get in touch.",
     "unknown": "Something went wrong. Try again in a few seconds.",
     "programError": {
       "InvalidGroupStatus": "The group isn't in the right stage for this action. Check whether the cycle has started.",

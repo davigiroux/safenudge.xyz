@@ -292,7 +292,7 @@ export default function GroupDashboard() {
 
     const sig = await execute(
       runMethod(
-        program.methods
+        () => program.methods
           .deposit()
           .accountsPartial({
             member: publicKey,
@@ -338,7 +338,7 @@ export default function GroupDashboard() {
 
     const sig = await execute(
       runMethod(
-        program.methods
+        () => program.methods
           .startCycle()
           .accountsPartial({
             creator: publicKey,
@@ -476,7 +476,7 @@ export default function GroupDashboard() {
 
     const sig = await execute(
       runMethod(
-        program.methods
+        (payer) => program.methods
           .leaveGroup()
           .accountsPartial({
             member: publicKey,
@@ -489,7 +489,7 @@ export default function GroupDashboard() {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .preInstructions([
-            createAssociatedTokenAccountIdempotentInstruction(publicKey, memberAta, publicKey, usdcMint),
+            createAssociatedTokenAccountIdempotentInstruction(payer, memberAta, publicKey, usdcMint),
           ]),
         program,
       ),
