@@ -94,9 +94,9 @@ The original sizing was 18–25 hours total. Numbers below are the original sizi
 14. ✅ Create Group page — form, validation, instruction call
 15. ✅ Join Group page — group preview, join + deposit flow
 16. ✅ Group Dashboard — actions wired, member list shows live on-chain members via useGroupMembers
-17. ⚠️ Ramp integration — placeholder `alert()` only (issue #11 M4)
+17. ⚠️ Ramp integration — disabled placeholder button in `JoinGroup.tsx` only (issue #11 M4)
 18. ✅ i18n setup — PT-BR + EN translations
-19. ⚠️ Misleading 12% yield projection in CreateGroup (issue #11 M11)
+19. ✅ Misleading 12% yield projection removed; CreateGroup has no yield code (issue #11 M11)
 
 ### Phase 4 — Polish & Deploy · ⚠️ partial
 
@@ -128,7 +128,7 @@ Cross-references for everything currently in flight:
 | Mainnet `FEE_RECIPIENT` + multisig + cluster-gated `declare_id!` | open | issue #20 |
 | Downstream consumer: SafePool (private repo) reuses this program unchanged; its mainnet cutover rides on the same issue | open | issue #20 |
 | Upgrade authority → 2-of-3 Squads multisig, `--final` deferred (devnet rehearsal, then mainnet) | decided, not executed | [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md), issue #20 |
-| Weekly review automation (rolling findings) | ongoing | issues labelled `review` (latest #46) |
+| Weekly review automation (rolling findings) | last run 2026-07-26 | issues labelled `review` (latest #50) |
 
 When a PR merges, the corresponding row should reflect `shipped` — keeping this table short and high-signal beats letting it grow into a changelog.
 

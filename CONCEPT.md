@@ -129,7 +129,7 @@ The UI defaults to Portuguese (PT-BR) with an English toggle. All user-facing co
 
 ### MVP (May 2026)
 - Anchor program: create group, join, deposit, distribute, emergency cancel
-- React frontend with wallet-adapter (Phantom/Backpack)
+- React frontend with wallet-adapter (Phantom/Solflare)
 - Ramp Network widget for Pix-to-USDC on-ramp
 - PT-BR/EN bilingual UI
 - Devnet deployment
