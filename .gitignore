@@ -20,3 +20,6 @@ keys/
 .claude/skills/
 skills-lock.json
 .humanlayer/
+
+# Surfpool local fork logs
+.surfpool/
