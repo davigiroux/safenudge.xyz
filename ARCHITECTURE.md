@@ -7,8 +7,8 @@ SafeNudge is a Solana program (smart contract) with a React/TypeScript frontend.
 **Stack:**
 - Program: Rust / Anchor framework
 - Frontend: React / TypeScript / Vite
-- Wallet: @solana/wallet-adapter (Phantom, Backpack)
-- On-ramp: Ramp Network SDK (@ramp-network/ramp-instant-sdk)
+- Wallet: @solana/wallet-adapter (Phantom, Solflare)
+- On-ramp: Ramp Network SDK (@ramp-network/ramp-instant-sdk), planned and not yet a dependency of `app/`
 - Token: USDC (SPL Token) on Solana devnet
 - Hosting: Vercel
 - Deployment target: Solana devnet
@@ -29,6 +29,8 @@ Stores the group's parameters and state. Created once per group.
 #[account]
 #[derive(InitSpace)]
 pub struct GroupConfig {
+    #[max_len(32)]
+    pub group_code: String,        // 4 + 32 — group code, used as PDA seed
     pub creator: Pubkey,           // 32 — group creator, can start cycle / emergency cancel
     pub mint: Pubkey,              // 32 — USDC mint address
     pub deposit_amount: u64,       // 8  — fixed deposit per period (in token smallest unit)
@@ -40,11 +42,10 @@ pub struct GroupConfig {
     pub penalty_value: u64,        // 8  — fixed amount in token units, or basis points (e.g., 500 = 5%)
     pub status: u8,                // 1  — 0 = open, 1 = active, 2 = completed, 3 = cancelled
     pub cycle_start: i64,          // 8  — Unix timestamp when creator started the cycle
-    pub current_period: u8,        // 1  — current period number (0-indexed)
     pub bump: u8,                  // 1  — PDA bump
 }
 // Seeds: [b"group", group_code.as_bytes()]
-// Space: 8 (discriminator) + 32 + 32 + 8 + 1 + 1 + 1 + 1 + 1 + 8 + 1 + 8 + 1 + 1 = 104
+// Space: 8 (discriminator) + (4 + 32) + 32 + 32 + 8 + 1 + 1 + 1 + 1 + 1 + 8 + 1 + 8 + 1 = 139
 ```
 
 #### MemberRecord
@@ -60,11 +61,10 @@ pub struct MemberRecord {
     pub total_deposited: u64,      // 8  — total tokens deposited
     pub deposits_made: u8,         // 1  — number of on-time deposits (including initial)
     pub periods_deposited: [bool; 52], // 52 — bitmap of which periods were deposited (max 52 weeks)
-    pub has_claimed: bool,         // 1  — whether member has claimed distribution
     pub bump: u8,                  // 1  — PDA bump
 }
 // Seeds: [b"member", group_config.key().as_ref(), member.key().as_ref()]
-// Space: 8 + 32 + 32 + 8 + 1 + 52 + 1 + 1 = 135
+// Space: 8 (discriminator) + 32 + 32 + 8 + 1 + 52 + 1 = 134
 ```
 
 #### GroupVault
@@ -105,7 +105,6 @@ Creates a new savings group.
 - `vault` (init) — PDA-owned token account for USDC
 - `mint` — USDC mint
 - `token_program` — SPL Token program
-- `associated_token_program`
 - `system_program`
 
 **Args:**
@@ -180,7 +179,6 @@ Creator locks the group and begins the deposit cycle.
 **Effects:**
 - Sets `group_config.status = Active (1)`
 - Sets `group_config.cycle_start = Clock::get().unix_timestamp`
-- Sets `group_config.current_period = 0` (first period started when members joined)
 
 ---
 
@@ -289,13 +287,17 @@ if compliant_count > 0:
 transfer_checked(vault -> treasury_token_account, protocol_fee)
 
 for each member:
-    payout = member_payout
-    if member.deposits_made == total_periods:
-        payout += bonus_per_compliant
+    if compliant_count == 0:
+        payout = member.total_deposited   // full refund, no penalties
+    else:
+        payout = member_payout
+        if member.deposits_made == total_periods:
+            payout += bonus_per_compliant
+    // The last member in remaining-accounts order gets the vault balance
+    // (vault.reload()) in place of `payout`. See "Frontrunning distribution".
     
     // Transfer payout from vault to member via CPI with PDA signer seeds
     transfer_checked(vault -> member_token_account, payout)
-    member.has_claimed = true
 ```
 
 **Effects:**
@@ -334,7 +336,7 @@ The same canonical-PDA + ATA-owner + uniqueness validations as `distribute` appl
 
 #### 7. `withdraw_fees`
 
-Drains the protocol treasury to the configured `FEE_RECIPIENT`. Permissionless to call signature-wise — the constraint is the recipient's pubkey.
+Drains the protocol treasury to the configured `FEE_RECIPIENT`. Only `FEE_RECIPIENT` can call it, because the `recipient` signer must equal that compile-time key.
 
 **Accounts:**
 - `recipient` (signer) — must equal compile-time `FEE_RECIPIENT`
@@ -409,7 +411,11 @@ let protocol_fee = if compliant_count == 0 || !fee_recipient_configured() {
     total_penalties.checked_mul(PROTOCOL_FEE_BPS)?.checked_div(10_000)?
 };
 let redistributable = total_penalties.checked_sub(protocol_fee)?;
-let bonus_per_compliant = redistributable.checked_div(compliant_count)?;
+let bonus_per_compliant = if compliant_count > 0 {
+    redistributable.checked_div(compliant_count)?
+} else {
+    0
+};
 ```
 
 The fee CPI runs **before** any member-payout CPIs so the "last member gets vault remainder" dust path naturally sees the post-fee balance via `vault.reload()`.
@@ -459,8 +465,6 @@ pub enum SafeNudgeError {
     UnauthorizedCreator,
     #[msg("Group needs at least 2 members to start")]
     InsufficientMembers,
-    #[msg("Recipient is not the configured FEE_RECIPIENT")]
-    UnauthorizedRecipient,
     #[msg("Cycle has not ended yet")]
     CycleNotEnded,
     #[msg("Already deposited for this period")]
@@ -493,6 +497,8 @@ pub enum SafeNudgeError {
     InvalidTokenAccountOwner,
     #[msg("The same member record was passed more than once")]
     DuplicateMemberRecord,
+    #[msg("Recipient is not the configured FEE_RECIPIENT")]
+    UnauthorizedRecipient,
     #[msg("Treasury has no fees to withdraw")]
     NoFeesToWithdraw,
     #[msg("Protocol treasury token account for this mint has not been initialized")]
@@ -506,11 +512,11 @@ pub enum SafeNudgeError {
 
 ### Tech Stack
 
-- React 18 + TypeScript
+- React 19 + TypeScript
 - Vite (build tool)
 - @solana/wallet-adapter-react + @solana/wallet-adapter-react-ui
 - @coral-xyz/anchor (program client)
-- @ramp-network/ramp-instant-sdk (Pix on-ramp)
+- @ramp-network/ramp-instant-sdk (Pix on-ramp, planned)
 - Tailwind CSS
 - i18next (PT-BR / EN localization)
 
@@ -527,7 +533,7 @@ pub enum SafeNudgeError {
 - Preview card showing the full cycle summary
 - "Create" button (triggers `create_group` instruction)
 
-**Group Dashboard** (`/group/:code`)
+**Group Dashboard** (`/grupo/:code`)
 - Group info card: parameters, status, member count
 - Member list with deposit streaks (green/red per period)
 - Current period indicator and countdown to next deadline
@@ -537,12 +543,14 @@ pub enum SafeNudgeError {
 - "Add Funds" button (opens Ramp widget for Pix on-ramp)
 - Distribution summary (if cycle completed)
 
-**Join Group** (`/join/:code`)
+**Join Group** (`/entrar/:code`)
 - Group preview (parameters, current members)
 - "Join & Deposit" button (triggers `join_group`)
 - If wallet has insufficient USDC, prompt Ramp widget first
 
 ### Ramp Network Integration
+
+Not wired yet. `JoinGroup.tsx` shows a disabled "coming soon" button, and `app/package.json` does not list the SDK. The planned call:
 
 ```typescript
 import { RampInstantSDK } from '@ramp-network/ramp-instant-sdk';
@@ -565,11 +573,9 @@ const openRamp = (walletAddress: string) => {
 
 ### Localization
 
-i18next with two namespaces:
-- `common` — shared UI strings (buttons, labels, errors)
-- `groups` — group-specific copy (creation form labels, status messages, penalty explanations)
+i18next with one namespace (`translation`), loaded from `app/src/i18n/pt-BR.json` and `app/src/i18n/en.json`. Keys are grouped by prefix (`common.`, `joinGroup.`, and so on).
 
-Default locale: `pt-BR`. Fallback: `en`. Language toggle in the header.
+Default locale: `pt-BR`. Fallback: `pt-BR`. Language toggle in the header.
 
 All user-facing strings go through `t()`. No hardcoded Portuguese or English in components.
 
@@ -629,7 +635,7 @@ The vault token account is architecturally ready for this. The PDA authority can
 ### Devnet
 
 ```
-anchor build
+anchor build -- --features devnet
 anchor deploy --provider.cluster devnet
 ```
 
@@ -670,13 +676,17 @@ safenudge/
 │           │   ├── start_cycle.rs
 │           │   ├── deposit.rs
 │           │   ├── distribute.rs
-│           │   └── emergency_cancel.rs
+│           │   ├── emergency_cancel.rs
+│           │   ├── withdraw_fees.rs
+│           │   └── init_treasury.rs
 │           ├── state/
 │           │   ├── mod.rs
 │           │   ├── group_config.rs
-│           │   └── member_record.rs
+│           │   ├── member_record.rs
+│           │   └── member_validation.rs   # shared remaining-accounts check
 │           └── errors.rs
 ├── tests/
+│   ├── fixtures/                   # test-only FEE_RECIPIENT keypair (public)
 │   └── safenudge.ts                # Anchor integration tests
 ├── app/                            # React frontend
 │   ├── src/
@@ -684,8 +694,8 @@ safenudge/
 │   │   ├── pages/
 │   │   ├── hooks/
 │   │   ├── i18n/
-│   │   │   ├── pt-BR/
-│   │   │   └── en/
+│   │   │   ├── pt-BR.json
+│   │   │   └── en.json
 │   │   ├── utils/
 │   │   └── idl/                    # Auto-generated from anchor build
 │   ├── package.json
@@ -709,12 +719,12 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Threat | Mitigation |
 |--------|------------|
 | Admin key compromise (Drift-style) | No admin keys. No upgrade authority. Creator can only emergency_cancel (returns funds to members, never to an arbitrary address). |
-| Vault drain via unauthorized transfer | Vault authority is a PDA. Only the program can sign transfers. All transfer destinations are validated MemberRecord PDAs. |
+| Vault drain via unauthorized transfer | Vault authority is a PDA. Only the program can sign transfers. Every vault transfer goes to a token account owned by the wallet in a validated MemberRecord PDA, or to the canonical treasury ATA. |
 | Token confusion (deposit wrong token) | `transfer_checked` validates mint and decimals at CPI level. GroupConfig stores expected mint; all instructions verify against it. |
 | Penalty manipulation (overpay/underpay) | Penalty math uses checked arithmetic. Penalty capped at `total_deposited`. Distribution verified: sum of payouts equals vault balance. |
 | State machine bypass | Status enum enforces one-directional transitions. Every instruction validates current status as first check. |
-| Fake member injection | MemberRecord PDA derived from `[group_config_key, member_key]`. Anchor's `init` constraint prevents duplicates. `has_one` validates group membership. |
-| Frontrunning distribution | Distribution is permissionless and deterministic. Calling it first vs last produces identical results. No MEV opportunity. |
+| Fake member injection | MemberRecord PDA derived from `["member", group_config_key, member_key]`. Anchor's `init` constraint prevents duplicates. `deposit` checks `member_record.group` and the seeds; `distribute` and `emergency_cancel` run `validate_member_pair` (program owner, group, canonical PDA, no duplicates). |
+| Frontrunning distribution | Distribution is permissionless, and every computed payout depends only on on-chain state. The caller does choose the order of the remaining-account pairs, and the last-listed member gets the vault balance in place of a computed payout. In `distribute` that balance exceeds the computed payout by `redistributable % compliant_count`, at most `compliant_count - 1` base units: 9 in a 10-member group (0.000009 USDC at 6 decimals). In `emergency_cancel` the computed refunds sum to the vault balance, so the excess is 0. In both, tokens that someone transfers into the vault outside the program also go to the last-listed member. |
 | Durable nonce pre-signing | No time-sensitive admin actions. `start_cycle` captures `Clock::get()` at execution time, not from arguments. Period calculation uses on-chain clock. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 
@@ -726,8 +736,10 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | `join_group` | Anyone (becomes member) | Member -> Vault | Open | Group not full, valid mint |
 | `start_cycle` | Creator only | None | Open | `creator == signer`, members >= 2 |
 | `deposit` | Members only | Member -> Vault | Active | Valid MemberRecord, correct period, not already deposited |
-| `distribute` | Anyone | Vault -> All Members | Active (cycle ended) | All member records present, cycle time elapsed |
-| `emergency_cancel` | Creator only | Vault -> All Members (pro-rata) | Open or Active | `creator == signer` |
+| `distribute` | Anyone | Vault -> All Members + Treasury | Active (cycle ended) | All member records present, cycle time elapsed |
+| `emergency_cancel` | Creator only | Vault -> All Members (each gets `total_deposited` back) | Open or Active | `creator == signer` |
+| `withdraw_fees` | `FEE_RECIPIENT` only | Treasury -> Recipient | N/A (no group) | `recipient == FEE_RECIPIENT`, treasury balance > 0 |
+| `init_treasury` | `FEE_RECIPIENT` only | None (signer pays ATA rent) | N/A (no group) | `fee_recipient == FEE_RECIPIENT` |
 
 ### Program Constraints Template
 
@@ -774,9 +786,9 @@ pub struct ExampleInstruction<'info> {
     #[account(
         constraint = mint.key() == group_config.mint @ SafeNudgeError::InvalidMint,
     )]
-    pub mint: Account<'info, Mint>,
+    pub mint: InterfaceAccount<'info, Mint>,
     
-    pub token_program: Program<'info, Token>,
+    pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
 }
 ```

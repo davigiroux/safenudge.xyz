@@ -74,7 +74,7 @@ Penalties are the behavioural core. They're configurable per group as either a *
 
 ```mermaid
 flowchart LR
-    User([User]) --> Wallet[Phantom / Backpack]
+    User([User]) --> Wallet[Phantom / Solflare]
     Wallet --> Frontend[React + Vite frontend<br/>safenudge.xyz]
     Frontend -->|Anchor client| Program[SafeNudge program<br/>Solana devnet]
     Frontend -.->|Pix → USDC| Ramp[Ramp Network widget]
@@ -122,7 +122,7 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | Program | Rust + Anchor | Anchor 1.0.2, `overflow-checks = true` in release profile |
 | Token | USDC (SPL Token) | Devnet mint configurable via `VITE_USDC_MINT` |
 | Frontend | React + TypeScript + Vite | Strict TS, Tailwind, react-router-dom |
-| Wallet | `@solana/wallet-adapter-react` | Phantom + Backpack |
+| Wallet | `@solana/wallet-adapter-react` | Phantom + Solflare |
 | Anchor client | `@coral-xyz/anchor` | 0.32.x in workspace |
 | Localisation | `i18next` + `react-i18next` | PT-BR default, EN fallback |
 | On-ramp | `@ramp-network/ramp-instant-sdk` | Pix → USDC, in progress |
