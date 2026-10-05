@@ -17,12 +17,14 @@ import { formatPercentBps, formatTokenAmount } from '../utils/formatToken'
 import { parseGroupCode } from '../utils/groupCode'
 import { readJoinFunds, type JoinFunds } from '../utils/joinFunds'
 import { USDC_MINT } from '../utils/constants'
+import type { FrequencyName } from '../utils/frequency'
 import { bucketAmount, hashId, track } from '../utils/analytics'
 
-const FREQUENCY_LABELS: Record<string, string> = {
+const FREQUENCY_LABELS: Record<FrequencyName, string> = {
   weekly: 'createGroup.weekly',
   biweekly: 'createGroup.biweekly',
   monthly: 'createGroup.monthly',
+  fiveMinutes: 'createGroup.fiveMinutes',
 }
 
 export default function JoinGroup() {
@@ -212,7 +214,7 @@ export default function JoinGroup() {
             />
             <StatRow
               label={t('createGroup.frequency')}
-              value={t(FREQUENCY_LABELS[group.frequency] || group.frequency)}
+              value={t(FREQUENCY_LABELS[group.frequency])}
             />
             <StatRow
               label={t('joinGroup.penalty')}
