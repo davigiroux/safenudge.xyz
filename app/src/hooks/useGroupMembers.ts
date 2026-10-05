@@ -25,8 +25,6 @@ type RawMemberRecord = {
 
 /**
  * Fetch every MemberRecord whose `group` field matches the given group_code.
- *
- * Uses a `memcmp` filter on `MemberRecord.group`.
  */
 export function useGroupMembers(groupCode: string | undefined) {
   const program = useAnchorProgram()

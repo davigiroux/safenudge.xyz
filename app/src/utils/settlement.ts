@@ -65,10 +65,8 @@ async function sendInOwnTransaction(instructions: TransactionInstruction[], prog
 
 /**
  * Settles the group and, when it fits in the same transaction, sends the vault rent on to the
- * wallet that paid it. Settlement leaves that rent in the group account; `refundVaultRent` is
- * permissionless, so a refund left out here can be sent later by anyone.
- *
- * Member records stay open: the result screen reads them.
+ * wallet that paid it. Settlement leaves that rent in the group account. `refundVaultRent` is
+ * permissionless, so anyone can send later a refund that did not fit here.
  */
 export function settlementStages(
   settle: InstructionBuilder,

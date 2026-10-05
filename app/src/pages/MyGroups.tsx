@@ -75,7 +75,6 @@ export default function MyGroups() {
             { memcmp: { offset: GROUP_CONFIG_CREATOR_OFFSET, bytes: wallet } }
           ]),
         ])
-        // One RPC call for every joined group, not one per record (issue #44 M-5).
         const joinedGroups = await program!.account.groupConfig.fetchMultiple(
           memberRecords.map((record) => record.account.group)
         )

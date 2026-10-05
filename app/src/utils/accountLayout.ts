@@ -15,10 +15,8 @@ function fixedByteSize(type: unknown): number | null {
 }
 
 /**
- * Byte offset of a field inside an account's data, read from the IDL. `memcmp` filters use it,
- * so a layout change in the program moves the filter with it. Throws when the field has no
- * fixed offset, because a filter at a guessed offset matches the wrong accounts and reports
- * no error.
+ * Byte offset of a field inside an account's data, read from the IDL. Throws when the
+ * field has no fixed offset.
  */
 export function fixedOffset(accountName: string, fieldName: string): number {
   const account = idl.accounts.find((a) => a.name === accountName)

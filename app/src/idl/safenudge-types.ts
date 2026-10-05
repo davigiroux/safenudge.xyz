@@ -28,9 +28,6 @@ export type Safenudge = {
       "accounts": [
         {
           "name": "groupConfig",
-          "docs": [
-            "Read-only: closing a record changes nothing in the group, `current_members` included."
-          ],
           "pda": {
             "seeds": [
               {
@@ -105,9 +102,6 @@ export type Safenudge = {
       "accounts": [
         {
           "name": "creator",
-          "docs": [
-            "Recorded as `group_config.creator`. Pays nothing, so a creator with no SOL can sign."
-          ],
           "signer": true
         },
         {
@@ -331,10 +325,6 @@ export type Safenudge = {
         },
         {
           "name": "groupConfig",
-          "docs": [
-            "Also receives the vault's rent when the vault closes; `refund_vault_rent` pays it on to",
-            "the recorded rent payer."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -493,9 +483,6 @@ export type Safenudge = {
       "accounts": [
         {
           "name": "creator",
-          "docs": [
-            "Authorizes the cancel. Receives nothing."
-          ],
           "signer": true,
           "relations": [
             "groupConfig"
@@ -503,10 +490,6 @@ export type Safenudge = {
         },
         {
           "name": "groupConfig",
-          "docs": [
-            "Also receives the vault's rent when the vault closes; `refund_vault_rent` pays it on to",
-            "the recorded rent payer."
-          ],
           "writable": true,
           "pda": {
             "seeds": [
@@ -697,17 +680,13 @@ export type Safenudge = {
       "accounts": [
         {
           "name": "member",
-          "docs": [
-            "Recorded as `member_record.member` and authority of the deposit transfer. Pays nothing in",
-            "SOL, so a member with no SOL can sign."
-          ],
           "signer": true
         },
         {
           "name": "rentPayer",
           "docs": [
             "Pays the member_record rent and is recorded as the destination of that rent when the",
-            "record is closed. May be the same key as `member`. It is not a token authority here."
+            "record is closed. May be the same key as `member`."
           ],
           "writable": true,
           "signer": true
@@ -1164,13 +1143,10 @@ export type Safenudge = {
     {
       "name": "groupConfig",
       "docs": [
-        "One savings group. Never closed: its PDA is what keeps a group code from being reused, and a",
-        "reused code would let the old group's member records validate against the new group.",
+        "One savings group. Never closed.",
         "",
         "Every fixed-size field comes before `group_code`, the only variable-length one, so each field",
-        "above it sits at the same byte offset in every group and clients can `memcmp`-filter on it.",
-        "The discriminator is explicit so accounts in the pre-rent-payer layout (default discriminator,",
-        "`group_code` first) fail to load instead of decoding into the wrong fields."
+        "above it sits at the same byte offset in every group and clients can `memcmp`-filter on it."
       ],
       "type": {
         "kind": "struct",
@@ -1288,9 +1264,7 @@ export type Safenudge = {
       "name": "memberRecord",
       "docs": [
         "One member's participation in one group. Closed by `close_member_record` once the group is",
-        "Completed or Cancelled; its rent goes to `rent_payer`.",
-        "",
-        "The discriminator is explicit so records in the pre-rent-payer layout fail to load."
+        "Completed or Cancelled; its rent goes to `rent_payer`."
       ],
       "type": {
         "kind": "struct",
