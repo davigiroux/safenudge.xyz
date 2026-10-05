@@ -116,7 +116,15 @@
     "months": "{{count}} Meses",
     "submit": "Criar Grupo Agora",
     "disclaimer": "Ao criar, você concorda com os termos do smart contract auditado",
-    "impact": "Impacto"
+    "impact": "Impacto",
+    "validation": {
+      "depositNotPositive": "O depósito precisa ser maior que zero.",
+      "depositTooLarge": "Esse valor é alto demais para um depósito. Que tal um valor menor?",
+      "penaltyRequired": "Informe o valor da penalidade. Pode ser 0, se o grupo preferir.",
+      "penaltyNegative": "A penalidade não pode ser negativa.",
+      "penaltyPercentTooHigh": "A penalidade pode ser de até {{max}}% do depósito.",
+      "penaltyFixedAboveDeposit": "A penalidade fixa não pode passar do valor do depósito."
+    }
   },
   "joinGroup": {
     "title": "Convite Exclusivo",

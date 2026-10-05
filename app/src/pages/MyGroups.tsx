@@ -8,6 +8,7 @@ import { EmptyState } from '../components/EmptyState'
 import { TextInput } from '../components/Input'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { MEMBER_RECORD_MEMBER_OFFSET } from '../utils/constants'
+import { sanitizeGroupCodeInput } from '../utils/groupCode'
 
 type GroupInfo = {
   groupCode: string
@@ -127,7 +128,7 @@ export default function MyGroups() {
     // Strip out anything outside [a-z0-9-]; the resulting string is, by
     // construction, already valid for the route param so no second
     // regex check is needed.
-    const sanitized = joinCode.trim().toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 32)
+    const sanitized = sanitizeGroupCodeInput(joinCode)
     if (sanitized) navigate(`/entrar/${sanitized}`)
   }
 
