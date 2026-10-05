@@ -268,7 +268,7 @@ The full distribute path is already covered by 9 unit tests with on-chain clock 
 
 ### Full distribute path (multi-week)
 
-Weekly frequency means a 4-period cycle takes ~4 weeks end-to-end. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math). To rehearse it in minutes first, see [5b](#5b-local-rehearsal-with-surfpool).
+Through the web app, the shortest frequency is weekly, so a 4-period cycle takes ~4 weeks end-to-end. The devnet build also accepts frequency 3 (300-second periods, a ~20-minute cycle), but `/criar` does not offer it; a group with that frequency must be created by a script calling `create_group` directly. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math). To rehearse it through the web app in minutes first, see [5b](#5b-local-rehearsal-with-surfpool).
 
 1. Repeat steps 2–4 above with a new group code (e.g. `smoke-002`)
 2. Week 0: A, B, C all deposit
@@ -291,7 +291,8 @@ that forks devnet on demand: accounts (the deployed program, the USDC mint,
 the treasury ATA) are fetched from devnet the first time they are read, and
 every write stays local. It adds two things devnet can't: a clock you can
 move forward, and token balances you can set without a faucet. That turns
-the multi-week distribute path above into a few minutes.
+the multi-week web-app distribute path above into a few minutes, with groups
+created through `/criar` at a normal weekly frequency.
 
 It is a rehearsal, not a substitute. The mainnet gate in
 [ADR-0001](./adr/0001-defer-program-immutability-to-multisig.md) asks for
@@ -313,6 +314,9 @@ surfpool start --network devnet --no-deploy
   deploying the local build. Without it you're testing whatever is in
   `target/deploy/`, not the program on devnet. Real deploys go through the
   steps in section 2, never through a Surfpool runbook.
+
+Restart Surfpool after any devnet redeploy. A running fork keeps the program
+bytes it fetched first, so it goes on running the old code.
 
 RPC is on `http://127.0.0.1:8899`, Studio (a local explorer) on
 `http://127.0.0.1:18488`. Surfpool writes logs to `.surfpool/` in the
@@ -380,11 +384,12 @@ Follow "Full distribute path" above, replacing each "week N" wait with one
 time-travel jump. The expected end state is the same, including the
 conservation invariant and the 5% fee to the treasury.
 
-Reference result (2026-10-04, Surfpool 1.6.0, driven by a script with three
-keypairs rather than Phantom): 5 USDC deposit, fixed 1 USDC penalty, C misses
-periods 1 and 2. Status `Concluído`, vault closed, A and B receive 20.95 USDC
-each, C receives 8, treasury 0.10. Payouts plus fee equal the 50 USDC
-deposited.
+Reference result (2026-10-04, Surfpool 1.6.0, fresh fork of program bytes
+`75dbe35f…` deployed at slot 507417016, treasury ATA fetched from devnet,
+driven by a script with three keypairs rather than Phantom): 5 USDC deposit,
+fixed 1 USDC penalty, C misses periods 1 and 2. Status `Concluído`, vault
+closed, A and B receive 20.95 USDC each, C receives 8, treasury 0.10.
+Payouts plus fee equal the 50 USDC deposited.
 
 ## 6. Troubleshooting
 
