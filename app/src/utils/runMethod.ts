@@ -28,7 +28,12 @@ export type ProgramLike = {
   }
 }
 
-/** Throws what the cluster answers to `tx`, so a sponsored transaction that cannot succeed never reaches the wallet. */
+/** True when the simulation failed because the fee payer, the relay, could not fund it. */
+function relayCannotFund(detail: string): boolean {
+  return /insufficient lamports|InsufficientFundsFor|AccountNotFound/.test(detail)
+}
+
+/** Simulates a sponsored `tx` and throws the cluster's answer before the wallet is asked to sign. */
 async function preflight(connection: Connection, tx: Transaction): Promise<void> {
   const { value } = await connection.simulateTransaction(new VersionedTransaction(tx.compileMessage()), {
     sigVerify: false,
@@ -36,10 +41,7 @@ async function preflight(connection: Connection, tx: Transaction): Promise<void>
   })
   if (!value.err) return
   const detail = [JSON.stringify(value.err), ...(value.logs ?? [])].join('\n')
-  // The relay pays every lamport of a sponsored transaction, so a lamport shortfall is the relay's.
-  if (/insufficient lamports|InsufficientFundsFor|AccountNotFound/.test(detail)) {
-    throw new RelayError('relayUnavailable', detail)
-  }
+  if (relayCannotFund(detail)) throw new RelayError('relayUnavailable', detail)
   throw new Error(`Simulation failed: ${detail}`)
 }
 
@@ -52,8 +54,7 @@ async function preflight(connection: Connection, tx: Transaction): Promise<void>
  * The send phase resolves once the network has accepted the signed tx; the
  * confirm phase resolves once the cluster reaches the provider's commitment.
  *
- * `build` receives the account that pays fees and rent: the wallet, or the
- * relay when one is configured. With a relay the wallet only signs.
+ * `build` receives the account that pays fees and rent, the wallet or the relay.
  */
 export function runMethod(
   build: (payer: PublicKey) => MethodBuilder,

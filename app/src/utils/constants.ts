@@ -32,7 +32,6 @@ function optionalEnv(name: string): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined
 }
 
-// Fee relay (Kora). With no URL the connected wallet pays fees and rent.
 export const KORA_URL = optionalEnv('VITE_KORA_URL')
 export const KORA_API_KEY = optionalEnv('VITE_KORA_API_KEY')
 

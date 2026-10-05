@@ -15,17 +15,24 @@ export class RelayError extends Error {
 export type Relay = {
   address: PublicKey
   blockhash: () => Promise<string>
-  /** Sends the wallet-signed `tx`; `user` is the wallet, which the relay's per-user limits count against. */
+  /** Sends the wallet-signed `tx`; the relay counts its per-user limits against `user`. */
   signAndSend: (tx: Transaction, user: PublicKey) => Promise<string>
 }
 
 const REQUEST_TIMEOUT_MS = 15_000
-const USAGE_LIMIT_EXCEEDED = -32031
+// Kora's error codes, from crates/lib/src/error.rs at the pinned commit: validation errors
+// take -32000..-32019 and UsageLimitExceeded is -32031. Those mean Kora read the request
+// and declined it; every other code is a relay fault.
+const KORA_VALIDATION_ERROR_MAX = -32000
+const KORA_VALIDATION_ERROR_MIN = -32019
+const KORA_USAGE_LIMIT_EXCEEDED = -32031
 
-/** Sorts a Kora JSON-RPC error code; -32000..-32019 mean Kora read the request and declined it. */
+/** Maps a Kora JSON-RPC error code to what the user can act on. */
 function kindOfCode(code: unknown): RelayErrorKind {
-  if (code === USAGE_LIMIT_EXCEEDED) return 'relayRefused'
-  const declined = typeof code === 'number' && code <= -32000 && code >= -32019
+  if (typeof code !== 'number') return 'relayUnavailable'
+  const declined =
+    code === KORA_USAGE_LIMIT_EXCEEDED ||
+    (code <= KORA_VALIDATION_ERROR_MAX && code >= KORA_VALIDATION_ERROR_MIN)
   return declined ? 'relayRefused' : 'relayUnavailable'
 }
 
