@@ -19,53 +19,76 @@ SafeNudge is a Solana program (smart contract) with a React/TypeScript frontend.
 
 ### Account Structure
 
-The program uses three account types, all derived as PDAs.
+The program uses three account types, all derived as PDAs. `GroupConfig` and `MemberRecord` each record a `rent_payer`. See "Rent payer" below.
 
 #### GroupConfig
 
-Stores the group's parameters and state. Created once per group.
+Stores the group's parameters and state. Created once per group and never closed: the PDA keeps the group code taken, so a later group cannot reuse the code and inherit the old group's member records.
+
+Every fixed-size field comes before `group_code`, the only variable-length field. Each field above `group_code` therefore sits at the same byte offset in every group, and clients can `memcmp`-filter on it.
 
 ```rust
-#[account]
+#[account(discriminator = b"snGroup2")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
+    pub creator: Pubkey,           // offset 8,   32 bytes. Can start_cycle and emergency_cancel
+    pub rent_payer: Pubkey,        // offset 40,  32 bytes. Paid the rent of this account and of the vault
+    pub mint: Pubkey,              // offset 72,  32 bytes. USDC mint address
+    pub deposit_amount: u64,       // offset 104, 8 bytes.  Fixed deposit per period (token smallest unit)
+    pub penalty_value: u64,        // offset 112, 8 bytes.  Fixed amount in token units, or basis points (500 = 5%)
+    pub cycle_start: i64,          // offset 120, 8 bytes.  Unix timestamp of start_cycle. 0 while Open
+    pub settled_at: i64,           // offset 128, 8 bytes.  Unix timestamp of distribute or emergency_cancel. 0 until then
+    pub frequency: u8,             // offset 136. 0 = weekly, 1 = biweekly, 2 = monthly (3 = 5min, devnet builds)
+    pub total_periods: u8,         // offset 137. Number of deposit periods in the cycle
+    pub max_members: u8,           // offset 138. Max group size (2-10)
+    pub current_members: u8,       // offset 139. Members who joined. Not decremented when a record is closed
+    pub penalty_type: u8,          // offset 140. 0 = fixed amount, 1 = percentage
+    pub status: u8,                // offset 141. 0 = open, 1 = active, 2 = completed, 3 = cancelled
+    pub bump: u8,                  // offset 142. PDA bump
     #[max_len(32)]
-    pub group_code: String,        // 4 + 32 — group code, used as PDA seed
-    pub creator: Pubkey,           // 32 — group creator, can start cycle / emergency cancel
-    pub mint: Pubkey,              // 32 — USDC mint address
-    pub deposit_amount: u64,       // 8  — fixed deposit per period (in token smallest unit)
-    pub frequency: u8,             // 1  — 0 = weekly, 1 = biweekly, 2 = monthly (3 = 5min, devnet builds)
-    pub total_periods: u8,         // 1  — number of deposit periods in the cycle
-    pub max_members: u8,           // 1  — max group size (2-10)
-    pub current_members: u8,       // 1  — current member count
-    pub penalty_type: u8,          // 1  — 0 = fixed amount, 1 = percentage
-    pub penalty_value: u64,        // 8  — fixed amount in token units, or basis points (e.g., 500 = 5%)
-    pub status: u8,                // 1  — 0 = open, 1 = active, 2 = completed, 3 = cancelled
-    pub cycle_start: i64,          // 8  — Unix timestamp when creator started the cycle
-    pub bump: u8,                  // 1  — PDA bump
+    pub group_code: String,        // offset 143, 4 + up to 32 bytes. Group code, used as PDA seed
 }
 // Seeds: [b"group", group_code.as_bytes()]
-// Space: 8 (discriminator) + (4 + 32) + 32 + 32 + 8 + 1 + 1 + 1 + 1 + 1 + 8 + 1 + 8 + 1 = 139
+// Space: 8 (discriminator) + 32 * 3 + 8 * 4 + 1 * 7 + (4 + 32) = 179
 ```
+
+The size is pinned at compile time (`const _: () = assert!(8 + GroupConfig::INIT_SPACE == 179)`), and a unit test in `state/group_config.rs` serializes a `GroupConfig` and checks each offset above.
 
 #### MemberRecord
 
-Stores an individual member's state within a group. One per member per group.
+Stores an individual member's state within a group. One per member per group. `close_member_record` closes it after the group is Completed or Cancelled.
 
 ```rust
-#[account]
+#[account(discriminator = b"snMembr2")]
 #[derive(InitSpace)]
 pub struct MemberRecord {
-    pub group: Pubkey,             // 32 — reference to the GroupConfig PDA
-    pub member: Pubkey,            // 32 — member's wallet address
-    pub total_deposited: u64,      // 8  — total tokens deposited
-    pub deposits_made: u8,         // 1  — number of on-time deposits (including initial)
-    pub periods_deposited: [bool; 52], // 52 — bitmap of which periods were deposited (max 52 weeks)
-    pub bump: u8,                  // 1  — PDA bump
+    pub group: Pubkey,             // offset 8,   32 bytes. The GroupConfig PDA
+    pub member: Pubkey,            // offset 40,  32 bytes. Member's wallet address
+    pub rent_payer: Pubkey,        // offset 72,  32 bytes. Paid this record's rent
+    pub total_deposited: u64,      // offset 104, 8 bytes.  Total tokens deposited
+    pub deposits_made: u8,         // offset 112. Number of on-time deposits (including initial)
+    pub periods_deposited: [bool; 52], // offset 113, 52 bytes. Which periods were deposited (max 52 weeks)
+    pub bump: u8,                  // offset 165. PDA bump
 }
 // Seeds: [b"member", group_config.key().as_ref(), member.key().as_ref()]
-// Space: 8 (discriminator) + 32 + 32 + 8 + 1 + 52 + 1 = 134
+// Space: 8 (discriminator) + 32 * 3 + 8 + 1 + 52 + 1 = 166
 ```
+
+#### Rent payer
+
+`rent_payer` is the wallet that signed and paid the account rent at `create_group` or `join_group`. It equals the creator or the member when they pay for themselves. The program writes it once and never changes it. Every rent refund goes to that wallet and to no other:
+
+| Rent | Paid at | Returned by | Destination |
+|------|---------|-------------|-------------|
+| GroupConfig (179 bytes) | `create_group` | Never. GroupConfig stays open | — |
+| Vault (165 bytes) | `create_group` | `refund_vault_rent`, after `distribute` or `emergency_cancel` closed the vault into GroupConfig | `group_config.rent_payer` |
+| MemberRecord (166 bytes) | `join_group` | `close_member_record` | `member_record.rent_payer` |
+
+`distribute` and `emergency_cancel` name no rent recipient. They close the vault into the GroupConfig PDA, so the instructions that move member tokens credit no lamports to an address outside the program.
+
+#### Accounts in the previous layout
+
+Both accounts use explicit discriminators (`snGroup2`, `snMembr2`). An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. Settle or cancel such groups with the old program binary before an in-place upgrade.
 
 #### GroupVault
 
@@ -100,9 +123,10 @@ model.
 Creates a new savings group.
 
 **Accounts:**
-- `creator` (signer, mut) — pays for account creation
-- `group_config` (init) — PDA derived from group code
-- `vault` (init) — PDA-owned token account for USDC
+- `creator` (signer) — recorded as `group_config.creator`. Pays nothing, so a creator with no SOL can sign
+- `rent_payer` (signer, mut) — pays the rent of `group_config` and `vault`. Recorded as `group_config.rent_payer`. May be the same key as `creator`
+- `group_config` (init, payer = `rent_payer`) — PDA derived from group code
+- `vault` (init, payer = `rent_payer`) — PDA-owned token account for USDC
 - `mint` — USDC mint
 - `token_program` — SPL Token program
 - `system_program`
@@ -127,7 +151,7 @@ Creates a new savings group.
 - `group_code` length 1-32 chars, alphanumeric + hyphens only
 
 **Effects:**
-- Creates `GroupConfig` with status = Open (0)
+- Creates `GroupConfig` with status = Open (0), `rent_payer` = the `rent_payer` signer, `settled_at` = 0
 - Creates vault token account owned by vault PDA
 
 ---
@@ -137,9 +161,10 @@ Creates a new savings group.
 A member joins the group and makes their initial deposit.
 
 **Accounts:**
-- `member` (signer, mut)
+- `member` (signer) — recorded as `member_record.member` and authority of the deposit transfer. Pays no SOL, so a member with no SOL can sign
+- `rent_payer` (signer, mut) — pays the `member_record` rent. Recorded as `member_record.rent_payer`. May be the same key as `member`. It is not a token authority: the deposit always comes from the member's own token account
 - `group_config` (mut) — increments member count
-- `member_record` (init) — PDA for this member in this group
+- `member_record` (init, payer = `rent_payer`) — PDA for this member in this group
 - `member_token_account` (mut) — member's canonical ATA for the group mint (source). Enforced via `associated_token::` constraints: settlement derives each member's ATA deterministically, so any other token account would brick the group at `distribute` time (issue #44 M-3)
 - `vault` (mut) — group's USDC vault (destination)
 - `mint`
@@ -155,7 +180,7 @@ A member joins the group and makes their initial deposit.
 - Member has sufficient USDC balance
 
 **Effects:**
-- Creates `MemberRecord` with `total_deposited = deposit_amount`, `deposits_made = 1`, `periods_deposited[0] = true`
+- Creates `MemberRecord` with `total_deposited = deposit_amount`, `deposits_made = 1`, `periods_deposited[0] = true`, `rent_payer` = the `rent_payer` signer
 - Transfers `deposit_amount` from member to vault via CPI
 - Increments `group_config.current_members`
 
@@ -229,8 +254,7 @@ Settles the cycle. Calculates penalties and distributes funds. Anyone can trigge
 
 **Accounts:**
 - `payer` (signer) — pays for transaction fees only, never rent
-- `creator` (mut, validated against `group_config.creator` via `has_one`) — receives vault rent on close
-- `group_config` (mut)
+- `group_config` (mut) — also receives the vault's rent when the vault closes
 - `vault` (mut) — source of all distributions; signs its own transfers (self-as-authority)
 - `mint`
 - `treasury_authority` (PDA, seeds `[b"treasury"]`)
@@ -302,8 +326,8 @@ for each member:
 
 **Effects:**
 - Transfers calculated amounts from vault to each member
-- Sets `group_config.status = Completed (2)`
-- Closes vault account, returns rent to creator
+- Sets `group_config.status = Completed (2)` and `group_config.settled_at` to the clock time
+- Closes the vault account into `group_config`. `refund_vault_rent` then pays that rent to `group_config.rent_payer`
 
 ---
 
@@ -312,8 +336,8 @@ for each member:
 Creator cancels the cycle. All deposits returned without penalties.
 
 **Accounts:**
-- `creator` (signer) — must match `group_config.creator`
-- `group_config` (mut)
+- `creator` (signer) — must match `group_config.creator`. Receives nothing
+- `group_config` (mut) — also receives the vault's rent when the vault closes
 - `vault` (mut) — signs its own transfers (self-as-authority)
 - `mint`
 - `token_program`
@@ -329,8 +353,8 @@ The same canonical-PDA + ATA-owner + uniqueness validations as `distribute` appl
 
 **Effects:**
 - Returns each member's `total_deposited` from vault to their token account
-- Sets `group_config.status = Cancelled (3)`
-- Closes vault account, returns rent to creator
+- Sets `group_config.status = Cancelled (3)` and `group_config.settled_at` to the clock time
+- Closes the vault account into `group_config`. The creator gains no lamports, so a creator whose rent another wallet paid cannot collect the vault rent by creating and cancelling groups
 
 ---
 
@@ -381,6 +405,57 @@ One-shot, per-mint creation of the protocol treasury ATA. Signed and paid for by
 - Creates the treasury ATA for the given mint (all work happens in account constraints)
 
 **Ops runbook:** before the first fee-charging settlement on a cluster, `FEE_RECIPIENT` must run `init_treasury` for each supported mint (USDC at minimum). Until then, fee-charging `distribute` calls fail with `TreasuryNotInitialized` (retriable); fee-free settlements are unaffected. Under the mainnet placeholder `FEE_RECIPIENT`, this instruction is uncallable (the system program cannot sign) — consistent with fees being disabled there.
+
+---
+
+#### 9. `refund_vault_rent`
+
+Pays the vault rent that settlement left in `GroupConfig` to the wallet that paid it. Anyone can call it.
+
+**Accounts:**
+- `group_config` (mut) — source of the lamports
+- `rent_payer` (mut) — must equal `group_config.rent_payer`. Receives lamports only. The program never reads it
+
+**Args:** None
+
+**Validation, in this order:**
+- `group_config.status == Completed (2) || group_config.status == Cancelled (3)` (`InvalidGroupStatus`)
+- `rent_payer.key() == group_config.rent_payer` (`InvalidRentPayer`)
+
+The second check is a raw `constraint`, not `has_one`. Anchor 1.0.2 runs every `has_one` before any raw constraint, and the status check must run first.
+
+**Effects:**
+- Moves `group_config` lamports above the rent-exempt minimum for its 179 bytes to `rent_payer`
+- When nothing is above the minimum, succeeds and moves nothing. A second call, or a call batched with other instructions, cannot fail for that reason
+- Never takes `group_config` below the rent-exempt minimum, so the account stays open
+- Lamports that anyone sends to `group_config` also go to `rent_payer` on the next call
+
+The amount follows the rent rate at the time of the call. If the rate is lower than at `create_group`, the refund includes part of the rent paid for `GroupConfig` itself, which the rent payer also funded. If the rate is higher, the refund is smaller or zero.
+
+---
+
+#### 10. `close_member_record`
+
+Closes one `MemberRecord` of a settled group and returns its rent to the wallet that paid it. Anyone can call it. One record per instruction: a client puts up to 10 of them, plus `refund_vault_rent`, in one transaction (1,023 bytes with 10 different rent payers).
+
+**Accounts:**
+- `group_config` — read-only. Closing a record changes nothing in the group
+- `member_record` (mut, `close = rent_payer`) — seeds `["member", group_config, member_record.member]` with the stored bump
+- `rent_payer` (mut) — must equal `member_record.rent_payer`. Receives lamports only. The program never reads it
+
+**Args:** None
+
+**Validation, in this order:**
+- `group_config.status == Completed (2) || group_config.status == Cancelled (3)` (`InvalidGroupStatus`)
+- `member_record` is the canonical PDA for this group (`ConstraintSeeds`) and `member_record.group == group_config.key()` (`InvalidMemberRecord`)
+- `rent_payer.key() == member_record.rent_payer` (`InvalidRentPayer`)
+
+**Effects:**
+- Transfers all lamports of the record to `rent_payer` and closes the record
+
+Settlement reads every member record, so a record cannot close while the group is Open or Active. Completed and Cancelled never revert, `join_group` requires Open, and `GroupConfig` is never closed. A closed record therefore cannot be created again, and its group code cannot be reused. A second close of the same record fails with `AccountNotInitialized`.
+
+No retention period is enforced. Once a group is settled, anyone can close its records, and clients that list a wallet's groups through its member records stop listing that group. `group_config.settled_at` records the settlement time for a future retention rule.
 
 ---
 
@@ -446,8 +521,8 @@ Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor 
 
 | Account | Seeds | Purpose |
 |---------|-------|---------|
-| GroupConfig | `["group", group_code]` | Group parameters and state |
-| MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking |
+| GroupConfig | `["group", group_code]` | Group parameters and state. Never closed |
+| MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking. Closed by `close_member_record` after settlement |
 | Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority) |
 | TreasuryAuthority | `["treasury"]` | Authority over the protocol-fee ATA; holds no data |
 | TreasuryATA | canonical ATA of `(mint, TreasuryAuthority)` | Accumulates 5% of every penalty pool until `withdraw_fees` is called; created once per mint via `init_treasury` (fee recipient signs and pays) |
@@ -503,6 +578,8 @@ pub enum SafeNudgeError {
     NoFeesToWithdraw,
     #[msg("Protocol treasury token account for this mint has not been initialized")]
     TreasuryNotInitialized,
+    #[msg("Rent refund destination does not match the recorded rent payer")]
+    InvalidRentPayer,
 }
 ```
 
@@ -653,6 +730,8 @@ anchor deploy --provider.cluster devnet
 - `deposit`: on-time deposit, duplicate deposit (same period), deposit after cycle ends
 - `distribute`: correct penalty calculation (fixed + percentage), redistribution to compliant members, edge cases (all miss, none miss, partial)
 - `emergency_cancel`: creator-only, full refund verification, status transitions
+- `refund_vault_rent` and `close_member_record`: refund to the recorded rent payer only, rejection before settlement, repeat calls, the create-then-cancel drain, transaction size for a 10-member group, and lamport conservation for a rent payer across a whole group
+- Accounts in the previous layout: rejected by every instruction
 
 **Frontend:**
 - TypeScript type checking (`tsc --noEmit`)
@@ -678,7 +757,9 @@ safenudge/
 │           │   ├── distribute.rs
 │           │   ├── emergency_cancel.rs
 │           │   ├── withdraw_fees.rs
-│           │   └── init_treasury.rs
+│           │   ├── init_treasury.rs
+│           │   ├── refund_vault_rent.rs
+│           │   └── close_member_record.rs
 │           ├── state/
 │           │   ├── mod.rs
 │           │   ├── group_config.rs
@@ -726,20 +807,27 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Fake member injection | MemberRecord PDA derived from `["member", group_config_key, member_key]`. Anchor's `init` constraint prevents duplicates. `deposit` checks `member_record.group` and the seeds; `distribute` and `emergency_cancel` run `validate_member_pair` (program owner, group, canonical PDA, no duplicates). |
 | Frontrunning distribution | Distribution is permissionless, and every computed payout depends only on on-chain state. The caller does choose the order of the remaining-account pairs, and the last-listed member gets the vault balance in place of a computed payout. In `distribute` that balance exceeds the computed payout by `redistributable % compliant_count`, at most `compliant_count - 1` base units: 9 in a 10-member group (0.000009 USDC at 6 decimals). In `emergency_cancel` the computed refunds sum to the vault balance, so the excess is 0. In both, tokens that someone transfers into the vault outside the program also go to the last-listed member. |
 | Durable nonce pre-signing | No time-sensitive admin actions. `start_cycle` captures `Clock::get()` at execution time, not from arguments. Period calculation uses on-chain clock. |
+| Rent refund redirected | Every rent refund goes to the `rent_payer` key stored in the account at `create_group` or `join_group`, where that wallet signed. `refund_vault_rent` and `close_member_record` take no destination argument and reject any other account with `InvalidRentPayer`. |
+| Rent payer drained by the creator | `emergency_cancel` and `distribute` pay no lamports to the creator or the caller. The vault rent goes to `GroupConfig` and from there only to `group_config.rent_payer`. What a rent payer does not get back is the `GroupConfig` rent, 179 bytes per group. |
+| Group code reuse after close | `GroupConfig` is never closed and `refund_vault_rent` leaves it rent-exempt, so `["group", code]` stays allocated and old member records cannot validate against a new group. |
+| Record closed before settlement | `close_member_record` requires Completed or Cancelled. Settlement needs every record, and both statuses are final. |
+| Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 179 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 
 ### Instruction Security Matrix
 
 | Instruction | Who can call | Fund movement | Status required | Key validation |
 |-------------|-------------|---------------|-----------------|----------------|
-| `create_group` | Anyone (signer pays) | None | N/A (creates new) | Group code format, param ranges |
-| `join_group` | Anyone (becomes member) | Member -> Vault | Open | Group not full, valid mint |
+| `create_group` | Anyone (creator signs, `rent_payer` signs and pays rent) | None | N/A (creates new) | Group code format, param ranges |
+| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent) | Member -> Vault | Open | Group not full, valid mint, member's canonical ATA |
 | `start_cycle` | Creator only | None | Open | `creator == signer`, members >= 2 |
 | `deposit` | Members only | Member -> Vault | Active | Valid MemberRecord, correct period, not already deposited |
-| `distribute` | Anyone | Vault -> All Members + Treasury | Active (cycle ended) | All member records present, cycle time elapsed |
-| `emergency_cancel` | Creator only | Vault -> All Members (each gets `total_deposited` back) | Open or Active | `creator == signer` |
+| `distribute` | Anyone | Vault -> All Members + Treasury. Vault rent -> GroupConfig | Active (cycle ended) | All member records present, cycle time elapsed |
+| `emergency_cancel` | Creator only | Vault -> All Members (each gets `total_deposited` back). Vault rent -> GroupConfig | Open or Active | `creator == signer` |
 | `withdraw_fees` | `FEE_RECIPIENT` only | Treasury -> Recipient | N/A (no group) | `recipient == FEE_RECIPIENT`, treasury balance > 0 |
 | `init_treasury` | `FEE_RECIPIENT` only | None (signer pays ATA rent) | N/A (no group) | `fee_recipient == FEE_RECIPIENT` |
+| `refund_vault_rent` | Anyone | Lamports only: GroupConfig surplus -> `group_config.rent_payer` | Completed or Cancelled | `rent_payer == group_config.rent_payer` |
+| `close_member_record` | Anyone | Lamports only: MemberRecord rent -> `member_record.rent_payer` | Completed or Cancelled | Canonical record PDA for the group, `rent_payer == member_record.rent_payer` |
 
 ### Program Constraints Template
 

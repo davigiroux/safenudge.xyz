@@ -107,13 +107,17 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
-| `create_group` | Anyone (signer pays rent) | None | — |
-| `join_group` | Anyone (becomes member) | Member → Vault | Open |
+| `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator) | None | — |
+| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member) | Member → Vault | Open |
 | `start_cycle` | Creator only | None | Open |
 | `deposit` | Members only | Member → Vault | Active |
 | `distribute` | Anyone (permissionless) | Vault → Members + Treasury | Active (cycle ended) |
 | `emergency_cancel` | Creator only | Vault → Members (each gets their deposits back) | Open or Active |
 | `withdraw_fees` | Compile-time `FEE_RECIPIENT` only | Treasury → Recipient | — |
+| `refund_vault_rent` | Anyone (permissionless) | Vault rent (SOL) → the wallet that paid it | Completed or Cancelled |
+| `close_member_record` | Anyone (permissionless) | Member record rent (SOL) → the wallet that paid it | Completed or Cancelled |
+
+Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. The group account itself is never closed, so its rent is not returned and its code is never reused.
 
 ### Tech stack
 

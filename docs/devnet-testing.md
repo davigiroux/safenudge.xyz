@@ -46,6 +46,8 @@ solana program show GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc --url devnet
 
 Output should show `Last Deployed Slot` and the program data account. The program ID matches the one hardcoded in [app/src/utils/constants.ts](../app/src/utils/constants.ts) and [Anchor.toml](../Anchor.toml).
 
+**Before you upgrade a deployed program to a build that changes an account layout:** settle or cancel every live group first, with the binary that is deployed now. The `rent_payer` change re-ordered `GroupConfig` and `MemberRecord` and gave both new discriminators. After the upgrade, every instruction rejects an account in the previous layout with `AccountDiscriminatorMismatch`, so the tokens in such a group's vault cannot be withdrawn and its group code stays taken. There is no migration instruction.
+
 ## 2b. Redeploying devnet under a new program ID
 
 Needed when the program keypair or the upgrade authority for the current
@@ -257,7 +259,7 @@ The full distribute path is already covered by 9 unit tests with on-chain clock 
    - Submit → Phantom signs → status `Aberto`
 3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 5 USDC. Wallet A must also click **Entrar** (creator ≠ member — `create_group` only sets up the group, you have to join separately to participate).
 4. Switch back to Wallet A → **Iniciar ciclo** → status flips to `Ativo`
-5. ~~Each of A, B, C deposits in period 0~~ — **skip this step.** `join_group` already marks `periods_deposited[0] = true` (see [join_group.rs:64](../programs/safenudge/src/instructions/join_group.rs)), so clicking Depositar again returns `AlreadyDeposited`. Joining is both registration and the period-0 deposit.
+5. ~~Each of A, B, C deposits in period 0~~ — **skip this step.** `join_group` already marks `periods_deposited[0] = true` (see [join_group.rs](../programs/safenudge/src/instructions/join_group.rs)), so clicking Depositar again returns `AlreadyDeposited`. Joining is both registration and the period-0 deposit.
 6. Wallet A → scroll to footer → **Encerrar grupo antecipadamente** → review sheet → type `cancelar` → confirm → Phantom signs
 
 **Expected end state:**
