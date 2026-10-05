@@ -3924,6 +3924,33 @@ describe("safenudge", () => {
       });
     }
 
+    it("pays the rent payer in the same transaction as distribute", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, vPda } = await createWeeklyGroup(
+        "refund-same-tx", { depositAmount: 10_000_000, totalPeriods: 1 }, sponsor,
+      );
+      const members = [await joinNewMember(gPda, vPda, 10_000_000), await joinNewMember(gPda, vPda, 10_000_000)];
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const distributeIx = await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, treasuryTokenAccount: null, tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts(memberPairs(members))
+        .instruction();
+
+      sendAs(payer, [distributeIx, await refundVaultRentMethod(gPda, sponsor.publicKey).instruction()]);
+
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(ACCOUNT_SIZE));
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+      assert.equal(await getTokenBalanceOrZero(members[0].tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(members[1].tokenAccount), 10_000_000n);
+    });
+
     it("succeeds and moves nothing on a second call", async () => {
       const sponsor = await fundedKeypair();
       const { gPda } = await settledGroup("refund-twice", "distribute", sponsor);
