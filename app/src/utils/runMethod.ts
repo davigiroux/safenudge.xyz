@@ -1,4 +1,4 @@
-import type { Connection, PublicKey, Transaction } from '@solana/web3.js'
+import type { Connection, PublicKey, Transaction, TransactionError } from '@solana/web3.js'
 import { TxConfirmError } from './txErrors'
 
 export type TxStages = {
@@ -52,12 +52,21 @@ export function runMethod(
     },
     confirm: async (sig: string) => {
       if (!blockhashCtx) throw new Error('runMethod.confirm called before send')
-      const result = await provider.connection.confirmTransaction(
-        { signature: sig, ...blockhashCtx },
-        'confirmed',
-      )
-      if (result.value.err) {
-        throw new TxConfirmError(result.value.err)
+      let txError: TransactionError | null
+      try {
+        const result = await provider.connection.confirmTransaction(
+          { signature: sig, ...blockhashCtx },
+          'confirmed',
+        )
+        txError = result.value.err
+      } catch (err) {
+        // web3.js rejects with the bare TransactionError, not an Error, when the
+        // signature status already carries the failure.
+        if (err instanceof Error) throw err
+        txError = err as TransactionError
+      }
+      if (txError) {
+        throw new TxConfirmError(txError)
       }
     },
   }
