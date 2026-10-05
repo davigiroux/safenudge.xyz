@@ -36,9 +36,9 @@ pub struct LeaveGroup<'info> {
 
     #[account(
         mut,
-        associated_token::mint = mint,
-        associated_token::authority = member,
-        associated_token::token_program = token_program,
+        token::mint = mint,
+        token::authority = member,
+        token::token_program = token_program,
     )]
     pub member_token_account: InterfaceAccount<'info, TokenAccount>,
 

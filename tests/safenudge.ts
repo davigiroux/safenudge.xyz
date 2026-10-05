@@ -1751,28 +1751,44 @@ describe("safenudge", () => {
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
     });
 
-    it("fails when the destination is the member's token account at a non-canonical address", async () => {
+    it("pays a token account of the member that is not the canonical ATA", async () => {
       const { gPda, vPda } = await createWeeklyGroup("leave-non-ata", OPEN);
       const member = await joinNewMember(gPda, vPda, 10_000_000);
-      const rawAccount = Keypair.generate();
-      await provider.sendAndConfirm(
-        new Transaction().add(
-          SystemProgram.createAccount({
-            fromPubkey: payer.publicKey, newAccountPubkey: rawAccount.publicKey,
-            space: ACCOUNT_SIZE, lamports: Number(rentFor(ACCOUNT_SIZE)), programId: TOKEN_PROGRAM_ID,
-          }),
-          createInitializeAccountInstruction(rawAccount.publicKey, usdcMint, member.keypair.publicKey),
-        ),
-        [payer, rawAccount],
-      );
+      const otherAccount = await createTokenAccountFor(member.keypair.publicKey);
+
+      await leaveCall({ ...member, tokenAccount: otherAccount }, gPda, vPda);
+
+      assert.equal(await getTokenBalanceOrZero(otherAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 0n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+    });
+
+    it("fails into a frozen token account and pays another token account of the same member", async () => {
+      const mint = await createMint(TOKEN_PROGRAM_ID, { freezeAuthority: mintAuthority.publicKey });
+      await createGroupMethod("leave-frozen", OPEN, payer.publicKey, payer.publicKey, mint).rpc();
+      const [gPda] = getGroupPda("leave-frozen");
+      const [vPda] = getVaultPda(gPda);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      await joinMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc();
+      await freezeTokenAccount(tokenAccount, mint);
 
       await expectError(
-        leaveCall({ ...member, tokenAccount: rawAccount.publicKey }, gPda, vPda),
-        "ConstraintAssociated",
+        leaveMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc(),
+        "Account is frozen",
       );
-
-      assert.equal(await getTokenBalanceOrZero(rawAccount.publicKey), 0n);
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal(lamportsOf(member.recordPda), rentFor(MEMBER_RECORD_SIZE));
+
+      const unfrozen = await createTokenAccountFor(keypair.publicKey, mint);
+      await leaveMethod({ ...member, tokenAccount: unfrozen }, gPda, vPda, keypair.publicKey, mint)
+        .signers([keypair])
+        .rpc();
+
+      assert.equal(await getTokenBalanceOrZero(unfrozen), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
     });
 
     it("fails with InvalidMint when the mint is not the group mint", async () => {
