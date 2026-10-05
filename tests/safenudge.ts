@@ -21,6 +21,7 @@ import {
   createMintToInstruction,
   AccountLayout,
 } from "@solana/spl-token";
+import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { assert } from "chai";
@@ -4217,6 +4218,278 @@ describe("safenudge", () => {
         assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
       });
     }
+  });
+
+  // ─── accounts in the layout before rent_payer ─────────────
+
+  describe("accounts in the previous layout", () => {
+    function defaultDiscriminator(accountName: string): Buffer {
+      return createHash("sha256").update(`account:${accountName}`).digest().subarray(0, 8);
+    }
+
+    // The layout before rent_payer: group_code first, 139 bytes, Anchor's default discriminator.
+    function plantPreviousLayoutGroup(code: string): PublicKey {
+      const [gPda, bump] = getGroupPda(code);
+      const data = Buffer.alloc(139);
+      let at = defaultDiscriminator("GroupConfig").copy(data, 0);
+      at = data.writeUInt32LE(code.length, at);
+      at += data.write(code, at);
+      at += payer.publicKey.toBuffer().copy(data, at);
+      at += usdcMint.toBuffer().copy(data, at);
+      at = data.writeBigUInt64LE(10_000_000n, at);
+      at += Buffer.from([0, 4, 5, 0, 0]).copy(data, at);
+      at = data.writeBigUInt64LE(0n, at);
+      at = data.writeUInt8(0, at);
+      at = data.writeBigInt64LE(0n, at);
+      data.writeUInt8(bump, at);
+      provider.client.setAccount(gPda, {
+        lamports: Number(rentFor(139)), data, owner: program.programId, executable: false, rentEpoch: 0,
+      });
+      return gPda;
+    }
+
+    // The layout before rent_payer: 134 bytes, no rent_payer, Anchor's default discriminator.
+    function plantPreviousLayoutRecord(gPda: PublicKey, member: Member): void {
+      const [, bump] = getMemberPda(gPda, member.keypair.publicKey);
+      const data = Buffer.alloc(134);
+      let at = defaultDiscriminator("MemberRecord").copy(data, 0);
+      at += gPda.toBuffer().copy(data, at);
+      at += member.keypair.publicKey.toBuffer().copy(data, at);
+      at = data.writeBigUInt64LE(10_000_000n, at);
+      at = data.writeUInt8(1, at);
+      data.writeUInt8(1, at);
+      data.writeUInt8(bump, 133);
+      provider.client.setAccount(member.recordPda, {
+        lamports: Number(rentFor(134)), data, owner: program.programId, executable: false, rentEpoch: 0,
+      });
+    }
+
+    it("rejects a previous-layout GroupConfig in every instruction that loads one", async () => {
+      const gPda = plantPreviousLayoutGroup("legacy");
+      const [vPda] = getVaultPda(gPda);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      const startCycleMethod = program.methods.startCycle().accounts({ creator: payer.publicKey, groupConfig: gPda });
+
+      const calls: [string, () => Promise<unknown>][] = [
+        ["join_group", () => joinCall(member, gPda, vPda)],
+        ["start_cycle", () => startCycleMethod.rpc()],
+        ["deposit", () => depositCall(member, gPda, vPda)],
+        ["distribute", () => distributeCall(gPda, vPda, [], null)],
+        ["emergency_cancel", () => cancelCall(gPda, vPda, [])],
+        ["refund_vault_rent", () => refundVaultRentMethod(gPda, payer.publicKey).rpc()],
+        ["close_member_record", () => closeRecordMethod(gPda, member.recordPda, keypair.publicKey).rpc()],
+      ];
+      for (const [name, call] of calls) {
+        await expectError(call, "AccountDiscriminatorMismatch").catch((e) => {
+          throw new Error(`${name}: ${e.message}`);
+        });
+      }
+
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+    });
+
+    it("rejects a previous-layout MemberRecord at settlement", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("legacy-record", { depositAmount: 10_000_000, totalPeriods: 1 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      plantPreviousLayoutRecord(gPda, m2);
+
+      await expectError(distributeCall(gPda, vPda, [m1, m2], null), "InvalidMemberRecord");
+      await expectError(cancelCall(gPda, vPda, [m1, m2]), "InvalidMemberRecord");
+
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+    });
+
+    it("keeps the group code of a previous-layout GroupConfig taken", async () => {
+      plantPreviousLayoutGroup("legacy-code");
+
+      await expectError(createGroupCall("legacy-code", { depositAmount: 10_000_000 }), "already in use");
+    });
+  });
+
+  // ─── rent accounting across a whole group ─────────────────
+
+  describe("rent accounting", () => {
+    const TEN = { depositAmount: 3_000_000, totalPeriods: 2, maxMembers: 10, penaltyValue: 1_000_000 };
+    const TRANSACTION_BYTE_LIMIT = 1232;
+    const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
+
+    async function tenMemberActiveGroup(code: string): Promise<{ gPda: PublicKey; vPda: PublicKey; members: Member[] }> {
+      const { gPda, vPda } = await createWeeklyGroup(code, TEN);
+      const members: Member[] = [];
+      for (let i = 0; i < 10; i++) {
+        members.push(await joinNewMember(gPda, vPda, 100_000_000));
+      }
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      for (const m of members.slice(0, 7)) {
+        await depositCall(m, gPda, vPda);
+      }
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+      return { gPda, vPda, members };
+    }
+
+    it("settles 10 members with a protocol fee inside one transaction and the default compute limit", async () => {
+      const { gPda, vPda, members } = await tenMemberActiveGroup("size-distribute");
+      const treasuryAta = await initTreasury();
+      const memberAtas = members.map((m) => m.tokenAccount);
+      const balancesBefore = await Promise.all(memberAtas.map((a) => getTokenBalanceOrZero(a)));
+      const ix = await program.methods.distribute()
+        .accounts({
+          payer: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, treasuryTokenAccount: treasuryAta, tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts(memberPairs(members))
+        .instruction();
+
+      const cost = sendAs(payer, [ix]);
+
+      assert.equal(cost.bytes, 1036);
+      assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
+      assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      await assertFundConservation({
+        vaultPda: vPda, memberAtas, memberBalancesBefore: balancesBefore,
+        treasuryBefore: 0n, expectedFee: 150_000n, totalDeposits: 51_000_000n,
+      });
+    });
+
+    it("cancels 10 members inside one transaction and the default compute limit", async () => {
+      const { gPda, vPda, members } = await tenMemberActiveGroup("size-cancel");
+      const before = await Promise.all(members.map((m) => getTokenBalanceOrZero(m.tokenAccount)));
+      const ix = await program.methods.emergencyCancel()
+        .accounts({
+          creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+          mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID,
+        })
+        .remainingAccounts(memberPairs(members))
+        .instruction();
+
+      const cost = sendAs(payer, [ix]);
+
+      assert.equal(cost.bytes, 970);
+      assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
+      assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      const refunds = await Promise.all(
+        members.map(async (m, i) => (await getTokenBalanceOrZero(m.tokenAccount)) - before[i])
+      );
+      assert.deepEqual(refunds, [...Array(7).fill(6_000_000n), ...Array(3).fill(3_000_000n)]);
+      assert.isNull(context.banksClient.getAccount(vPda));
+    });
+
+    it("refunds the vault rent and closes 10 records with 10 different rent payers in one transaction", async () => {
+      const { gPda, vPda, members } = await tenMemberActiveGroup("size-teardown");
+      await distributeCall(gPda, vPda, members, await initTreasury());
+      const stranger = await fundedKeypair();
+      const creatorBefore = lamportsOf(payer.publicKey);
+      const membersBefore = members.map((m) => lamportsOf(m.keypair.publicKey));
+      const ixs = [await refundVaultRentMethod(gPda, payer.publicKey).instruction()];
+      for (const m of members) {
+        ixs.push(await closeRecordMethod(gPda, m.recordPda, m.keypair.publicKey).instruction());
+      }
+
+      const cost = sendAs(stranger, ixs);
+
+      assert.equal(cost.bytes, 1023);
+      assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
+      assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      assert.equal(lamportsOf(payer.publicKey) - creatorBefore, rentFor(ACCOUNT_SIZE));
+      members.forEach((m, i) => {
+        assert.isNull(context.banksClient.getAccount(m.recordPda));
+        assert.equal(lamportsOf(m.keypair.publicKey) - membersBefore[i], rentFor(MEMBER_RECORD_SIZE));
+      });
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+    });
+
+    it("returns every lamport a sponsor paid for a 10-member group except GroupConfig rent and fees", async () => {
+      const sponsor = await fundedKeypair(5 * LAMPORTS_PER_SOL);
+      const creator = Keypair.generate();
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const group = { depositAmount: 10_000_000, totalPeriods: 1, maxMembers: 10 };
+
+      sendAs(
+        sponsor,
+        [await createGroupMethod("sponsored-ten", group, creator.publicKey, sponsor.publicKey).instruction()],
+        [creator],
+      );
+      const [gPda] = getGroupPda("sponsored-ten");
+      const [vPda] = getVaultPda(gPda);
+      const members: Member[] = [];
+      for (let i = 0; i < 10; i++) {
+        const { keypair, tokenAccount } = await createFundedMember(10_000_000, 0);
+        const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+        sendAs(sponsor, [await joinMethod(member, gPda, vPda, sponsor.publicKey).instruction()], [keypair]);
+        members.push(member);
+      }
+      const startIx = await program.methods.startCycle()
+        .accounts({ creator: creator.publicKey, groupConfig: gPda })
+        .instruction();
+      sendAs(payer, [startIx], [creator]);
+      const cycleStart = BigInt((await program.account.groupConfig.fetch(gPda)).cycleStart.toString());
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await distributeCall(gPda, vPda, members, null);
+
+      const ixs = [await refundVaultRentMethod(gPda, sponsor.publicKey).instruction()];
+      for (const m of members) {
+        ixs.push(await closeRecordMethod(gPda, m.recordPda, sponsor.publicKey).instruction());
+      }
+      sendAs(sponsor, ixs);
+
+      const createFee = 2n * SIGNATURE_FEE;
+      const joinFees = 10n * 2n * SIGNATURE_FEE;
+      const teardownFee = SIGNATURE_FEE;
+      assert.equal(
+        sponsorBefore - lamportsOf(sponsor.publicKey),
+        rentFor(GROUP_CONFIG_SIZE) + createFee + joinFees + teardownFee,
+      );
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+      assert.equal(lamportsOf(creator.publicKey), 0n);
+      for (const m of members) {
+        assert.equal(lamportsOf(m.keypair.publicKey), 0n);
+        assert.equal(await getTokenBalanceOrZero(m.tokenAccount), 10_000_000n);
+        assert.isNull(context.banksClient.getAccount(m.recordPda));
+      }
+      assert.isNull(context.banksClient.getAccount(vPda));
+      const data = Buffer.from(context.banksClient.getAccount(gPda).data);
+      assert.deepEqual(data.subarray(40, 72), sponsor.publicKey.toBuffer());
+    });
+
+    // The runtime rejects a transaction that adds lamports to an account and still leaves it
+    // below the rent-exempt minimum. The vault closes into GroupConfig, so a rent rate that rose
+    // far enough since create_group blocks settlement until GroupConfig is topped up.
+    it("settles after a rent rate increase once anyone tops GroupConfig up to the new floor", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, vPda } = await createWeeklyGroup(
+        "rent-tripled", { depositAmount: 10_000_000, totalPeriods: 1 }, sponsor,
+      );
+      const members = [await joinNewMember(gPda, vPda, 10_000_000), await joinNewMember(gPda, vPda, 10_000_000)];
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      scaleRentRate(3n, 1n);
+
+      await expectError(distributeCall(gPda, vPda, members, null), "InsufficientFundsForRent");
+      await expectError(cancelCall(gPda, vPda, members), "InsufficientFundsForRent");
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+
+      const topUp = rentFor(GROUP_CONFIG_SIZE) - lamportsOf(gPda);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: gPda, lamports: topUp }),
+        ),
+        [payer],
+      );
+      const vaultRent = lamportsOf(vPda);
+      await distributeCall(gPda, vPda, members, null);
+
+      assert.equal(await getTokenBalanceOrZero(members[0].tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(members[1].tokenAccount), 10_000_000n);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, vaultRent);
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+    });
   });
 
   // ─── integration tests ────────────────────────────────────
