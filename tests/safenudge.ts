@@ -4557,6 +4557,46 @@ describe("safenudge", () => {
       });
     }
 
+    for (const how of ["distribute", "cancel"] as const) {
+      it(`${how} pays another token account of a member whose canonical ATA is frozen`, async () => {
+        const code = `frozen-ata-${how}`;
+        const mint = await createMint(TOKEN_PROGRAM_ID, { freezeAuthority: mintAuthority.publicKey });
+        await createGroupMethod(code, { depositAmount: 10_000_000, totalPeriods: 1 }, payer.publicKey, payer.publicKey, mint).rpc();
+        const [gPda] = getGroupPda(code);
+        const [vPda] = getVaultPda(gPda);
+        const members: Member[] = [];
+        for (let i = 0; i < 2; i++) {
+          const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint);
+          const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+          await joinMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc();
+          members.push(member);
+        }
+        const cycleStart = await startCycle(gPda);
+        setUnixTime(cycleStart + BigInt(WEEK_SECS));
+        await freezeTokenAccount(members[1].tokenAccount, mint);
+        const settle = (pairs: Member[]) => how === "distribute"
+          ? program.methods.distribute()
+              .accounts({
+                payer: payer.publicKey, groupConfig: gPda, vault: vPda,
+                mint, treasuryTokenAccount: null, tokenProgram: TOKEN_PROGRAM_ID,
+              })
+              .remainingAccounts(memberPairs(pairs))
+              .rpc()
+          : cancelMethod(gPda, vPda, pairs, payer.publicKey, mint).rpc();
+
+        await expectError(settle(members), "Account is frozen");
+        assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+
+        const unfrozen = await createTokenAccountFor(members[1].keypair.publicKey, mint);
+        await settle([members[0], { ...members[1], tokenAccount: unfrozen }]);
+
+        assert.equal(await getTokenBalanceOrZero(members[0].tokenAccount), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(unfrozen), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(members[1].tokenAccount), 0n);
+        assert.isNull(context.banksClient.getAccount(vPda));
+      });
+    }
+
     it("refunds each member exactly their total_deposited mid-cycle and closes the vault", async () => {
       const { gPda, vPda } = await createWeeklyGroup("cancel-uneven", { depositAmount: 10_000_000 });
       const m1 = await joinNewMember(gPda, vPda, 100_000_000);
