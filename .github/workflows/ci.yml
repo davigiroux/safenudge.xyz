@@ -42,6 +42,15 @@ jobs:
             target/
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      # Denies the `[lints.clippy]` set in programs/safenudge/Cargo.toml: raw
+      # arithmetic and lossy `as` casts (CLAUDE.md "Forbidden patterns"). Runs
+      # before the toolchain installs so a violation fails early. The devnet
+      # pass covers code behind `#[cfg(feature = "devnet")]`.
+      - name: Clippy arithmetic and cast lints
+        run: |
+          cargo clippy -p safenudge
+          cargo clippy -p safenudge --features devnet
+
       - name: Cache Solana install
         uses: actions/cache@v4
         with:
@@ -115,22 +124,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Check for raw arithmetic on numeric types in program
-        # Anchor programs MUST use checked_{add,sub,mul,div} on u64/i64/u128.
-        # See CLAUDE.md "Forbidden patterns".
-        run: |
-          set -e
-          # Strip line comments first so commentary doesn't trigger.
-          if grep -rn --include="*.rs" -E '\b(let|return|=)\s*[a-zA-Z_][a-zA-Z0-9_]*\s*[+\-*/]\s*[a-zA-Z0-9_]' \
-               programs/safenudge/src/ \
-             | grep -v '//' \
-             | grep -vE 'checked_(add|sub|mul|div)' \
-             | grep -vE '\.checked_'; then
-            echo "ERROR: Possible raw arithmetic detected. Use checked_add/sub/mul/div on numeric types."
-            exit 1
-          fi
-          echo "No raw arithmetic suspects."
 
       - name: Check for hardcoded UI strings in frontend components
         run: |
