@@ -6,7 +6,7 @@ import { PageLayout } from '../components/PageLayout'
 import { Button, Card, Icon } from '../components'
 import { EmptyState } from '../components/EmptyState'
 import { TextInput } from '../components/Input'
-import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { useAnchorProgram, type SafeNudgeProgram } from '../hooks/useAnchorProgram'
 import type { GroupStatus } from '../hooks/useGroupConfig'
 import { GROUP_CONFIG_CREATOR_OFFSET, MEMBER_RECORD_MEMBER_OFFSET } from '../utils/constants'
 import { sanitizeGroupCodeInput } from '../utils/groupCode'
@@ -22,6 +22,8 @@ type GroupInfo = {
   totalPeriods: number
   depositAmount: number
 }
+
+const NO_GROUPS: GroupInfo[] = []
 
 const STATUS_MAP: Record<number, GroupStatus> = {
   0: 'open',
@@ -46,6 +48,51 @@ const STATUS_COLORS: Record<ListedStatus, string> = {
   unknown: 'bg-surface-container-high text-on-surface-variant',
 }
 
+/** Groups the wallet joined, then groups it created without joining. */
+async function fetchWalletGroups(program: SafeNudgeProgram, wallet: string): Promise<GroupInfo[]> {
+  const [memberRecords, createdGroups] = await Promise.all([
+    program.account.memberRecord.all([
+      { memcmp: { offset: MEMBER_RECORD_MEMBER_OFFSET, bytes: wallet } }
+    ]),
+    program.account.groupConfig.all([
+      { memcmp: { offset: GROUP_CONFIG_CREATOR_OFFSET, bytes: wallet } }
+    ]),
+  ])
+  const joinedGroups = await program.account.groupConfig.fetchMultiple(
+    memberRecords.map((record) => record.account.group)
+  )
+
+  const groupInfos: GroupInfo[] = []
+  const seenCodes = new Set<string>()
+
+  for (const [i, record] of memberRecords.entries()) {
+    const groupAccount = joinedGroups[i]
+    if (!groupAccount) continue
+    groupInfos.push({
+      groupCode: groupAccount.groupCode,
+      status: STATUS_MAP[groupAccount.status] || 'unknown',
+      depositsMade: record.account.depositsMade,
+      totalPeriods: groupAccount.totalPeriods,
+      depositAmount: groupAccount.depositAmount.toNumber(),
+    })
+    seenCodes.add(groupAccount.groupCode)
+  }
+
+  for (const g of createdGroups) {
+    if (seenCodes.has(g.account.groupCode)) continue
+    groupInfos.push({
+      groupCode: g.account.groupCode,
+      status: STATUS_MAP[g.account.status] || 'unknown',
+      depositsMade: null,
+      totalPeriods: g.account.totalPeriods,
+      depositAmount: g.account.depositAmount.toNumber(),
+    })
+    seenCodes.add(g.account.groupCode)
+  }
+
+  return groupInfos
+}
+
 export default function MyGroups() {
   const { t } = useTranslation()
   const { publicKey } = useWallet()
@@ -53,75 +100,25 @@ export default function MyGroups() {
   const program = useAnchorProgram()
   const [showJoinInput, setShowJoinInput] = useState(false)
   const [joinCode, setJoinCode] = useState('')
-  const [groups, setGroups] = useState<GroupInfo[]>([])
-  const [loading, setLoading] = useState(false)
+  const [settled, setSettled] = useState<{ wallet: string; groups: GroupInfo[] } | null>(null)
+
+  const wallet = program && publicKey ? publicKey.toBase58() : null
 
   useEffect(() => {
-    if (!program || !publicKey) {
-      setGroups([])
-      return
-    }
+    if (!wallet || !program) return
 
     let cancelled = false
+    fetchWalletGroups(program, wallet)
+      .catch((): GroupInfo[] => [])
+      .then((groups) => {
+        if (!cancelled) setSettled({ wallet, groups })
+      })
 
-    async function fetchGroups() {
-      setLoading(true)
-      try {
-        const wallet = publicKey!.toBase58()
-        const [memberRecords, createdGroups] = await Promise.all([
-          program!.account.memberRecord.all([
-            { memcmp: { offset: MEMBER_RECORD_MEMBER_OFFSET, bytes: wallet } }
-          ]),
-          program!.account.groupConfig.all([
-            { memcmp: { offset: GROUP_CONFIG_CREATOR_OFFSET, bytes: wallet } }
-          ]),
-        ])
-        const joinedGroups = await program!.account.groupConfig.fetchMultiple(
-          memberRecords.map((record) => record.account.group)
-        )
-
-        if (cancelled) return
-
-        const groupInfos: GroupInfo[] = []
-        const seenCodes = new Set<string>()
-
-        for (const [i, record] of memberRecords.entries()) {
-          const groupAccount = joinedGroups[i]
-          if (!groupAccount) continue
-          groupInfos.push({
-            groupCode: groupAccount.groupCode,
-            status: STATUS_MAP[groupAccount.status] || 'unknown',
-            depositsMade: record.account.depositsMade,
-            totalPeriods: groupAccount.totalPeriods,
-            depositAmount: groupAccount.depositAmount.toNumber(),
-          })
-          seenCodes.add(groupAccount.groupCode)
-        }
-
-        // Append creator-owned groups in which the wallet has no member record
-        for (const g of createdGroups) {
-          if (seenCodes.has(g.account.groupCode)) continue
-          groupInfos.push({
-            groupCode: g.account.groupCode,
-            status: STATUS_MAP[g.account.status] || 'unknown',
-            depositsMade: null,
-            totalPeriods: g.account.totalPeriods,
-            depositAmount: g.account.depositAmount.toNumber(),
-          })
-          seenCodes.add(g.account.groupCode)
-        }
-
-        if (!cancelled) setGroups(groupInfos)
-      } catch {
-        if (!cancelled) setGroups([])
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    fetchGroups()
     return () => { cancelled = true }
-  }, [program, publicKey])
+  }, [program, wallet])
+
+  const loading = wallet !== null && settled?.wallet !== wallet
+  const groups = wallet !== null && settled?.wallet === wallet ? settled.groups : NO_GROUPS
 
   const handleJoin = () => {
     // Strip out anything outside [a-z0-9-]; the resulting string is, by
