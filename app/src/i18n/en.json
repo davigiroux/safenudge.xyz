@@ -155,6 +155,7 @@
     "membersList": "Members",
     "groupUnsupported": "This group uses a newer version of SafeNudge. Refresh the page and try again.",
     "membersLoadFailed": "We couldn't load the members right now. Shall we try again?",
+    "memberDetailGone": "This group has ended and the per-member detail is no longer available here. What you received is still in your wallet's history.",
     "totalDeposited": "Total deposited",
     "streak": "streak",
     "sendNudge": "Send nudge",
@@ -421,7 +422,9 @@
       "DuplicateMemberRecord": "A member was submitted more than once. Refresh the page and try again.",
       "UnauthorizedRecipient": "Only the official fee recipient can do this",
       "NoFeesToWithdraw": "There are no fees to withdraw right now",
-      "TreasuryNotInitialized": "The protocol fee vault hasn't been created yet. Try again shortly."
+      "TreasuryNotInitialized": "The protocol fee vault hasn't been created yet. Try again shortly.",
+      "InvalidRentPayer": "The refund can only go to the wallet that paid to open this account. Refresh the page and try again.",
+      "RecordRetentionNotElapsed": "It's too early to close this group's records. They are kept for a while after the group ends. Try again later."
     }
   }
 }

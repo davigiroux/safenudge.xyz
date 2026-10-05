@@ -107,13 +107,17 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
-| `create_group` | Anyone (signer pays rent) | None | — |
-| `join_group` | Anyone (becomes member) | Member → Vault | Open |
+| `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator) | None | — |
+| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member) | Member → Vault | Open |
 | `start_cycle` | Creator only | None | Open |
 | `deposit` | Members only | Member → Vault | Active |
 | `distribute` | Anyone (permissionless) | Vault → Members + Treasury | Active (cycle ended) |
 | `emergency_cancel` | Creator only | Vault → Members (each gets their deposits back) | Open or Active |
 | `withdraw_fees` | Compile-time `FEE_RECIPIENT` only | Treasury → Recipient | — |
+| `refund_vault_rent` | Anyone (permissionless) | Vault rent (SOL) → the wallet that paid it | Completed or Cancelled |
+| `close_member_record` | Anyone (permissionless) | Member record rent (SOL) → the wallet that paid it | Completed or Cancelled, 30 days after settlement |
+
+Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. The group account itself is never closed, so its rent is not returned and its code is never reused.
 
 ### Tech stack
 
@@ -133,6 +137,8 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 ### Downstream consumers
 
 This repository's frontend is not the program's only consumer. **SafePool** (private repository, same author) is a second product built on the same deployed program, reused unchanged — same instruction set, same PDA seeds, same IDL. Its mainnet cutover depends on [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20) and on the upgrade-authority decision in [`ARCHITECTURE.md`](./ARCHITECTURE.md#no-upgrade-authority), so changes to the program surface here have a second caller to account for.
+
+The `rent_payer` change (issue #55) breaks that interface. `create_group` and `join_group` take a new required signer, `distribute` loses its `creator` account so account positions shift, and both account layouts and discriminators change. A consumer that pins an older IDL fails against the upgraded program until it repins and changes its calls. No live group may exist on any cluster when the upgrade is deployed. The full list is in [`ARCHITECTURE.md`](./ARCHITECTURE.md#upgrades-that-change-an-account-layout).
 
 → Read the full architecture in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 

@@ -25,9 +25,6 @@ type RawMemberRecord = {
 
 /**
  * Fetch every MemberRecord whose `group` field matches the given group_code.
- *
- * Uses a `memcmp` filter at offset 8 (right after the 8-byte account
- * discriminator), which is where `MemberRecord.group: Pubkey` sits.
  */
 export function useGroupMembers(groupCode: string | undefined) {
   const program = useAnchorProgram()

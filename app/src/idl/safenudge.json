@@ -8,6 +8,80 @@
   },
   "instructions": [
     {
+      "name": "close_member_record",
+      "discriminator": [
+        187,
+        153,
+        209,
+        15,
+        229,
+        52,
+        107,
+        209
+      ],
+      "accounts": [
+        {
+          "name": "group_config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  111,
+                  117,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config.group_code",
+                "account": "GroupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "member_record",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  109,
+                  98,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config"
+              },
+              {
+                "kind": "account",
+                "path": "member_record.member",
+                "account": "MemberRecord"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_payer",
+          "docs": [
+            "not a signer or an authority. The constraint on `member_record` pins its key to the",
+            "wallet that signed and paid at join_group, so the caller cannot redirect the rent."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "create_group",
       "discriminator": [
         79,
@@ -22,6 +96,14 @@
       "accounts": [
         {
           "name": "creator",
+          "signer": true
+        },
+        {
+          "name": "rent_payer",
+          "docs": [
+            "Pays the rent of group_config and of the vault, and is recorded as the destination of the",
+            "vault rent refund. May be the same key as `creator`."
+          ],
           "writable": true,
           "signer": true
         },
@@ -236,17 +318,6 @@
           "signer": true
         },
         {
-          "name": "creator",
-          "docs": [
-            "must match the wallet stored at group creation time. distribute is",
-            "permissionless so the creator does not sign; we only need their pubkey."
-          ],
-          "writable": true,
-          "relations": [
-            "group_config"
-          ]
-        },
-        {
           "name": "group_config",
           "writable": true,
           "pda": {
@@ -406,7 +477,6 @@
       "accounts": [
         {
           "name": "creator",
-          "writable": true,
           "signer": true,
           "relations": [
             "group_config"
@@ -604,6 +674,14 @@
       "accounts": [
         {
           "name": "member",
+          "signer": true
+        },
+        {
+          "name": "rent_payer",
+          "docs": [
+            "Pays the member_record rent and is recorded as the destination of that rent when the",
+            "record is closed. May be the same key as `member`."
+          ],
           "writable": true,
           "signer": true
         },
@@ -756,6 +834,53 @@
       "args": []
     },
     {
+      "name": "refund_vault_rent",
+      "discriminator": [
+        190,
+        180,
+        141,
+        236,
+        38,
+        122,
+        76,
+        152
+      ],
+      "accounts": [
+        {
+          "name": "group_config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  111,
+                  117,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config.group_code",
+                "account": "GroupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rent_payer",
+          "docs": [
+            "not a signer or an authority. The constraint on `group_config` pins its key to the",
+            "wallet that signed and paid at create_group, so the caller cannot redirect the refund."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "start_cycle",
       "discriminator": [
         203,
@@ -862,27 +987,27 @@
     {
       "name": "GroupConfig",
       "discriminator": [
-        55,
-        209,
-        170,
-        208,
-        249,
-        75,
+        115,
+        110,
         71,
-        41
+        114,
+        111,
+        117,
+        112,
+        50
       ]
     },
     {
       "name": "MemberRecord",
       "discriminator": [
-        26,
-        35,
-        161,
-        83,
-        248,
-        8,
-        189,
-        249
+        115,
+        110,
+        77,
+        101,
+        109,
+        98,
+        114,
+        50
       ]
     }
   ],
@@ -1001,145 +1126,188 @@
       "code": 6022,
       "name": "TreasuryNotInitialized",
       "msg": "Protocol treasury token account for this mint has not been initialized"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidRentPayer",
+      "msg": "Rent refund destination does not match the recorded rent payer"
+    },
+    {
+      "code": 6024,
+      "name": "RecordRetentionNotElapsed",
+      "msg": "Member records stay open for the retention period after settlement"
     }
   ],
   "types": [
     {
       "name": "GroupConfig",
+      "docs": [
+        "One savings group. Never closed.",
+        "",
+        "Every fixed-size field comes before `group_code`, the only variable-length one, so each field",
+        "above it sits at the same byte offset in every group and clients can `memcmp`-filter on it."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "group_code",
-            "docs": [
-              "Human-readable group code, used as PDA seed"
-            ],
-            "type": "string"
-          },
-          {
             "name": "creator",
             "docs": [
-              "Group creator wallet — can start_cycle and emergency_cancel"
+              "Offset 8. Group creator wallet: can start_cycle and emergency_cancel."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_payer",
+            "docs": [
+              "Offset 40. Paid the rent of this account and of the vault at create_group. The only",
+              "destination of the vault rent refund. Equals `creator` when the creator paid."
             ],
             "type": "pubkey"
           },
           {
             "name": "mint",
             "docs": [
-              "USDC mint address"
+              "Offset 72. USDC mint address."
             ],
             "type": "pubkey"
           },
           {
             "name": "deposit_amount",
             "docs": [
-              "Fixed deposit amount per period (token smallest unit)"
+              "Offset 104. Fixed deposit amount per period (token smallest unit)."
             ],
             "type": "u64"
           },
           {
+            "name": "penalty_value",
+            "docs": [
+              "Offset 112. Penalty value: fixed amount in token units, or basis points (500 = 5%)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "cycle_start",
+            "docs": [
+              "Offset 120. Unix timestamp when the cycle started; 0 while Open."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "settled_at",
+            "docs": [
+              "Offset 128. Unix timestamp of distribute or emergency_cancel; 0 until then."
+            ],
+            "type": "i64"
+          },
+          {
             "name": "frequency",
             "docs": [
-              "0 = weekly, 1 = biweekly, 2 = monthly"
+              "Offset 136. 0 = weekly, 1 = biweekly, 2 = monthly."
             ],
             "type": "u8"
           },
           {
             "name": "total_periods",
             "docs": [
-              "Number of deposit periods in the cycle (1-52)"
+              "Offset 137. Number of deposit periods in the cycle (1-52)."
             ],
             "type": "u8"
           },
           {
             "name": "max_members",
             "docs": [
-              "Max group size (2-10)"
+              "Offset 138. Max group size (2-10)."
             ],
             "type": "u8"
           },
           {
             "name": "current_members",
             "docs": [
-              "Current member count"
+              "Offset 139. Members who joined. Not decremented when a member record is closed."
             ],
             "type": "u8"
           },
           {
             "name": "penalty_type",
             "docs": [
-              "0 = fixed amount, 1 = percentage (basis points)"
+              "Offset 140. 0 = fixed amount, 1 = percentage (basis points)."
             ],
             "type": "u8"
-          },
-          {
-            "name": "penalty_value",
-            "docs": [
-              "Penalty value: fixed amount in token units, or basis points (500 = 5%)"
-            ],
-            "type": "u64"
           },
           {
             "name": "status",
             "docs": [
-              "0 = Open, 1 = Active, 2 = Completed, 3 = Cancelled"
+              "Offset 141. 0 = Open, 1 = Active, 2 = Completed, 3 = Cancelled."
             ],
             "type": "u8"
-          },
-          {
-            "name": "cycle_start",
-            "docs": [
-              "Unix timestamp when cycle started"
-            ],
-            "type": "i64"
           },
           {
             "name": "bump",
             "docs": [
-              "PDA bump for group_config"
+              "Offset 142. PDA bump for group_config."
             ],
             "type": "u8"
+          },
+          {
+            "name": "group_code",
+            "docs": [
+              "Offset 143. Human-readable group code, used as PDA seed."
+            ],
+            "type": "string"
           }
         ]
       }
     },
     {
       "name": "MemberRecord",
+      "docs": [
+        "One member's participation in one group. Closed by `close_member_record` once the group is",
+        "Completed or Cancelled; its rent goes to `rent_payer`."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
           {
             "name": "group",
             "docs": [
-              "Reference to the GroupConfig PDA"
+              "Offset 8. Reference to the GroupConfig PDA."
             ],
             "type": "pubkey"
           },
           {
             "name": "member",
             "docs": [
-              "Member's wallet address"
+              "Offset 40. Member's wallet address."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_payer",
+            "docs": [
+              "Offset 72. Paid this record's rent at join_group. The only destination of that rent when",
+              "the record is closed. Equals `member` when the member paid."
             ],
             "type": "pubkey"
           },
           {
             "name": "total_deposited",
             "docs": [
-              "Total tokens deposited across all periods"
+              "Offset 104. Total tokens deposited across all periods."
             ],
             "type": "u64"
           },
           {
             "name": "deposits_made",
             "docs": [
-              "Number of on-time deposits made (including initial)"
+              "Offset 112. Number of on-time deposits made (including initial)."
             ],
             "type": "u8"
           },
           {
             "name": "periods_deposited",
             "docs": [
-              "Per-period deposit tracking (max 52 periods)"
+              "Offset 113. Per-period deposit tracking (max 52 periods)."
             ],
             "type": {
               "array": [
@@ -1151,7 +1319,7 @@
           {
             "name": "bump",
             "docs": [
-              "PDA bump for member_record"
+              "Offset 165. PDA bump for member_record."
             ],
             "type": "u8"
           }

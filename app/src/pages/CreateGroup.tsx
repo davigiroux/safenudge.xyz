@@ -93,6 +93,7 @@ export default function CreateGroup() {
           )
           .accountsPartial({
             creator: publicKey,
+            rentPayer: publicKey,
             groupConfig: groupConfigPda,
             vault: vaultPda,
             mint: usdcMint,

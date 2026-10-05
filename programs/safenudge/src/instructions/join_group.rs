@@ -8,8 +8,12 @@ use crate::state::{GroupConfig, MemberRecord, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct JoinGroup<'info> {
-    #[account(mut)]
     pub member: Signer<'info>,
+
+    /// Pays the member_record rent and is recorded as the destination of that rent when the
+    /// record is closed. May be the same key as `member`.
+    #[account(mut)]
+    pub rent_payer: Signer<'info>,
 
     #[account(
         mut,
@@ -22,7 +26,7 @@ pub struct JoinGroup<'info> {
 
     #[account(
         init,
-        payer = member,
+        payer = rent_payer,
         space = 8 + MemberRecord::INIT_SPACE,
         seeds = [b"member", group_config.key().as_ref(), member.key().as_ref()],
         bump,
@@ -63,6 +67,7 @@ impl<'info> JoinGroup<'info> {
         let member_record = &mut self.member_record;
         member_record.group = self.group_config.key();
         member_record.member = self.member.key();
+        member_record.rent_payer = self.rent_payer.key();
         member_record.total_deposited = self.group_config.deposit_amount;
         member_record.deposits_made = 1;
         member_record.periods_deposited = [false; 52];

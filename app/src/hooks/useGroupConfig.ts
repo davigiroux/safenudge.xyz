@@ -20,6 +20,7 @@ const STATUS_BY_CODE: Record<number, GroupStatus> = {
 export type GroupConfigData = {
   groupCode: string
   creator: string
+  rentPayer: string
   mint: string
   depositAmount: number
   frequency: FrequencyName
@@ -38,6 +39,7 @@ export type GroupConfigData = {
 type GroupConfigAccount = {
   groupCode: string
   creator: PublicKey
+  rentPayer: PublicKey
   mint: PublicKey
   depositAmount: BN
   frequency: number
@@ -58,6 +60,7 @@ function parseGroupConfig(account: GroupConfigAccount, pda: PublicKey): GroupCon
   return {
     groupCode: account.groupCode,
     creator: account.creator.toString(),
+    rentPayer: account.rentPayer.toString(),
     mint: account.mint.toString(),
     depositAmount: account.depositAmount.toNumber(),
     frequency: frequency.name,

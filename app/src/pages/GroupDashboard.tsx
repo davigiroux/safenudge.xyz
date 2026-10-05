@@ -9,7 +9,7 @@ import { Button, Card, StatRow, Icon, NudgeToast, TransactionStatus } from '../c
 import { ProgressBar } from '../components/ProgressBar'
 import { DistributeSummary } from '../components/DistributeSummary'
 import { CancelGroupSheet } from '../components/CancelGroupSheet'
-import { useAnchorProgram } from '../hooks/useAnchorProgram'
+import { useAnchorProgram, type SafeNudgeProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
 import { settlementRemainingAccounts, settlementStages } from '../utils/settlement'
@@ -125,6 +125,12 @@ function CycleProgress({
   )
 }
 
+function vaultRentRefund(program: SafeNudgeProgram, groupPda: PublicKey, rentPayer: string) {
+  return program.methods
+    .refundVaultRent()
+    .accountsPartial({ groupConfig: groupPda, rentPayer: new PublicKey(rentPayer) })
+}
+
 export default function GroupDashboard() {
   const { t } = useTranslation()
   const { code: rawCode } = useParams<{ code: string }>()
@@ -156,6 +162,7 @@ export default function GroupDashboard() {
   } = useMemberRecord(isValidCode ? code : undefined)
   const {
     data: members,
+    loading: membersLoading,
     error: membersError,
     refetch: refetchMembers,
   } = useGroupMembers(isValidCode ? code : undefined)
@@ -195,7 +202,12 @@ export default function GroupDashboard() {
 
   const isCreator = !!publicKey && publicKey.toString() === group?.creator
   const isCompleted = group?.status === 'completed'
-  const showSettlement = !!group && (cycleHasEnded || isCompleted) && members.length > 0
+  const isSettled = isCompleted || group?.status === 'cancelled'
+  // Member records can be closed after a group settles. A payout projection from the records
+  // that remain would show amounts nobody received.
+  const memberDetailGone = !!group && isSettled && !membersLoading && !membersError
+    && members.length !== group.currentMembers
+  const showSettlement = !!group && (cycleHasEnded || isCompleted) && members.length > 0 && !memberDetailGone
   const canCancel = isCreator
     && !membersError
     && (group?.status === 'open' || group?.status === 'active')
@@ -353,7 +365,6 @@ export default function GroupDashboard() {
           .distribute()
           .accountsPartial({
             payer: publicKey,
-            creator: new PublicKey(group.creator),
             groupConfig: groupPda,
             vault: vaultPda,
             mint: usdcMint,
@@ -361,6 +372,7 @@ export default function GroupDashboard() {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
+        vaultRentRefund(program, groupPda, group.rentPayer),
         program,
         members,
         usdcMint,
@@ -405,6 +417,7 @@ export default function GroupDashboard() {
             tokenProgram: TOKEN_PROGRAM_ID,
           })
           .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
+        vaultRentRefund(program, groupPda, group.rentPayer),
         program,
         members,
         usdcMint,
@@ -540,6 +553,14 @@ export default function GroupDashboard() {
               onDistribute={isCompleted ? undefined : handleDistribute}
             />
           </div>
+        )}
+
+        {memberDetailGone && (
+          <Card variant="surface" className="mb-6">
+            <p className="font-body text-body-md text-on-surface-variant">
+              {t('groupDashboard.memberDetailGone')}
+            </p>
+          </Card>
         )}
 
         {/* Desktop: 2-column layout. Mobile: single stack */}

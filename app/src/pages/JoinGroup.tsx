@@ -64,6 +64,7 @@ export default function JoinGroup() {
           .joinGroup()
           .accountsPartial({
             member: publicKey,
+            rentPayer: publicKey,
             groupConfig: groupPda,
             memberRecord: memberPda,
             memberTokenAccount: memberAta,

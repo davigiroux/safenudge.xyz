@@ -7,12 +7,16 @@ use crate::state::{GroupConfig, MAX_FREQUENCY, STATUS_OPEN};
 #[derive(Accounts)]
 #[instruction(group_code: String)]
 pub struct CreateGroup<'info> {
-    #[account(mut)]
     pub creator: Signer<'info>,
+
+    /// Pays the rent of group_config and of the vault, and is recorded as the destination of the
+    /// vault rent refund. May be the same key as `creator`.
+    #[account(mut)]
+    pub rent_payer: Signer<'info>,
 
     #[account(
         init,
-        payer = creator,
+        payer = rent_payer,
         space = 8 + GroupConfig::INIT_SPACE,
         seeds = [b"group", group_code.as_bytes()],
         bump,
@@ -21,7 +25,7 @@ pub struct CreateGroup<'info> {
 
     #[account(
         init,
-        payer = creator,
+        payer = rent_payer,
         token::mint = mint,
         token::authority = vault,
         token::token_program = token_program,
@@ -83,19 +87,21 @@ impl<'info> CreateGroup<'info> {
 
         // ── Effects ─────────────────────────────────────────
         let group = &mut self.group_config;
-        group.group_code = group_code;
         group.creator = self.creator.key();
+        group.rent_payer = self.rent_payer.key();
         group.mint = self.mint.key();
         group.deposit_amount = deposit_amount;
+        group.penalty_value = penalty_value;
+        group.cycle_start = 0;
+        group.settled_at = 0;
         group.frequency = frequency;
         group.total_periods = total_periods;
         group.max_members = max_members;
         group.current_members = 0;
         group.penalty_type = penalty_type;
-        group.penalty_value = penalty_value;
         group.status = STATUS_OPEN;
-        group.cycle_start = 0;
         group.bump = bumps.group_config;
+        group.group_code = group_code;
 
         Ok(())
     }

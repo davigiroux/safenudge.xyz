@@ -9,7 +9,6 @@ use crate::state::{validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_CANC
 
 #[derive(Accounts)]
 pub struct EmergencyCancel<'info> {
-    #[account(mut)]
     pub creator: Signer<'info>,
 
     #[account(
@@ -38,6 +37,7 @@ pub struct EmergencyCancel<'info> {
 
 impl<'info> EmergencyCancel<'info> {
     pub fn handler(ctx: Context<'info, EmergencyCancel<'info>>) -> Result<()> {
+        let clock = Clock::get()?;
         let group = &ctx.accounts.group_config;
 
         // ── Checks ──────────────────────────────────────────
@@ -83,6 +83,7 @@ impl<'info> EmergencyCancel<'info> {
         // ── Effects ─────────────────────────────────────────
 
         ctx.accounts.group_config.status = STATUS_CANCELLED;
+        ctx.accounts.group_config.settled_at = clock.unix_timestamp;
 
         // ── Interactions: Transfer refunds ───────────────────
 
@@ -123,10 +124,10 @@ impl<'info> EmergencyCancel<'info> {
             }
         }
 
-        // Close vault, return rent to creator
+        let vault_rent_escrow = ctx.accounts.group_config.to_account_info();
         let close_cpi = CloseAccount {
             account: ctx.accounts.vault.to_account_info(),
-            destination: ctx.accounts.creator.to_account_info(),
+            destination: vault_rent_escrow,
             authority: ctx.accounts.vault.to_account_info(),
         };
         let close_ctx = CpiContext::new_with_signer(
