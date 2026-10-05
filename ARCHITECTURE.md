@@ -447,7 +447,7 @@ Closes one `MemberRecord` of a settled group and returns its rent to the wallet 
 
 **Validation, in this order:**
 - `group_config.status == Completed (2) || group_config.status == Cancelled (3)` (`InvalidGroupStatus`)
-- `member_record` is the canonical PDA for this group (`ConstraintSeeds`) and `member_record.group == group_config.key()` (`InvalidMemberRecord`)
+- `member_record` is the canonical PDA for this group (`ConstraintSeeds`). The seeds include the group key, so a record of another group cannot pass
 - `rent_payer.key() == member_record.rent_payer` (`InvalidRentPayer`)
 
 **Effects:**

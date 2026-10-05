@@ -26,7 +26,6 @@ pub struct CloseMemberRecord<'info> {
         mut,
         seeds = [b"member", group_config.key().as_ref(), member_record.member.as_ref()],
         bump = member_record.bump,
-        constraint = member_record.group == group_config.key() @ SafeNudgeError::InvalidMemberRecord,
         constraint = rent_payer.key() == member_record.rent_payer @ SafeNudgeError::InvalidRentPayer,
         close = rent_payer,
     )]
