@@ -448,6 +448,10 @@ describe("safenudge", () => {
     return program.methods.refundVaultRent().accounts({ groupConfig: gPda, rentPayer });
   }
 
+  function closeRecordMethod(gPda: PublicKey, recordPda: PublicKey, rentPayer: PublicKey) {
+    return program.methods.closeMemberRecord().accounts({ groupConfig: gPda, memberRecord: recordPda, rentPayer });
+  }
+
   // Two compliant members, one period, then settled. With a sponsor, the sponsor pays every rent.
   async function settledGroup(
     code: string, how: "distribute" | "cancel", sponsor?: Keypair,
@@ -4030,6 +4034,189 @@ describe("safenudge", () => {
       assert.equal(lamportsOf(gPda), lowerFloor);
       assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, groupBefore - lowerFloor);
     });
+  });
+
+  // ─── close_member_record tests ────────────────────────────
+
+  describe("close_member_record", () => {
+    it("closes a record after distribute and pays its rent to the recorded rent payer", async () => {
+      const sponsor = await fundedKeypair();
+      const stranger = await fundedKeypair();
+      const { gPda, members } = await settledGroup("close-distribute", "distribute", sponsor);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const strangerBefore = lamportsOf(stranger.publicKey);
+      const groupBefore = context.banksClient.getAccount(gPda);
+
+      sendAs(stranger, [await closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).instruction()]);
+
+      assert.isNull(context.banksClient.getAccount(members[0].recordPda));
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(strangerBefore - lamportsOf(stranger.publicKey), SIGNATURE_FEE);
+      const groupAfter = context.banksClient.getAccount(gPda);
+      assert.deepEqual(Buffer.from(groupAfter.data), Buffer.from(groupBefore.data));
+      assert.equal(groupAfter.lamports, groupBefore.lamports);
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.currentMembers, 2);
+      const other = await program.account.memberRecord.fetch(members[1].recordPda);
+      assert.equal(other.member.toBase58(), members[1].keypair.publicKey.toBase58());
+    });
+
+    it("closes a record the member paid for after cancel and pays the member", async () => {
+      const { gPda, members } = await settledGroup("close-cancel", "cancel");
+      const member = members[1];
+      const before = lamportsOf(member.keypair.publicKey);
+
+      await closeRecordMethod(gPda, member.recordPda, member.keypair.publicKey).rpc();
+
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.equal(lamportsOf(member.keypair.publicKey) - before, rentFor(MEMBER_RECORD_SIZE));
+    });
+
+    it("fails while the group is Active, and the group still settles", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("close-active", { depositAmount: 10_000_000, totalPeriods: 1 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      const cycleStart = await startCycle(gPda);
+
+      await expectError(closeRecordMethod(gPda, m1.recordPda, m1.keypair.publicKey).rpc(), "InvalidGroupStatus");
+
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await distributeCall(gPda, vPda, [m1, m2], null);
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_000n);
+    });
+
+    it("fails while the group is Open, and the group still cancels", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("close-open", { depositAmount: 10_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+
+      await expectError(closeRecordMethod(gPda, m1.recordPda, m1.keypair.publicKey).rpc(), "InvalidGroupStatus");
+
+      await cancelCall(gPda, vPda, [m1]);
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+    });
+
+    it("fails when the destination is not the recorded rent payer", async () => {
+      const sponsor = await fundedKeypair();
+      const attacker = await fundedKeypair();
+      const { gPda, members } = await settledGroup("close-redirect", "distribute", sponsor);
+      const attackerBefore = lamportsOf(attacker.publicKey);
+      const member = members[0];
+
+      await expectError(closeRecordMethod(gPda, member.recordPda, attacker.publicKey).rpc(), "InvalidRentPayer");
+      await expectError(closeRecordMethod(gPda, member.recordPda, member.keypair.publicKey).rpc(), "InvalidRentPayer");
+
+      assert.equal(lamportsOf(attacker.publicKey), attackerBefore);
+      assert.equal(lamportsOf(member.recordPda), rentFor(MEMBER_RECORD_SIZE));
+    });
+
+    it("checks the group status before the rent payer", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("close-order", { depositAmount: 10_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const attacker = await fundedKeypair();
+
+      await expectError(closeRecordMethod(gPda, m1.recordPda, attacker.publicKey).rpc(), "InvalidGroupStatus");
+    });
+
+    it("fails for a record of another group, settled or live", async () => {
+      const settled = await settledGroup("close-settled-a", "distribute");
+      const otherSettled = await settledGroup("close-settled-b", "cancel");
+      const live = await createWeeklyGroup("close-live", { depositAmount: 10_000_000 });
+      const liveMember = await joinNewMember(live.gPda, live.vPda, 10_000_000);
+
+      const foreign = otherSettled.members[0];
+      await expectError(
+        closeRecordMethod(settled.gPda, foreign.recordPda, foreign.keypair.publicKey).rpc(),
+        "ConstraintSeeds",
+      );
+      await expectError(
+        closeRecordMethod(settled.gPda, liveMember.recordPda, liveMember.keypair.publicKey).rpc(),
+        "ConstraintSeeds",
+      );
+
+      assert.equal(lamportsOf(foreign.recordPda), rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(lamportsOf(liveMember.recordPda), rentFor(MEMBER_RECORD_SIZE));
+      await cancelCall(live.gPda, live.vPda, [liveMember]);
+      assert.equal(await getTokenBalanceOrZero(liveMember.tokenAccount), 10_000_000n);
+    });
+
+    it("fails on a second close of the same record and moves nothing", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await settledGroup("close-twice", "distribute", sponsor);
+      const close = () => closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).rpc();
+      await close();
+      const sponsorAfterFirst = lamportsOf(sponsor.publicKey);
+
+      await expectError(close(), "AccountNotInitialized");
+
+      assert.equal(lamportsOf(sponsor.publicKey), sponsorAfterFirst);
+    });
+
+    it("fails as a whole when one transaction closes the same record twice", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await settledGroup("close-dup-in-tx", "distribute", sponsor);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const ix = await closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).instruction();
+
+      await expectError(() => sendAs(payer, [ix, ix]), "AccountNotInitialized");
+
+      assert.equal(lamportsOf(members[0].recordPda), rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(lamportsOf(sponsor.publicKey), sponsorBefore);
+    });
+
+    it("does not let a closed record be created again", async () => {
+      const { gPda, members } = await settledGroup("close-rejoin", "distribute");
+      const member = members[0];
+      await closeRecordMethod(gPda, member.recordPda, member.keypair.publicKey).rpc();
+      const tokensBefore = await getTokenBalanceOrZero(member.tokenAccount);
+
+      // distribute closed the vault. A live token account in the vault slot gets the call past
+      // account loading, so the status constraint is what rejects it.
+      const liveTokenAccountInVaultSlot = members[1].tokenAccount;
+      await expectError(joinCall(member, gPda, liveTokenAccountInVaultSlot), "InvalidGroupStatus");
+
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), tokensBefore);
+    });
+
+    it("keeps the group code taken after every record is closed", async () => {
+      const { gPda, members } = await settledGroup("close-code", "distribute");
+      await refundVaultRentMethod(gPda, payer.publicKey).rpc();
+      for (const m of members) {
+        await closeRecordMethod(gPda, m.recordPda, m.keypair.publicKey).rpc();
+      }
+
+      await expectError(createGroupCall("close-code", { depositAmount: 5_000_000 }), "already in use");
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+      assert.equal(group.depositAmount.toString(), "10000000");
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+    });
+
+    for (const donation of [1_000_000n, 5_000_000n]) {
+      it(`joins at a record address pre-funded with ${donation} lamports and pays the donation to the rent payer at close`, async () => {
+        const sponsor = await fundedKeypair();
+        const { gPda, vPda } = await createWeeklyGroup(`prefund-${donation}`, { depositAmount: 10_000_000 });
+        const { keypair, tokenAccount } = await createFundedMember(10_000_000);
+        const [recordPda] = getMemberPda(gPda, keypair.publicKey);
+        await provider.sendAndConfirm(
+          new Transaction().add(
+            SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: recordPda, lamports: donation }),
+          ),
+          [payer],
+        );
+        const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+        await joinCall({ keypair, tokenAccount, recordPda }, gPda, vPda, usdcMint, sponsor);
+        await cancelCall(gPda, vPda, [{ keypair, tokenAccount, recordPda }]);
+        await closeRecordMethod(gPda, recordPda, sponsor.publicKey).rpc();
+
+        assert.isNull(context.banksClient.getAccount(recordPda));
+        assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, donation);
+        assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+      });
+    }
   });
 
   // ─── integration tests ────────────────────────────────────

@@ -1,3 +1,4 @@
+pub mod close_member_record;
 pub mod create_group;
 pub mod deposit;
 pub mod distribute;
@@ -8,6 +9,7 @@ pub mod refund_vault_rent;
 pub mod start_cycle;
 pub mod withdraw_fees;
 
+pub use close_member_record::*;
 pub use create_group::*;
 pub use deposit::*;
 pub use distribute::*;
