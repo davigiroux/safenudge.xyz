@@ -34,8 +34,32 @@ export function initAnalytics(): void {
     persistence: 'localStorage+cookie',
     // Never send raw IPs; PostHog still derives country from request edge.
     ip: false,
+    // PostHog attaches the page URL to every event under several property
+    // names ($current_url, $pathname, $prev_pageview_pathname, $initial_*),
+    // so mask every string value instead of chasing a list of names.
+    before_send: (event) => {
+      if (!event) return event
+      maskStringValues(event.properties)
+      maskStringValues(event.$set)
+      maskStringValues(event.$set_once)
+      return event
+    },
   })
   client = posthog
+}
+
+const GROUP_ROUTE_CODE = /(\/(?:entrar|grupo)\/)[^/?#]+/g
+
+/** Replaces the `:code` segment of the join and dashboard routes in a URL or path. */
+export function maskGroupCode(url: string): string {
+  return url.replace(GROUP_ROUTE_CODE, '$1:code')
+}
+
+function maskStringValues(bag: Record<string, unknown> | undefined): void {
+  for (const key in bag) {
+    const value = bag[key]
+    if (typeof value === 'string') bag[key] = maskGroupCode(value)
+  }
 }
 
 /**
