@@ -112,6 +112,7 @@ jobs:
       # `tsc -b`, not `tsc --noEmit`: the root tsconfig has `files: []` and only
       # references the app and node projects, so `--noEmit` checks no file.
       - run: npx tsc -b
+      - run: npm run lint
       - name: Check i18n error map is in sync with the IDL
         run: node ../scripts/sync-error-i18n.mjs
       - name: Check every translation key used in the app exists in both locales
