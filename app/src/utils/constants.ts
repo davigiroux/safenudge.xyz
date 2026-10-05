@@ -27,6 +27,15 @@ export const USDC_MINT = new PublicKey(
 
 export const SOLANA_RPC_URL = requireEnv('VITE_SOLANA_RPC_URL', SOLANA_DEVNET_RPC)
 
+function optionalEnv(name: string): string | undefined {
+  const value: unknown = import.meta.env[name]
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+// Fee relay (Kora). With no URL the connected wallet pays fees and rent.
+export const KORA_URL = optionalEnv('VITE_KORA_URL')
+export const KORA_API_KEY = optionalEnv('VITE_KORA_API_KEY')
+
 // Genesis hash of the cluster the app expects (devnet). Compared against
 // connection.getGenesisHash() to detect wallets pointed at the wrong network.
 export const EXPECTED_GENESIS_HASH = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'
