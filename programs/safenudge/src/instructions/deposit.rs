@@ -77,7 +77,10 @@ impl<'info> Deposit<'info> {
         let elapsed_period = elapsed
             .checked_div(period_duration)
             .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-        let current_period = std::cmp::min(elapsed_period as u8, max_period);
+        let current_period = std::cmp::min(
+            u8::try_from(elapsed_period).map_err(|_| SafeNudgeError::ArithmeticOverflow)?,
+            max_period,
+        );
 
         // Check not already deposited for this period
         require!(

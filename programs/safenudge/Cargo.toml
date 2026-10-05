@@ -21,3 +21,10 @@ devnet = []
 [dependencies]
 anchor-lang = "1.0.2"
 anchor-spl = "1.0.2"
+
+# Enforces the CLAUDE.md arithmetic rule. CI runs `cargo clippy -p safenudge`.
+[lints.clippy]
+arithmetic_side_effects = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"
