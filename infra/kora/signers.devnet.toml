@@ -1,0 +1,10 @@
+# One in-memory signer whose key comes from the environment. Fine for devnet.
+# For anything that holds value, use a remote signer backend instead.
+[signer_pool]
+strategy = "round_robin"
+
+[[signers]]
+name = "sponsor"
+type = "memory"
+private_key_env = "KORA_SIGNER_KEY"
+weight = 1

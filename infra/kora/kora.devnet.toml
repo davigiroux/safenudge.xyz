@@ -1,0 +1,66 @@
+# Kora relay config for SafeNudge on devnet. See infra/kora/README.md.
+#
+# The relay pays transaction fees and, as the program's `rent_payer`, account
+# rent, so a wallet with tokens and no SOL can use the app. Tested against
+# Kora commit afe5e6b (2.2.0-beta.8). Devnet only: read "Not for mainnet" in
+# the README before reusing any of this.
+
+[kora]
+rate_limit = 100
+cors_allow_origins = ["https://safenudge.xyz", "http://localhost:5173"]
+
+# Authentication is on when KORA_API_KEY is set in the environment. Do not put
+# a key in this file.
+
+[kora.enabled_methods]
+liveness = true
+get_payer_signer = true
+get_blockhash = true
+sign_transaction = true
+sign_and_send_transaction = true
+estimate_transaction_fee = false
+get_supported_tokens = false
+transfer_transaction = false
+get_config = false
+get_version = false
+estimate_bundle_fee = false
+sign_and_send_bundle = false
+sign_bundle = false
+
+[kora.usage_limit]
+enabled = false
+fallback_if_unavailable = false
+
+[validation]
+# Largest rent one request may take from the relay: `create_group` creates the
+# GroupConfig (179 bytes) and the vault token account (165 bytes).
+# (128 + 179) * 5080 + (128 + 165) * 5080 = 3,048,000 lamports at the current
+# rent rate. `join_group` needs 1,493,520. Recompute if the rent rate changes.
+max_allowed_lamports = 3048000
+max_priority_fee_lamports = 50000
+max_signatures = 4
+price_source = "Mock"
+allow_durable_transactions = false
+allowed_programs = [
+    "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc", # SafeNudge (devnet)
+    "11111111111111111111111111111111",             # System: account creation inside SafeNudge
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",  # SPL Token
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL", # Associated Token
+    "ComputeBudget111111111111111111111111111111",  # Compute Budget
+]
+# Every request must contain a SafeNudge instruction.
+require_one_of_programs = ["GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"]
+allowed_tokens = [
+    "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU", # devnet USDC
+]
+allowed_spl_paid_tokens = []
+disallowed_accounts = []
+
+# The relay signer may fund account creation and nothing else. Every other
+# fee-payer permission keeps its default, which is false.
+[validation.fee_payer_policy.system]
+allow_create_account = true
+
+# Users pay nothing to the relay.
+[validation.price]
+type = "free"
