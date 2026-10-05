@@ -253,7 +253,7 @@
         "points": [
           { "title": "Todos no mesmo instante", "body": "Não é caixinha rotativa. Cada pessoa recebe o total que depositou mais a sua fatia do bônus de penalidades acumulado pelo grupo." },
           { "title": "Na hora", "body": "A transação acontece em segundos na Solana. Não tem dia útil, não tem compensação, não tem liberação manual — só o contrato executando." },
-          { "title": "Quase tudo volta pra quem cumpriu", "body": "Você recebe seu depósito de volta integralmente. As únicas deduções são as taxas de rede da Solana (frações de centavo) e os 5% das penalidades do ciclo que sustentam o protocolo — o restante das penalidades vira bônus pra quem cumpriu." },
+          { "title": "Quase tudo volta pra quem cumpriu", "body": "Você recebe seu depósito de volta integralmente. A única dedução são os 5% das penalidades do ciclo que sustentam o protocolo — o restante das penalidades vira bônus pra quem cumpriu. As taxas de rede da Solana são frações de centavo, e quando a SafeNudge não cobre elas por você, saem da sua carteira." },
           { "title": "E recomeça", "body": "No fim do ciclo, o grupo decide: roda de novo com o mesmo pessoal, muda o valor, ou fecha. É caixinha, não prisão." }
         ]
       }
@@ -272,7 +272,7 @@
     "faq": [
       { "q": "Preciso confiar em todo mundo do grupo?", "a": "Você precisa confiar no cofre. A caução e as regras automáticas cobrem quando a confiança humana falha — e ela às vezes falha." },
       { "q": "Quem fica com o dinheiro enquanto espera?", "a": "O contrato. Não a SafeNudge, nem o criador do grupo, nem um banco parceiro. O saldo é visível on-chain o tempo todo." },
-      { "q": "Tem taxa?", "a": "Sobre o seu depósito, não. A SafeNudge cobra 5% sobre o pool de penalidades — só sobre o que foi descontado de quem atrasou. Os outros 95% das penalidades viram bônus pra quem cumpriu. Se ninguém atrasou no ciclo, a gente não cobra nada. Você ainda paga as taxas de rede da Solana, que são frações de centavo por transação." },
+      { "q": "Tem taxa?", "a": "Sobre o seu depósito, não. A SafeNudge cobra 5% sobre o pool de penalidades — só sobre o que foi descontado de quem atrasou. Os outros 95% das penalidades viram bônus pra quem cumpriu. Se ninguém atrasou no ciclo, a gente não cobra nada. As taxas de rede da Solana são frações de centavo por transação. Quando a SafeNudge não cobre elas por você, saem da sua carteira." },
       { "q": "Posso sair no meio?", "a": "Antes do ciclo começar, pode: você sai do grupo e recebe seu depósito de volta. Depois que o ciclo começa, não dá mais pra sair. Os depósitos ficam no cofre até o fim, e cada depósito que você perder é multado no acerto final." },
       { "q": "E se a SafeNudge quebrar?", "a": "O cofre continua funcionando. É um contrato aberto na blockchain — você consegue resgatar tudo direto, mesmo sem o app. A gente facilita, mas não tranca." },
       { "q": "O dinheiro rende enquanto espera?", "a": "Se o grupo quiser, sim — tem uma opção de render em stablecoin com rendimento de tesouraria. Opt-in, com botão visível pra desligar." }
