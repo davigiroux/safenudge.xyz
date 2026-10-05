@@ -52,4 +52,8 @@ pub enum SafeNudgeError {
     InvalidRentPayer,
     #[msg("Member records stay open for the retention period after settlement")]
     RecordRetentionNotElapsed,
+    #[msg("This mint cannot be used for a group")]
+    UnsupportedMint,
+    #[msg("Mint must be writable to cancel a group with no members whose vault holds tokens")]
+    MintNotWritable,
 }

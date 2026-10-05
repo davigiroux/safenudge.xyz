@@ -6,6 +6,7 @@ import { getMemberRecordPDA, getGroupConfigPDA } from '../utils/pda'
 export type MemberRecordData = {
   group: string
   member: string
+  rentPayer: string
   totalDeposited: number
   depositsMade: number
   periodsDeposited: boolean[]
@@ -58,6 +59,7 @@ export function useMemberRecord(groupCode: string | undefined) {
                 record: {
                   group: account.group.toString(),
                   member: account.member.toString(),
+                  rentPayer: account.rentPayer.toString(),
                   totalDeposited: account.totalDeposited.toNumber(),
                   depositsMade: account.depositsMade,
                   periodsDeposited: account.periodsDeposited,

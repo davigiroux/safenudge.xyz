@@ -34,7 +34,7 @@ export default function JoinGroup() {
   const { publicKey } = useWallet()
   const program = useAnchorProgram()
   const { wrongCluster } = useClusterCheck()
-  const { txState, errorDetail, errorKind, errorProgramCode, execute, reset } = useTransaction()
+  const { txState, errorKind, errorProgramCode, execute, reset } = useTransaction()
 
   const code = parseGroupCode(rawCode)
   const { data: group, loading: groupLoading, error: groupError } = useGroupConfig(code ?? undefined)
@@ -310,7 +310,6 @@ export default function JoinGroup() {
         <TransactionStatus
           state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
           groupCode={code}
-          errorDetail={errorDetail || undefined}
           errorKind={errorKind}
           errorProgramCode={errorProgramCode}
           onRetry={handleJoin}

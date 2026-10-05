@@ -273,7 +273,7 @@
       { "q": "Preciso confiar em todo mundo do grupo?", "a": "Você precisa confiar no cofre. A caução e as regras automáticas cobrem quando a confiança humana falha — e ela às vezes falha." },
       { "q": "Quem fica com o dinheiro enquanto espera?", "a": "O contrato. Não a SafeNudge, nem o criador do grupo, nem um banco parceiro. O saldo é visível on-chain o tempo todo." },
       { "q": "Tem taxa?", "a": "Sobre o seu depósito, não. A SafeNudge cobra 5% sobre o pool de penalidades — só sobre o que foi descontado de quem atrasou. Os outros 95% das penalidades viram bônus pra quem cumpriu. Se ninguém atrasou no ciclo, a gente não cobra nada. Você ainda paga as taxas de rede da Solana, que são frações de centavo por transação." },
-      { "q": "Posso sair no meio?", "a": "Pode, mas os depósitos já feitos ficam no cofre até o fim do ciclo — todo mundo recebe junto no final. Se você sair sem cumprir, a penalidade combinada é acionada e vira bônus pro resto do grupo." },
+      { "q": "Posso sair no meio?", "a": "Antes do ciclo começar, pode: você sai do grupo e recebe seu depósito de volta. Depois que o ciclo começa, não dá mais pra sair. Os depósitos ficam no cofre até o fim, e cada depósito que você perder é multado no acerto final." },
       { "q": "E se a SafeNudge quebrar?", "a": "O cofre continua funcionando. É um contrato aberto na blockchain — você consegue resgatar tudo direto, mesmo sem o app. A gente facilita, mas não tranca." },
       { "q": "O dinheiro rende enquanto espera?", "a": "Se o grupo quiser, sim — tem uma opção de render em stablecoin com rendimento de tesouraria. Opt-in, com botão visível pra desligar." }
     ],
@@ -334,6 +334,25 @@
     "confirmWord": "cancelar",
     "confirmCta": "Cancelar e devolver tudo",
     "signNote": "Você vai assinar uma transação Solana. A SafeNudge não toca no dinheiro — a devolução é feita direto pelo contrato."
+  },
+  "leaveGroup": {
+    "trigger": "Sair do grupo",
+    "sheetLabel": "Sair do grupo",
+    "kicker": "Sair do grupo",
+    "titleA": "Tudo bem mudar de ideia.",
+    "titleB": "Seu depósito volta inteiro.",
+    "intro": "O ciclo de {{groupName}} ainda não começou, então dá pra sair sem multa. O que você depositou volta pra sua carteira.",
+    "refundTitle": "Você recebe {{amount}} de volta",
+    "refundBody": "Na mesma carteira que você usou pra entrar. Sem multa.",
+    "seatTitle": "Sua vaga fica livre",
+    "seatBody": "Outra pessoa pode entrar no seu lugar. O grupo continua aberto pra quem ficou.",
+    "returnTitle": "Dá pra voltar depois",
+    "returnBody": "Enquanto o ciclo não começar e tiver vaga, é só entrar de novo com o código do grupo.",
+    "confirmCta": "Sair e receber meu depósito",
+    "stay": "Ficar no grupo",
+    "signNote": "Você confirma na sua carteira. A SafeNudge não toca no dinheiro: a devolução sai direto do cofre do grupo.",
+    "successTitle": "Você saiu do grupo",
+    "successDetail": "Seu depósito já voltou pra sua carteira. Quando quiser, é só entrar de novo."
   },
   "seguranca": {
     "kicker": "Segurança",
@@ -424,7 +443,9 @@
       "NoFeesToWithdraw": "Não há taxas para sacar no momento",
       "TreasuryNotInitialized": "O cofre de taxas do protocolo ainda não foi criado. Tente de novo em instantes.",
       "InvalidRentPayer": "O reembolso só pode ir para quem pagou a abertura desta conta. Atualize a página e tente de novo.",
-      "RecordRetentionNotElapsed": "Ainda é cedo para fechar os registros deste grupo. Eles ficam guardados por um tempo depois do encerramento. Tente de novo mais tarde."
+      "RecordRetentionNotElapsed": "Ainda é cedo para fechar os registros deste grupo. Eles ficam guardados por um tempo depois do encerramento. Tente de novo mais tarde.",
+      "UnsupportedMint": "Essa moeda ainda não pode ser usada em grupos. Escolha outra e tente de novo.",
+      "MintNotWritable": "Não conseguimos encerrar o grupo dessa vez. Atualize a página e tente de novo."
     }
   }
 }

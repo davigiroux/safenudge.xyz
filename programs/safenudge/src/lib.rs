@@ -120,6 +120,10 @@ pub mod safenudge {
         ctx.accounts.handler(&ctx.bumps)
     }
 
+    pub fn leave_group(ctx: Context<LeaveGroup>) -> Result<()> {
+        ctx.accounts.handler(&ctx.bumps)
+    }
+
     pub fn start_cycle(ctx: Context<StartCycle>) -> Result<()> {
         ctx.accounts.handler()
     }
@@ -132,6 +136,9 @@ pub mod safenudge {
         Distribute::handler(ctx)
     }
 
+    /// Returns every member's deposits and closes the vault. With no members, burns any
+    /// balance in the vault first: `mint` must then be writable, or it fails with
+    /// `MintNotWritable`.
     pub fn emergency_cancel<'info>(ctx: Context<'info, EmergencyCancel<'info>>) -> Result<()> {
         EmergencyCancel::handler(ctx)
     }

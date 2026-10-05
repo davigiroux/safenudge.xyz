@@ -273,7 +273,7 @@
       { "q": "Do I have to trust everyone in the group?", "a": "You need to trust the vault. The escrow and automatic rules cover the moments when human trust fails — because it does sometimes." },
       { "q": "Who holds the money while it waits?", "a": "The contract. Not SafeNudge, not the group creator, not a partner bank. The balance is visible on-chain the whole time." },
       { "q": "Are there fees?", "a": "Not on your deposit. SafeNudge takes 5% of the penalty pool — only on what gets deducted from latecomers. The other 95% becomes a bonus for members who followed through. If nobody is late in a cycle, we don't charge anything. You still pay Solana network fees, which are fractions of a cent per transaction." },
-      { "q": "Can I leave mid-cycle?", "a": "You can, but your deposits already in the vault stay there until cycle end — everyone receives together at the end. If you leave without completing, the agreed penalty kicks in and becomes a bonus for the rest of the group." },
+      { "q": "Can I leave mid-cycle?", "a": "Before the cycle starts, yes: you leave the group and get your deposit back. Once the cycle starts, you can't leave. Deposits stay in the vault until the end, and each deposit you miss is penalized at the final settlement." },
       { "q": "What if SafeNudge goes out of business?", "a": "The vault keeps working. It's an open contract on the blockchain — you can recover everything directly, even without the app. We make things easier, but we don't lock you in." },
       { "q": "Does the money earn yield while it waits?", "a": "If the group wants, yes — there's a stablecoin yield option with treasury-rate returns. Opt-in, with a visible button to turn it off." }
     ],
@@ -334,6 +334,25 @@
     "confirmWord": "cancel",
     "confirmCta": "Cancel and refund everything",
     "signNote": "You'll sign a Solana transaction. SafeNudge never touches the money — the refund is made directly by the contract."
+  },
+  "leaveGroup": {
+    "trigger": "Leave group",
+    "sheetLabel": "Leave group",
+    "kicker": "Leave group",
+    "titleA": "It's fine to change your mind.",
+    "titleB": "Your deposit comes back in full.",
+    "intro": "The {{groupName}} cycle hasn't started yet, so you can leave with no penalty. What you deposited goes back to your wallet.",
+    "refundTitle": "You get {{amount}} back",
+    "refundBody": "To the same wallet you joined with. No penalty.",
+    "seatTitle": "Your seat opens up",
+    "seatBody": "Someone else can take your place. The group stays open for everyone who stayed.",
+    "returnTitle": "You can come back later",
+    "returnBody": "As long as the cycle hasn't started and there's a seat, just join again with the group code.",
+    "confirmCta": "Leave and get my deposit back",
+    "stay": "Stay in the group",
+    "signNote": "You confirm in your wallet. SafeNudge never touches the money: the refund comes straight from the group vault.",
+    "successTitle": "You left the group",
+    "successDetail": "Your deposit is back in your wallet. You can join again whenever you like."
   },
   "seguranca": {
     "kicker": "Security",
@@ -424,7 +443,9 @@
       "NoFeesToWithdraw": "There are no fees to withdraw right now",
       "TreasuryNotInitialized": "The protocol fee vault hasn't been created yet. Try again shortly.",
       "InvalidRentPayer": "The refund can only go to the wallet that paid to open this account. Refresh the page and try again.",
-      "RecordRetentionNotElapsed": "It's too early to close this group's records. They are kept for a while after the group ends. Try again later."
+      "RecordRetentionNotElapsed": "It's too early to close this group's records. They are kept for a while after the group ends. Try again later.",
+      "UnsupportedMint": "This currency can't be used for groups yet. Pick another one and try again.",
+      "MintNotWritable": "We couldn't end the group this time. Refresh the page and try again."
     }
   }
 }

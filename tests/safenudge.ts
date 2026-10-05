@@ -11,6 +11,7 @@ import {
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
   MINT_SIZE,
   ACCOUNT_SIZE,
@@ -19,8 +20,25 @@ import {
   getAssociatedTokenAddressSync,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
+  createTransferCheckedInstruction,
+  createFreezeAccountInstruction,
+  createInitializeTransferFeeConfigInstruction,
+  createInitializePermanentDelegateInstruction,
+  createInitializeTransferHookInstruction,
+  createInitializeDefaultAccountStateInstruction,
+  createInitializeInterestBearingMintInstruction,
+  createInitializeMetadataPointerInstruction,
+  getMintLen,
+  getExtensionTypes,
+  unpackMint,
   AccountLayout,
+  AccountState,
+  ExtensionType,
+  MintLayout,
+  NATIVE_MINT,
+  NATIVE_MINT_2022,
 } from "@solana/spl-token";
+import { createInitializeInstruction as createInitializeMetadataInstruction } from "@solana/spl-token-metadata";
 import { createHash } from "crypto";
 import * as fs from "fs";
 import * as path from "path";
@@ -91,28 +109,31 @@ describe("safenudge", () => {
 
     // Mock USDC mint, recreated per test for isolation.
     mintAuthority = Keypair.generate();
-    const mintKeypair = Keypair.generate();
-    const lamports = await provider.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+    usdcMint = await createMint(TOKEN_PROGRAM_ID);
+  });
 
+  type MintOpts = {
+    extensions?: ExtensionType[];
+    configure?: (mint: PublicKey) => TransactionInstruction[];
+    freezeAuthority?: PublicKey;
+  };
+
+  async function createMint(tokenProgram: PublicKey, opts: MintOpts = {}): Promise<PublicKey> {
+    const mintKeypair = Keypair.generate();
+    const mint = mintKeypair.publicKey;
+    const space = getMintLen(opts.extensions ?? []);
+    const roomForMetadata = 400;
+    const lamports = await provider.connection.getMinimumBalanceForRentExemption(space + roomForMetadata);
     const tx = new Transaction().add(
       SystemProgram.createAccount({
-        fromPubkey: payer.publicKey,
-        newAccountPubkey: mintKeypair.publicKey,
-        space: MINT_SIZE,
-        lamports,
-        programId: TOKEN_PROGRAM_ID,
+        fromPubkey: payer.publicKey, newAccountPubkey: mint, space, lamports, programId: tokenProgram,
       }),
-      createInitializeMintInstruction(
-        mintKeypair.publicKey,
-        DECIMALS,
-        mintAuthority.publicKey,
-        null,
-        TOKEN_PROGRAM_ID
-      )
+      ...(opts.configure?.(mint) ?? []),
+      createInitializeMintInstruction(mint, DECIMALS, mintAuthority.publicKey, opts.freezeAuthority ?? null, tokenProgram),
     );
     await provider.sendAndConfirm(tx, [payer, mintKeypair]);
-    usdcMint = mintKeypair.publicKey;
-  });
+    return mint;
+  }
 
   // No manual `global.gc()` here on purpose. Forcing GCs from JS lands in
   // `v8::internal::GCExtension::GC` → `PerformGarbageCollection` →
@@ -251,17 +272,56 @@ describe("safenudge", () => {
   async function createFundedMember(
     amount: number | bigint,
     lamports: number = 2 * LAMPORTS_PER_SOL,
+    mint: PublicKey = usdcMint,
+    tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
   ): Promise<{ keypair: Keypair; tokenAccount: PublicKey }> {
     const keypair = await fundedKeypair(lamports);
 
-    const ata = getAssociatedTokenAddressSync(usdcMint, keypair.publicKey);
+    const ata = getAssociatedTokenAddressSync(mint, keypair.publicKey, false, tokenProgram);
     const tokenTx = new Transaction().add(
-      createAssociatedTokenAccountInstruction(payer.publicKey, ata, keypair.publicKey, usdcMint),
-      createMintToInstruction(usdcMint, ata, mintAuthority.publicKey, amount)
+      createAssociatedTokenAccountInstruction(payer.publicKey, ata, keypair.publicKey, mint, tokenProgram),
+      createMintToInstruction(mint, ata, mintAuthority.publicKey, amount, [], tokenProgram)
     );
     await provider.sendAndConfirm(tokenTx, [payer, mintAuthority]);
 
     return { keypair, tokenAccount: ata };
+  }
+
+  async function createTokenAccountFor(owner: PublicKey, mint: PublicKey = usdcMint): Promise<PublicKey> {
+    const account = Keypair.generate();
+    await provider.sendAndConfirm(
+      new Transaction().add(
+        SystemProgram.createAccount({
+          fromPubkey: payer.publicKey, newAccountPubkey: account.publicKey,
+          space: ACCOUNT_SIZE, lamports: Number(rentFor(ACCOUNT_SIZE)), programId: TOKEN_PROGRAM_ID,
+        }),
+        createInitializeAccountInstruction(account.publicKey, mint, owner),
+      ),
+      [payer, account],
+    );
+    return account.publicKey;
+  }
+
+  async function freezeTokenAccount(tokenAccount: PublicKey, mint: PublicKey): Promise<void> {
+    await provider.sendAndConfirm(
+      new Transaction().add(createFreezeAccountInstruction(tokenAccount, mint, mintAuthority.publicKey)),
+      [payer, mintAuthority],
+    );
+  }
+
+  function plantMint(address: PublicKey, tokenProgram: PublicKey, extensionBytes: Buffer = Buffer.alloc(0)): void {
+    const base = Buffer.alloc(MINT_SIZE);
+    MintLayout.encode({
+      mintAuthorityOption: 0, mintAuthority: PublicKey.default, supply: 0n, decimals: DECIMALS,
+      isInitialized: true, freezeAuthorityOption: 0, freezeAuthority: PublicKey.default,
+    }, base);
+    const MINT_ACCOUNT_TYPE = 1;
+    const data = extensionBytes.length === 0
+      ? base
+      : Buffer.concat([base, Buffer.alloc(ACCOUNT_SIZE - MINT_SIZE), Buffer.from([MINT_ACCOUNT_TYPE]), extensionBytes]);
+    provider.client.setAccount(address, {
+      lamports: Number(rentFor(data.length)), data, owner: tokenProgram, executable: false, rentEpoch: 0,
+    });
   }
 
   const WEEK_SECS = 7 * 86400;
@@ -291,6 +351,8 @@ describe("safenudge", () => {
   }
 
   const SIGNATURE_FEE = 5_000n;
+  const TRANSACTION_BYTE_LIMIT = 1232;
+  const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
   const GROUP_CONFIG_SIZE = 179;
   const MEMBER_RECORD_SIZE = 166;
 
@@ -322,13 +384,25 @@ describe("safenudge", () => {
     return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
   }
 
+  function withWritable(ix: TransactionInstruction, account: PublicKey): TransactionInstruction {
+    const keys = ix.keys.map((k) => (k.pubkey.equals(account) ? { ...k, isWritable: true } : k));
+    return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
+  }
+
+  function mintSupply(mint: PublicKey): bigint {
+    return MintLayout.decode(context.banksClient.getAccount(mint).data).supply;
+  }
+
   function walletSigners(...actors: Keypair[]): Keypair[] {
     return [...new Set(actors)].filter((k) => k !== payer);
   }
 
   type GroupOpts = { depositAmount: number; totalPeriods?: number; maxMembers?: number; penaltyValue?: number };
 
-  function createGroupMethod(code: string, opts: GroupOpts, creator: PublicKey, rentPayer: PublicKey) {
+  function createGroupMethod(
+    code: string, opts: GroupOpts, creator: PublicKey, rentPayer: PublicKey,
+    mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+  ) {
     const [gPda] = getGroupPda(code);
     const [vPda] = getVaultPda(gPda);
     return program.methods
@@ -343,7 +417,7 @@ describe("safenudge", () => {
       )
       .accounts({
         creator, rentPayer, groupConfig: gPda, vault: vPda,
-        mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        mint, tokenProgram, systemProgram: SystemProgram.programId,
       });
   }
 
@@ -364,13 +438,31 @@ describe("safenudge", () => {
     return { gPda, vPda };
   }
 
-  function joinMethod(member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey, mint: PublicKey = usdcMint) {
+  function joinMethod(
+    member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey,
+    mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+  ) {
     return program.methods.joinGroup()
       .accounts({
         member: member.keypair.publicKey, rentPayer, groupConfig: gPda, memberRecord: member.recordPda,
         memberTokenAccount: member.tokenAccount, vault: vPda, mint,
-        tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+        tokenProgram, systemProgram: SystemProgram.programId,
       });
+  }
+
+  function leaveMethod(
+    member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey = member.keypair.publicKey,
+    mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+  ) {
+    return program.methods.leaveGroup()
+      .accounts({
+        member: member.keypair.publicKey, groupConfig: gPda, memberRecord: member.recordPda, rentPayer,
+        memberTokenAccount: member.tokenAccount, vault: vPda, mint, tokenProgram,
+      });
+  }
+
+  function leaveCall(member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer?: PublicKey): Promise<string> {
+    return leaveMethod(member, gPda, vPda, rentPayer).signers([member.keypair]).rpc();
   }
 
   function joinCall(
@@ -430,17 +522,19 @@ describe("safenudge", () => {
       .rpc();
   }
 
+  function cancelMethod(
+    gPda: PublicKey, vPda: PublicKey, members: Member[], creator: PublicKey,
+    mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+  ) {
+    return program.methods.emergencyCancel()
+      .accounts({ creator, groupConfig: gPda, vault: vPda, mint, tokenProgram })
+      .remainingAccounts(memberPairs(members));
+  }
+
   function cancelCall(
     gPda: PublicKey, vPda: PublicKey, members: Member[], creator: Keypair = payer,
   ): Promise<string> {
-    return program.methods.emergencyCancel()
-      .accounts({
-        creator: creator.publicKey, groupConfig: gPda, vault: vPda,
-        mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .remainingAccounts(memberPairs(members))
-      .signers(walletSigners(creator))
-      .rpc();
+    return cancelMethod(gPda, vPda, members, creator.publicKey).signers(walletSigners(creator)).rpc();
   }
 
   function refundVaultRentMethod(gPda: PublicKey, rentPayer: PublicKey) {
@@ -824,6 +918,131 @@ describe("safenudge", () => {
   });
 
   // ─── join_group tests ─────────────────────────────────────
+
+  describe("create_group mint rules", () => {
+    const GROUP = { depositAmount: 10_000_000 };
+
+    function createOn(code: string, mint: PublicKey, tokenProgram: PublicKey): Promise<string> {
+      return createGroupMethod(code, GROUP, payer.publicKey, payer.publicKey, mint, tokenProgram).rpc();
+    }
+
+    const rejectedExtensions: [string, MintOpts][] = [
+      ["a transfer fee", {
+        extensions: [ExtensionType.TransferFeeConfig],
+        configure: (m) => [
+          createInitializeTransferFeeConfigInstruction(m, null, null, 100, 1_000_000_000n, TOKEN_2022_PROGRAM_ID),
+        ],
+      }],
+      ["a permanent delegate", {
+        extensions: [ExtensionType.PermanentDelegate],
+        configure: (m) => [createInitializePermanentDelegateInstruction(m, payer.publicKey, TOKEN_2022_PROGRAM_ID)],
+      }],
+      ["a transfer hook", {
+        extensions: [ExtensionType.TransferHook],
+        configure: (m) => [
+          createInitializeTransferHookInstruction(m, payer.publicKey, program.programId, TOKEN_2022_PROGRAM_ID),
+        ],
+      }],
+      ["token accounts frozen by default", {
+        extensions: [ExtensionType.DefaultAccountState],
+        configure: (m) => [
+          createInitializeDefaultAccountStateInstruction(m, AccountState.Frozen, TOKEN_2022_PROGRAM_ID),
+        ],
+      }],
+    ];
+
+    rejectedExtensions.forEach(([what, opts], i) => {
+      it(`fails with UnsupportedMint for a Token-2022 mint with ${what}`, async () => {
+        const mint = await createMint(TOKEN_2022_PROGRAM_ID, { ...opts, freezeAuthority: mintAuthority.publicKey });
+        const code = `mint-rejected-${i}`;
+
+        await expectError(createOn(code, mint, TOKEN_2022_PROGRAM_ID), "UnsupportedMint");
+
+        assert.isNull(context.banksClient.getAccount(getGroupPda(code)[0]));
+      });
+    });
+
+    it("fails for a Token-2022 mint with an extension type this build does not know, at vault creation", async () => {
+      const mint = Keypair.generate().publicKey;
+      const unknownType = Buffer.alloc(4);
+      unknownType.writeUInt16LE(9_999, 0);
+      plantMint(mint, TOKEN_2022_PROGRAM_ID, unknownType);
+
+      await expectError(createOn("mint-unknown", mint, TOKEN_2022_PROGRAM_ID), "Error Code: InvalidAccountData");
+
+      assert.isNull(context.banksClient.getAccount(getGroupPda("mint-unknown")[0]));
+    });
+
+    for (const [name, tokenProgram, nativeMint] of [
+      ["SPL Token", TOKEN_PROGRAM_ID, NATIVE_MINT],
+      ["Token-2022", TOKEN_2022_PROGRAM_ID, NATIVE_MINT_2022],
+    ] as const) {
+      it(`fails with UnsupportedMint for the native mint of ${name}`, async () => {
+        plantMint(nativeMint, tokenProgram);
+        const code = `mint-native-${tokenProgram.toBase58().slice(0, 6)}`;
+
+        await expectError(createOn(code, nativeMint, tokenProgram), "UnsupportedMint");
+
+        assert.isNull(context.banksClient.getAccount(getGroupPda(code)[0]));
+      });
+    }
+
+    it("accepts a Token-2022 mint with no extension", async () => {
+      const mint = await createMint(TOKEN_2022_PROGRAM_ID);
+
+      await createOn("mint-plain-2022", mint, TOKEN_2022_PROGRAM_ID);
+
+      const group = await program.account.groupConfig.fetch(getGroupPda("mint-plain-2022")[0]);
+      assert.equal(group.mint.toBase58(), mint.toBase58());
+      assert.equal(group.status, 0);
+    });
+
+    it("accepts a legacy SPL mint with a freeze authority", async () => {
+      const mint = await createMint(TOKEN_PROGRAM_ID, { freezeAuthority: mintAuthority.publicKey });
+
+      await createOn("mint-freeze-authority", mint, TOKEN_PROGRAM_ID);
+
+      const group = await program.account.groupConfig.fetch(getGroupPda("mint-freeze-authority")[0]);
+      assert.equal(group.mint.toBase58(), mint.toBase58());
+    });
+
+    it("accepts an interest-bearing Token-2022 mint with metadata, and a member joins and leaves", async () => {
+      const mint = await createMint(TOKEN_2022_PROGRAM_ID, {
+        extensions: [ExtensionType.MetadataPointer, ExtensionType.InterestBearingConfig],
+        configure: (m) => [
+          createInitializeMetadataPointerInstruction(m, mintAuthority.publicKey, m, TOKEN_2022_PROGRAM_ID),
+          createInitializeInterestBearingMintInstruction(m, mintAuthority.publicKey, 500, TOKEN_2022_PROGRAM_ID),
+        ],
+      });
+      await provider.sendAndConfirm(
+        new Transaction().add(createInitializeMetadataInstruction({
+          programId: TOKEN_2022_PROGRAM_ID, metadata: mint, updateAuthority: mintAuthority.publicKey,
+          mint, mintAuthority: mintAuthority.publicKey, name: "Real Token", symbol: "BRT", uri: "https://example.com/brt.json",
+        })),
+        [payer, mintAuthority],
+      );
+      const mintAccount = context.banksClient.getAccount(mint);
+      const mintExtensions = getExtensionTypes(
+        unpackMint(mint, { ...mintAccount, data: Buffer.from(mintAccount.data) }, TOKEN_2022_PROGRAM_ID).tlvData,
+      );
+      assert.sameMembers(
+        mintExtensions,
+        [ExtensionType.MetadataPointer, ExtensionType.InterestBearingConfig, ExtensionType.TokenMetadata],
+      );
+
+      await createOn("mint-interest", mint, TOKEN_2022_PROGRAM_ID);
+
+      const [gPda] = getGroupPda("mint-interest");
+      const [vPda] = getVaultPda(gPda);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint, TOKEN_2022_PROGRAM_ID);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      await joinMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      await leaveMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+    });
+  });
 
   describe("join_group", () => {
     it("member joins with deposit", async () => {
@@ -1215,6 +1434,455 @@ describe("safenudge", () => {
       assert.deepEqual(data.subarray(8, 40), gPda.toBuffer());
       assert.deepEqual(data.subarray(40, 72), member.keypair.publicKey.toBuffer());
       assert.deepEqual(data.subarray(72, 104), sponsor.publicKey.toBuffer());
+    });
+  });
+
+  describe("leave_group", () => {
+    const OPEN = { depositAmount: 10_000_000 };
+
+    async function remainingDeposits(members: Member[]): Promise<bigint> {
+      let sum = 0n;
+      for (const m of members) {
+        sum += BigInt((await program.account.memberRecord.fetch(m.recordPda)).totalDeposited.toString());
+      }
+      return sum;
+    }
+
+    it("returns the deposit, closes the record and frees the seat", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-ok", OPEN);
+      const m1 = await joinNewMember(gPda, vPda, 25_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 25_000_000);
+      const stranger = await fundedKeypair();
+      const memberBefore = lamportsOf(m1.keypair.publicKey);
+      const strangerBefore = lamportsOf(stranger.publicKey);
+      const groupLamportsBefore = lamportsOf(gPda);
+
+      const cost = sendAs(stranger, [await leaveMethod(m1, gPda, vPda).instruction()], [m1.keypair]);
+
+      assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
+      assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 25_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.isNull(context.banksClient.getAccount(m1.recordPda));
+      assert.equal(lamportsOf(m1.keypair.publicKey) - memberBefore, rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(strangerBefore - lamportsOf(stranger.publicKey), 2n * SIGNATURE_FEE);
+      assert.equal(lamportsOf(gPda), groupLamportsBefore);
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.currentMembers, 1);
+      assert.equal(group.status, 0);
+      const other = await program.account.memberRecord.fetch(m2.recordPda);
+      assert.equal(other.totalDeposited.toString(), "10000000");
+    });
+
+    it("pays the record rent to the sponsor and nothing to a member with zero SOL", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-sponsored", OPEN);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, 0);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      const sponsor = await fundedKeypair();
+      const stranger = await fundedKeypair();
+      sendAs(sponsor, [await joinMethod(member, gPda, vPda, sponsor.publicKey).instruction()], [keypair]);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+      const cost = sendAs(
+        stranger, [await leaveMethod(member, gPda, vPda, sponsor.publicKey).instruction()], [keypair],
+      );
+
+      assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
+      assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(lamportsOf(keypair.publicKey), 0n);
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+    });
+
+    it("moves no lamports from the rent payer to anyone else over three join-leave rounds", async () => {
+      const creator = await fundedKeypair();
+      await createGroupCall("leave-loop", OPEN, creator);
+      const [gPda] = getGroupPda("leave-loop");
+      const [vPda] = getVaultPda(gPda);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, 0);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      const sponsor = await fundedKeypair();
+      const stranger = await fundedKeypair();
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const strangerBefore = lamportsOf(stranger.publicKey);
+      const creatorBefore = lamportsOf(creator.publicKey);
+      const groupBefore = lamportsOf(gPda);
+      const vaultBefore = lamportsOf(vPda);
+
+      for (let round = 0; round < 3; round++) {
+        sendAs(sponsor, [await joinMethod(member, gPda, vPda, sponsor.publicKey).instruction()], [keypair]);
+        assert.equal(lamportsOf(member.recordPda), rentFor(MEMBER_RECORD_SIZE));
+        sendAs(stranger, [await leaveMethod(member, gPda, vPda, sponsor.publicKey).instruction()], [keypair]);
+        assert.equal(lamportsOf(keypair.publicKey), 0n, `member gained lamports in round ${round}`);
+      }
+
+      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), 3n * 2n * SIGNATURE_FEE);
+      assert.equal(strangerBefore - lamportsOf(stranger.publicKey), 3n * 2n * SIGNATURE_FEE);
+      assert.equal(lamportsOf(creator.publicKey), creatorBefore);
+      assert.equal(lamportsOf(gPda), groupBefore);
+      assert.equal(lamportsOf(vPda), vaultBefore);
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 0);
+    });
+
+    it("pays lamports sent to the record to the rent payer, not to the member", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-donated-rent", OPEN);
+      const sponsor = await fundedKeypair();
+      const member = await joinNewMember(gPda, vPda, 10_000_000, sponsor);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: member.recordPda, lamports: 1_000_000 }),
+        ),
+        [payer],
+      );
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const memberBefore = lamportsOf(member.keypair.publicKey);
+
+      await leaveCall(member, gPda, vPda, sponsor.publicKey);
+
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(MEMBER_RECORD_SIZE) + 1_000_000n);
+      assert.equal(lamportsOf(member.keypair.publicKey), memberBefore);
+    });
+
+    it("lets the same wallet join again with a fresh record and a different rent payer", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-rejoin", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      const sponsor = await fundedKeypair();
+      await leaveCall(member, gPda, vPda);
+
+      await joinCall(member, gPda, vPda, usdcMint, sponsor);
+
+      const record = await program.account.memberRecord.fetch(member.recordPda);
+      assert.equal(record.rentPayer.toBase58(), sponsor.publicKey.toBase58());
+      assert.equal(record.totalDeposited.toString(), "10000000");
+      assert.equal(record.depositsMade, 1);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+    });
+
+    it("frees a seat in a full group", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-seat", { depositAmount: 10_000_000, maxMembers: 2 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      await joinNewMember(gPda, vPda, 10_000_000);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000);
+      const waiting = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      await expectError(joinCall(waiting, gPda, vPda), "GroupFull");
+
+      await leaveCall(m1, gPda, vPda);
+      await joinCall(waiting, gPda, vPda);
+
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 2);
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+    });
+
+    it("keeps the vault equal to the deposits of the members that remain after every leave", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-invariant", OPEN);
+      const members: Member[] = [];
+      for (let i = 0; i < 4; i++) {
+        members.push(await joinNewMember(gPda, vPda, 10_000_000));
+      }
+      const leaveOrder = [1, 3, 0, 2];
+      const expectedVault = [30_000_000n, 20_000_000n, 10_000_000n, 0n];
+      const remaining = [...members];
+
+      for (let step = 0; step < leaveOrder.length; step++) {
+        const leaver = members[leaveOrder[step]];
+        await leaveCall(leaver, gPda, vPda);
+        remaining.splice(remaining.indexOf(leaver), 1);
+
+        assert.equal(await getTokenBalanceOrZero(vPda), expectedVault[step]);
+        assert.equal(await remainingDeposits(remaining), expectedVault[step]);
+        assert.equal(await getTokenBalanceOrZero(leaver.tokenAccount), 10_000_000n);
+      }
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 0);
+    });
+
+    it("lets the creator cancel the empty group after the last member leaves", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-last", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      const vaultRent = lamportsOf(vPda);
+      await leaveCall(member, gPda, vPda);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 0);
+
+      await cancelCall(gPda, vPda, []);
+
+      assert.equal((await program.account.groupConfig.fetch(gPda)).status, 3);
+      assert.isNull(context.banksClient.getAccount(vPda));
+      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE) + vaultRent);
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+    });
+
+    it("pays exactly the recorded deposit when the vault holds extra tokens, and the empty-group cancel burns the rest", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-extra", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      await provider.sendAndConfirm(
+        new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 7)),
+        [payer, mintAuthority],
+      );
+      assert.equal(mintSupply(usdcMint), 10_000_007n);
+
+      await leaveCall(member, gPda, vPda);
+
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 7n);
+
+      sendAs(payer, [withWritable(await cancelMethod(gPda, vPda, [], payer.publicKey).instruction(), usdcMint)]);
+
+      assert.isNull(context.banksClient.getAccount(vPda));
+      assert.equal(mintSupply(usdcMint), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+    });
+
+    it("makes start_cycle fail with InsufficientMembers when leaves drop the group under 2 members", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-under-two", OPEN);
+      await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      await leaveCall(m2, gPda, vPda);
+
+      await expectError(
+        program.methods.startCycle().accounts({ creator: payer.publicKey, groupConfig: gPda }).rpc(),
+        "InsufficientMembers",
+      );
+
+      assert.equal((await program.account.groupConfig.fetch(gPda)).status, 0);
+      await joinNewMember(gPda, vPda, 10_000_000);
+      await startCycle(gPda);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).status, 1);
+    });
+
+    it("fails while the group is Active, and the group still settles", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-active", { depositAmount: 10_000_000, totalPeriods: 1 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      const cycleStart = await startCycle(gPda);
+
+      await expectError(leaveCall(m1, gPda, vPda), "InvalidGroupStatus");
+
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 0n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+      assert.equal(lamportsOf(m1.recordPda), rentFor(MEMBER_RECORD_SIZE));
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 2);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await distributeCall(gPda, vPda, [m1, m2], null);
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_000n);
+    });
+
+    for (const how of ["distribute", "cancel"] as const) {
+      it(`fails after ${how}: the closed vault fails first, a live token account in its place reaches the status check`, async () => {
+        const { gPda, vPda, members } = await settledGroup(`leave-after-${how}`, how);
+        const [m1, m2] = members;
+
+        await expectError(leaveCall(m1, gPda, vPda), "AccountNotInitialized");
+        const liveTokenAccountInVaultSlot = m2.tokenAccount;
+        await expectError(leaveCall(m1, gPda, liveTokenAccountInVaultSlot), "InvalidGroupStatus");
+
+        assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_000n);
+        assert.equal(lamportsOf(m1.recordPda), rentFor(MEMBER_RECORD_SIZE));
+        assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 2);
+      });
+    }
+
+    it("fails for a wallet that is not a member", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-outsider", OPEN);
+      await joinNewMember(gPda, vPda, 10_000_000);
+      const { keypair, tokenAccount } = await createFundedMember(0);
+      const outsider = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+
+      await expectError(leaveCall(outsider, gPda, vPda), "AccountNotInitialized");
+
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 0n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+    });
+
+    it("fails with another member's record", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-other-record", OPEN);
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      const withOtherRecord = { ...m1, recordPda: m2.recordPda };
+
+      await expectError(leaveCall(withOtherRecord, gPda, vPda, m2.keypair.publicKey), "ConstraintSeeds");
+
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 0n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+      assert.equal(lamportsOf(m2.recordPda), rentFor(MEMBER_RECORD_SIZE));
+    });
+
+    it("fails when a member of another group passes that group's record", async () => {
+      const target = await createWeeklyGroup("leave-foreign-a", OPEN);
+      const other = await createWeeklyGroup("leave-foreign-b", OPEN);
+      await joinNewMember(target.gPda, target.vPda, 10_000_000);
+      const attacker = await joinNewMember(other.gPda, other.vPda, 10_000_000);
+
+      await expectError(leaveCall(attacker, target.gPda, target.vPda), "ConstraintSeeds");
+
+      assert.equal(await getTokenBalanceOrZero(attacker.tokenAccount), 0n);
+      assert.equal(await getTokenBalanceOrZero(target.vPda), 10_000_000n);
+      assert.equal((await program.account.groupConfig.fetch(target.gPda)).currentMembers, 1);
+      await leaveCall(attacker, other.gPda, other.vPda);
+      assert.equal(await getTokenBalanceOrZero(attacker.tokenAccount), 10_000_000n);
+    });
+
+    it("fails with the vault of another group", async () => {
+      const own = await createWeeklyGroup("leave-vault-a", OPEN);
+      const other = await createWeeklyGroup("leave-vault-b", OPEN);
+      const member = await joinNewMember(own.gPda, own.vPda, 10_000_000);
+      await joinNewMember(other.gPda, other.vPda, 10_000_000);
+
+      await expectError(leaveCall(member, own.gPda, other.vPda), "ConstraintSeeds");
+
+      assert.equal(await getTokenBalanceOrZero(other.vPda), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 0n);
+    });
+
+    it("fails when the destination is another wallet's token account", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-redirect-tokens", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      const accomplice = await createFundedMember(0);
+      const redirected = { ...member, tokenAccount: accomplice.tokenAccount };
+
+      await expectError(leaveCall(redirected, gPda, vPda), "ConstraintTokenOwner");
+
+      assert.equal(await getTokenBalanceOrZero(accomplice.tokenAccount), 0n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+    });
+
+    it("pays a token account of the member that is not the canonical ATA", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-non-ata", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      const otherAccount = await createTokenAccountFor(member.keypair.publicKey);
+
+      await leaveCall({ ...member, tokenAccount: otherAccount }, gPda, vPda);
+
+      assert.equal(await getTokenBalanceOrZero(otherAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 0n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+    });
+
+    it("fails into a frozen token account and pays another token account of the same member", async () => {
+      const mint = await createMint(TOKEN_PROGRAM_ID, { freezeAuthority: mintAuthority.publicKey });
+      await createGroupMethod("leave-frozen", OPEN, payer.publicKey, payer.publicKey, mint).rpc();
+      const [gPda] = getGroupPda("leave-frozen");
+      const [vPda] = getVaultPda(gPda);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      await joinMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc();
+      await freezeTokenAccount(tokenAccount, mint);
+
+      await expectError(
+        leaveMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc(),
+        "Account is frozen",
+      );
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal(lamportsOf(member.recordPda), rentFor(MEMBER_RECORD_SIZE));
+
+      const unfrozen = await createTokenAccountFor(keypair.publicKey, mint);
+      await leaveMethod({ ...member, tokenAccount: unfrozen }, gPda, vPda, keypair.publicKey, mint)
+        .signers([keypair])
+        .rpc();
+
+      assert.equal(await getTokenBalanceOrZero(unfrozen), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+    });
+
+    it("fails with InvalidMint when the mint is not the group mint", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-wrong-mint", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      const otherMint = await createMint(TOKEN_PROGRAM_ID);
+      const otherAta = getAssociatedTokenAddressSync(otherMint, member.keypair.publicKey);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          createAssociatedTokenAccountInstruction(payer.publicKey, otherAta, member.keypair.publicKey, otherMint),
+        ),
+        [payer],
+      );
+
+      await expectError(
+        leaveMethod({ ...member, tokenAccount: otherAta }, gPda, vPda, member.keypair.publicKey, otherMint)
+          .signers([member.keypair])
+          .rpc(),
+        "InvalidMint",
+      );
+
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+    });
+
+    it("fails when the rent destination is not the recorded rent payer", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-redirect-rent", OPEN);
+      const sponsor = await fundedKeypair();
+      const attacker = await fundedKeypair();
+      const member = await joinNewMember(gPda, vPda, 10_000_000, sponsor);
+      const memberBefore = lamportsOf(member.keypair.publicKey);
+      const attackerBefore = lamportsOf(attacker.publicKey);
+
+      await expectError(leaveCall(member, gPda, vPda, member.keypair.publicKey), "InvalidRentPayer");
+      await expectError(leaveCall(member, gPda, vPda, attacker.publicKey), "InvalidRentPayer");
+
+      assert.equal(lamportsOf(member.keypair.publicKey), memberBefore);
+      assert.equal(lamportsOf(attacker.publicKey), attackerBefore);
+      assert.equal(lamportsOf(member.recordPda), rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+    });
+
+    it("fails when the member does not sign, so a rent payer alone cannot remove a member", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-no-member-sig", OPEN);
+      const sponsor = await fundedKeypair();
+      const member = await joinNewMember(gPda, vPda, 10_000_000, sponsor);
+      const ix = await leaveMethod(member, gPda, vPda, sponsor.publicKey).instruction();
+
+      await expectError(
+        () => sendAs(sponsor, [withoutSignature(ix, member.keypair.publicKey)]),
+        "AccountNotSigner",
+      );
+
+      assert.equal(lamportsOf(member.recordPda), rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+    });
+
+    it("fails on a second leave, alone or in the same transaction, and moves nothing", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-twice", OPEN);
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      const ix = await leaveMethod(m1, gPda, vPda).instruction();
+
+      await expectError(() => sendAs(payer, [ix, ix], [m1.keypair]), "AccountNotInitialized");
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+      assert.equal(lamportsOf(m1.recordPda), rentFor(MEMBER_RECORD_SIZE));
+
+      await leaveCall(m1, gPda, vPda);
+      const lamportsAfterFirst = lamportsOf(m1.keypair.publicKey);
+      await expectError(leaveCall(m1, gPda, vPda), "AccountNotInitialized");
+
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal(lamportsOf(m1.keypair.publicKey), lamportsAfterFirst);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+      assert.equal(lamportsOf(m2.recordPda), rentFor(MEMBER_RECORD_SIZE));
+    });
+
+    it("returns the deposit for a Token-2022 mint", async () => {
+      const mint = await createMint(TOKEN_2022_PROGRAM_ID);
+      await createGroupMethod("leave-2022", OPEN, payer.publicKey, payer.publicKey, mint, TOKEN_2022_PROGRAM_ID).rpc();
+      const [gPda] = getGroupPda("leave-2022");
+      const [vPda] = getVaultPda(gPda);
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint, TOKEN_2022_PROGRAM_ID);
+      const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+      await joinMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+
+      await leaveMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 0);
     });
   });
 
@@ -3819,6 +4487,116 @@ describe("safenudge", () => {
       assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
     });
 
+    for (const [name, tokenProgram] of [
+      ["SPL Token", TOKEN_PROGRAM_ID],
+      ["Token-2022", TOKEN_2022_PROGRAM_ID],
+    ] as const) {
+      it(`burns tokens sent to the vault of a group with no members and closes the vault (${name})`, async () => {
+        const code = "cancel-empty-donated";
+        const mint = await createMint(tokenProgram);
+        const creator = await fundedKeypair();
+        await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.publicKey, creator.publicKey, mint, tokenProgram)
+          .signers([creator])
+          .rpc();
+        const [gPda] = getGroupPda(code);
+        const [vPda] = getVaultPda(gPda);
+        const donor = await createFundedMember(5, undefined, mint, tokenProgram);
+        sendAs(donor.keypair, [
+          createTransferCheckedInstruction(
+            donor.tokenAccount, mint, vPda, donor.keypair.publicKey, 1, DECIMALS, [], tokenProgram,
+          ),
+        ]);
+        assert.equal(await getTokenBalanceOrZero(vPda), 1n);
+        assert.equal(mintSupply(mint), 5n);
+        const vaultRent = lamportsOf(vPda);
+        const creatorBefore = lamportsOf(creator.publicKey);
+        const cancelIx = await cancelMethod(gPda, vPda, [], creator.publicKey, mint, tokenProgram).instruction();
+
+        sendAs(creator, [withWritable(cancelIx, mint)]);
+
+        assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
+        assert.equal(mintSupply(mint), 4n);
+        assert.equal(await getTokenBalanceOrZero(donor.tokenAccount), 4n);
+        assert.equal((await program.account.groupConfig.fetch(gPda)).status, 3);
+        assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE) + vaultRent);
+        assert.equal(creatorBefore - lamportsOf(creator.publicKey), SIGNATURE_FEE);
+      });
+    }
+
+    it("fails with MintNotWritable when the vault of an empty group holds tokens and the mint is read-only", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cancel-empty-readonly", { depositAmount: 10_000_000 });
+      await provider.sendAndConfirm(
+        new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 1)),
+        [payer, mintAuthority],
+      );
+
+      await expectError(cancelCall(gPda, vPda, []), "MintNotWritable");
+
+      assert.equal((await program.account.groupConfig.fetch(gPda)).status, 0);
+      assert.equal(await getTokenBalanceOrZero(vPda), 1n);
+      assert.equal(mintSupply(usdcMint), 1n);
+    });
+
+    for (const mintFlag of ["read-only", "writable"] as const) {
+      it(`pays a token sent to the vault to the last-listed of two members and burns nothing (${mintFlag} mint)`, async () => {
+        const { gPda, vPda } = await createWeeklyGroup("cancel-donated-members", { depositAmount: 10_000_000 });
+        const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+        const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+        await provider.sendAndConfirm(
+          new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 1)),
+          [payer, mintAuthority],
+        );
+        const cancelIx = await cancelMethod(gPda, vPda, [m1, m2], payer.publicKey).instruction();
+
+        sendAs(payer, [mintFlag === "writable" ? withWritable(cancelIx, usdcMint) : cancelIx]);
+
+        assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_001n);
+        assert.equal(mintSupply(usdcMint), 20_000_001n);
+        assert.isNull(context.banksClient.getAccount(vPda));
+      });
+    }
+
+    for (const how of ["distribute", "cancel"] as const) {
+      it(`${how} pays another token account of a member whose canonical ATA is frozen`, async () => {
+        const code = `frozen-ata-${how}`;
+        const mint = await createMint(TOKEN_PROGRAM_ID, { freezeAuthority: mintAuthority.publicKey });
+        await createGroupMethod(code, { depositAmount: 10_000_000, totalPeriods: 1 }, payer.publicKey, payer.publicKey, mint).rpc();
+        const [gPda] = getGroupPda(code);
+        const [vPda] = getVaultPda(gPda);
+        const members: Member[] = [];
+        for (let i = 0; i < 2; i++) {
+          const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint);
+          const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+          await joinMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc();
+          members.push(member);
+        }
+        const cycleStart = await startCycle(gPda);
+        setUnixTime(cycleStart + BigInt(WEEK_SECS));
+        await freezeTokenAccount(members[1].tokenAccount, mint);
+        const settle = (pairs: Member[]) => how === "distribute"
+          ? program.methods.distribute()
+              .accounts({
+                payer: payer.publicKey, groupConfig: gPda, vault: vPda,
+                mint, treasuryTokenAccount: null, tokenProgram: TOKEN_PROGRAM_ID,
+              })
+              .remainingAccounts(memberPairs(pairs))
+              .rpc()
+          : cancelMethod(gPda, vPda, pairs, payer.publicKey, mint).rpc();
+
+        await expectError(settle(members), "Account is frozen");
+        assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+
+        const unfrozen = await createTokenAccountFor(members[1].keypair.publicKey, mint);
+        await settle([members[0], { ...members[1], tokenAccount: unfrozen }]);
+
+        assert.equal(await getTokenBalanceOrZero(members[0].tokenAccount), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(unfrozen), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(members[1].tokenAccount), 0n);
+        assert.isNull(context.banksClient.getAccount(vPda));
+      });
+    }
+
     it("refunds each member exactly their total_deposited mid-cycle and closes the vault", async () => {
       const { gPda, vPda } = await createWeeklyGroup("cancel-uneven", { depositAmount: 10_000_000 });
       const m1 = await joinNewMember(gPda, vPda, 100_000_000);
@@ -4371,8 +5149,6 @@ describe("safenudge", () => {
 
   describe("rent accounting", () => {
     const TEN = { depositAmount: 3_000_000, totalPeriods: 2, maxMembers: 10, penaltyValue: 1_000_000 };
-    const TRANSACTION_BYTE_LIMIT = 1232;
-    const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
 
     async function tenMemberActiveGroup(
       code: string, rentPayer: Keypair = payer,

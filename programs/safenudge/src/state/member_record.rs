@@ -1,7 +1,6 @@
 use anchor_lang::prelude::*;
 
-/// One member's participation in one group. Closed by `close_member_record` once the group is
-/// Completed or Cancelled; its rent goes to `rent_payer`.
+/// One member's participation in one group.
 #[account(discriminator = b"snMembr2")]
 #[derive(InitSpace)]
 pub struct MemberRecord {

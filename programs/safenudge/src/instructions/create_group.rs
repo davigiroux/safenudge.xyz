@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::errors::SafeNudgeError;
-use crate::state::{GroupConfig, MAX_FREQUENCY, STATUS_OPEN};
+use crate::state::{require_supported_mint, GroupConfig, MAX_FREQUENCY, STATUS_OPEN};
 
 #[derive(Accounts)]
 #[instruction(group_code: String)]
@@ -52,6 +52,7 @@ impl<'info> CreateGroup<'info> {
         bumps: &CreateGroupBumps,
     ) -> Result<()> {
         // ── Checks ──────────────────────────────────────────
+        require_supported_mint(&self.mint.to_account_info())?;
         require!(
             !group_code.is_empty() && group_code.len() <= 32,
             SafeNudgeError::InvalidGroupCode

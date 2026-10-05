@@ -37,7 +37,7 @@ SafeNudge replaces the trust layer of a savings group with a smart contract. A c
 A group moves through six lifecycle moments. The creator sets the rules; everything else is permissionless.
 
 1. **Create** — Creator picks deposit amount, frequency, total periods, max members, and penalty config.
-2. **Join** — Members join via a shareable code and make their first deposit (skin in the game).
+2. **Join** — Members join via a shareable code and make their first deposit (skin in the game). Until the cycle starts, a member can leave and take that deposit back.
 3. **Start** — Creator locks the group; cycle begins, no new members.
 4. **Deposit** — Each period, members deposit the fixed amount. The program tracks who shows up and who doesn't.
 5. **Distribute** — After the final period, anyone can trigger settlement. Penalties redistribute to compliant members; protocol takes 5% of the penalty pool; vault closes.
@@ -56,7 +56,7 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-`join_group` happens repeatedly while the group is `Open`; `deposit` happens repeatedly while the group is `Active`. Both keep the group in its current state, so they're not drawn as transitions. `distribute` can only fire once the cycle's full duration has elapsed.
+`join_group` and `leave_group` happen repeatedly while the group is `Open`; `deposit` happens repeatedly while the group is `Active`. They keep the group in its current state, so they're not drawn as transitions. `leave_group` is the one exit from `Open` that does not need the creator: it returns the member's deposit and frees the seat, and the group stays `Open` even with no members left. `distribute` can only fire once the cycle's full duration has elapsed.
 
 ### Penalty mechanics
 
@@ -107,17 +107,18 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
-| `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator) | None | — |
+| `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator). Rejects unsupported mints | None | — |
 | `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member) | Member → Vault | Open |
+| `leave_group` | The member only | Vault → that member (the first deposit back). Member record rent (SOL) → the wallet that paid it | Open |
 | `start_cycle` | Creator only | None | Open |
 | `deposit` | Members only | Member → Vault | Active |
 | `distribute` | Anyone (permissionless) | Vault → Members + Treasury | Active (cycle ended) |
-| `emergency_cancel` | Creator only | Vault → Members (each gets their deposits back) | Open or Active |
+| `emergency_cancel` | Creator only | Vault → Members (each gets their deposits back). With no members, a balance someone sent to the vault is burned | Open or Active |
 | `withdraw_fees` | Compile-time `FEE_RECIPIENT` only | Treasury → Recipient | — |
 | `refund_vault_rent` | Anyone (permissionless) | Vault rent (SOL) → the wallet that paid it | Completed or Cancelled |
 | `close_member_record` | Anyone (permissionless) | Member record rent (SOL) → the wallet that paid it | Completed or Cancelled, 30 days after settlement |
 
-Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. The group account itself is never closed, so its rent is not returned and its code is never reused.
+Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. A member who leaves an open group gets tokens only; the record rent goes back to its payer. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. The group account itself is never closed, so its rent is not returned and its code is never reused.
 
 ### Tech stack
 
@@ -154,6 +155,22 @@ SafeNudge holds user funds. The security posture is structural, not bolted on. S
 4. **Capped penalty math.** A member can never owe more than they deposited. All numeric ops use `checked_add/sub/mul/div` — raw arithmetic on `u64` is forbidden and CI-enforced.
 5. **Permissionless distribution.** Anyone can settle a finished cycle. No single party can hold funds hostage.
 6. **`transfer_checked` everywhere.** Mint and decimals are validated at the CPI level — no token-confusion attacks.
+
+### Known limit: one frozen token account holds a whole group in the app
+
+Guarantee 5 has an exception in v1. `distribute` and `emergency_cancel` pay every member in one transaction. If one member's token account is frozen, that transfer fails and the whole settlement transaction fails.
+
+- Any mint with a freeze authority makes this possible. USDC has one.
+- A closed token account has the same effect, but anyone can create it again, and the app does so before it settles.
+- Through the app, the group cannot fix a frozen account: the app always pays each member's standard token account. Until the freeze authority of the mint thaws it, every member's funds stay in the vault. Nobody can take them.
+- The program itself is less strict. `distribute` and `emergency_cancel` accept any token account that the member owns for the group's mint. A caller who builds the transaction by hand can create a new token account for that member, pass it in place of the frozen one, and the settlement goes through. The app does not do this today.
+- A claim path, where a member whose transfer fails claims later and the others are paid at once, is planned with the v2 settlement redesign ([issue #56](https://github.com/davigiroux/safenudge.xyz/issues/56)).
+
+Before a cycle starts no member depends on another: `leave_group` returns a member's deposit while the group is `Open`, with no action from the creator, to any token account that member owns. The creator can cancel a group with no members even if someone sent tokens to its vault: that balance is burned, never paid out. One condition remains for every group: the issuer of a token with a freeze authority can freeze the vault itself, and then nothing moves until it is thawed.
+
+### Which tokens a group can use
+
+A group's accounting assumes that a transfer delivers exactly what it sends and that nobody outside the program can move or block vault tokens. `create_group` rejects every mint that breaks this: wrapped SOL, and any Token-2022 mint with an extension outside a short allowlist (metadata and interest-bearing). Transfer fees, transfer hooks, permanent delegates, default-frozen accounts, and the rest are refused with `UnsupportedMint`. Classic SPL tokens such as USDC pass.
 
 ### Upgrade authority — the honest caveat
 

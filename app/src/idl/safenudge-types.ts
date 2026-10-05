@@ -470,6 +470,11 @@ export type Safenudge = {
     },
     {
       "name": "emergencyCancel",
+      "docs": [
+        "Returns every member's deposits and closes the vault. With no members, burns any",
+        "balance in the vault first: `mint` must then be writable, or it fails with",
+        "`MintNotWritable`."
+      ],
       "discriminator": [
         92,
         73,
@@ -840,6 +845,116 @@ export type Safenudge = {
       "args": []
     },
     {
+      "name": "leaveGroup",
+      "discriminator": [
+        10,
+        4,
+        125,
+        28,
+        46,
+        23,
+        233,
+        29
+      ],
+      "accounts": [
+        {
+          "name": "member",
+          "signer": true
+        },
+        {
+          "name": "groupConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  111,
+                  117,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config.group_code",
+                "account": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "memberRecord",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  109,
+                  101,
+                  109,
+                  98,
+                  101,
+                  114
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              },
+              {
+                "kind": "account",
+                "path": "member"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "not a signer or an authority. The constraint on `member_record` pins its key to the",
+            "wallet that signed and paid at join_group, so the member cannot redirect the rent."
+          ],
+          "writable": true
+        },
+        {
+          "name": "memberTokenAccount",
+          "writable": true
+        },
+        {
+          "name": "vault",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  118,
+                  97,
+                  117,
+                  108,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint"
+        },
+        {
+          "name": "tokenProgram"
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "refundVaultRent",
       "discriminator": [
         190,
@@ -1142,6 +1257,16 @@ export type Safenudge = {
       "code": 6024,
       "name": "recordRetentionNotElapsed",
       "msg": "Member records stay open for the retention period after settlement"
+    },
+    {
+      "code": 6025,
+      "name": "unsupportedMint",
+      "msg": "This mint cannot be used for a group"
+    },
+    {
+      "code": 6026,
+      "name": "mintNotWritable",
+      "msg": "Mint must be writable to cancel a group with no members whose vault holds tokens"
     }
   ],
   "types": [
@@ -1230,7 +1355,7 @@ export type Safenudge = {
           {
             "name": "currentMembers",
             "docs": [
-              "Offset 139. Members who joined. Not decremented when a member record is closed."
+              "Offset 139. Members with a seat."
             ],
             "type": "u8"
           },
@@ -1268,8 +1393,7 @@ export type Safenudge = {
     {
       "name": "memberRecord",
       "docs": [
-        "One member's participation in one group. Closed by `close_member_record` once the group is",
-        "Completed or Cancelled; its rent goes to `rent_payer`."
+        "One member's participation in one group."
       ],
       "type": {
         "kind": "struct",
@@ -1334,4 +1458,3 @@ export type Safenudge = {
     }
   ]
 };
-

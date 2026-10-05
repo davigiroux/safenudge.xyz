@@ -7,7 +7,12 @@
 import type { TransactionError } from '@solana/web3.js'
 import idl from '../idl/safenudge.json'
 
-const PROGRAM_ERROR_NAMES = new Map(idl.errors.map((e) => [e.code, e.name]))
+const ANCHOR_ACCOUNT_NOT_INITIALIZED = 3012
+
+const PROGRAM_ERROR_NAMES = new Map<number, string>([
+  ...idl.errors.map((e): [number, string] => [e.code, e.name]),
+  [ANCHOR_ACCOUNT_NOT_INITIALIZED, 'AccountNotInitialized'],
+])
 
 export class TxConfirmError extends Error {
   readonly txError: TransactionError
