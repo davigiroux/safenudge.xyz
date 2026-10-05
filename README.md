@@ -18,7 +18,7 @@ Brazilians don't have a savings problem. They have an **enforcement problem**. M
 
 ### The solution
 
-SafeNudge replaces the trust layer of a savings group with a smart contract. A creator sets the rules (deposit amount, frequency, penalty for misses). Members join with an invite code, lock in their first deposit, and the cycle begins. Missed deposits trigger penalties at distribution time, redistributed pro-rata to consistent members. Everyone gets their money back at the end — adjusted for what they earned or owed.
+SafeNudge replaces the trust layer of a savings group with a smart contract. A creator sets the rules (deposit amount, frequency, penalty for misses). Members join with an invite code, lock in their first deposit, and the cycle begins. Missed deposits trigger penalties at distribution time, split equally among the members who never missed. Everyone gets their money back at the end — adjusted for what they earned or owed.
 
 ### Why it's better than a traditional MOAI
 
@@ -41,7 +41,7 @@ A group moves through six lifecycle moments. The creator sets the rules; everyth
 3. **Start** — Creator locks the group; cycle begins, no new members.
 4. **Deposit** — Each period, members deposit the fixed amount. The program tracks who shows up and who doesn't.
 5. **Distribute** — After the final period, anyone can trigger settlement. Penalties redistribute to compliant members; protocol takes 5% of the penalty pool; vault closes.
-6. **Emergency cancel** — At any time before completion, the creator can return everyone's deposits pro-rata, no penalties applied.
+6. **Emergency cancel** — At any time before completion, the creator can return every member's deposits in full, no penalties applied.
 
 ### Group lifecycle
 
@@ -112,7 +112,7 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | `start_cycle` | Creator only | None | Open |
 | `deposit` | Members only | Member → Vault | Active |
 | `distribute` | Anyone (permissionless) | Vault → Members + Treasury | Active (cycle ended) |
-| `emergency_cancel` | Creator only | Vault → Members (pro-rata) | Open or Active |
+| `emergency_cancel` | Creator only | Vault → Members (each gets their deposits back) | Open or Active |
 | `withdraw_fees` | Compile-time `FEE_RECIPIENT` only | Treasury → Recipient | — |
 
 ### Tech stack
@@ -124,7 +124,7 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | Frontend | React + TypeScript + Vite | Strict TS, Tailwind, react-router-dom |
 | Wallet | `@solana/wallet-adapter-react` | Phantom + Solflare |
 | Anchor client | `@coral-xyz/anchor` | 0.32.x in workspace |
-| Localisation | `i18next` + `react-i18next` | PT-BR default, EN fallback |
+| Localisation | `i18next` + `react-i18next` | PT-BR default and fallback, EN toggle |
 | On-ramp | `@ramp-network/ramp-instant-sdk` | Pix → USDC, in progress |
 | Tests | LiteSVM (in-process) + ts-mocha | No live RPC needed |
 | CI | GitHub Actions | Anchor build/test, tsc, build, security-lint, audits |
@@ -142,7 +142,7 @@ This repository's frontend is not the program's only consumer. **SafePool** (pri
 
 SafeNudge holds user funds. The security posture is structural, not bolted on. Six non-negotiables:
 
-1. **No admin path to user funds.** The program has no owner and no admin role. No instruction moves vault funds to an arbitrary address. The one privileged instruction, `withdraw_fees`, can only move accumulated protocol fees out of the treasury PDA to a compile-time `FEE_RECIPIENT` — it cannot touch a group vault. The creator's only powers are `start_cycle` and `emergency_cancel`, and cancel returns every member's deposit pro-rata.
+1. **No admin path to user funds.** The program has no owner and no admin role. No instruction moves vault funds to an arbitrary address. The one privileged instruction, `withdraw_fees`, can only move accumulated protocol fees out of the treasury PDA to a compile-time `FEE_RECIPIENT` — it cannot touch a group vault. The creator's only powers are `start_cycle` and `emergency_cancel`, and cancel returns each member exactly what they deposited.
 2. **PDA-only authority on the vault.** No human wallet can ever sign a transfer out of the vault.
 3. **One-directional state machine.** Status moves `Open → Active → Completed/Cancelled`. Every instruction validates status as its first check; nothing can revert.
 4. **Capped penalty math.** A member can never owe more than they deposited. All numeric ops use `checked_add/sub/mul/div` — raw arithmetic on `u64` is forbidden and CI-enforced.
