@@ -369,14 +369,8 @@ curl -s $RPC -H 'Content-Type: application/json' -d '{
 For later weeks, compute from the previous jump, not from `date`: a second
 "now + 7 days" is behind the clock you already moved and gets rejected.
 
-The program reads the `Clock` sysvar, which lands exactly on the target.
-The dashboard does not: `useChainTimeOffset` uses `getBlockTime`, which
-Surfpool derives from the slot number, and it falls about one day behind per
-7-day jump. Right after a jump to a period boundary the dashboard still shows
-the previous period, while the program already accepts deposits for the new
-one. Treat the dashboard's period labels and button timing as untested here;
-check those on devnet. Hard-refresh after each jump in any case, because
-`useChainTimeOffset` reads the clock only on mount.
+Hard-refresh the dashboard after each jump. `useChainTimeOffset` reads the
+`Clock` sysvar only on mount, so an open tab keeps showing the old period.
 
 ### Run the full distribute path
 
