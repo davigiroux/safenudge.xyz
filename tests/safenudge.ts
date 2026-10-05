@@ -255,6 +255,168 @@ describe("safenudge", () => {
     return { keypair, tokenAccount: ata };
   }
 
+  const WEEK_SECS = 7 * 86400;
+
+  type Member = { keypair: Keypair; tokenAccount: PublicKey; recordPda: PublicKey };
+
+  function setUnixTime(unixTimestamp: bigint): void {
+    const clk = context.banksClient.getClock();
+    context.setClock(
+      new Clock(clk.slot + 1n, clk.epochStartTimestamp, clk.epoch, clk.leaderScheduleEpoch, unixTimestamp)
+    );
+  }
+
+  function advanceClock(secs: number): void {
+    setUnixTime(context.banksClient.getClock().unixTimestamp + BigInt(secs));
+  }
+
+  async function expectError(call: Promise<unknown>, expected: string): Promise<void> {
+    let failure: string | undefined;
+    try {
+      await call;
+    } catch (e: any) {
+      failure = [e.message ?? String(e), ...(e.logs ?? [])].join("\n");
+    }
+    assert.isDefined(failure, `expected ${expected}, but the call succeeded`);
+    assert.include(failure, expected);
+  }
+
+  function createGroupCall(
+    code: string,
+    opts: { depositAmount: number; totalPeriods?: number; maxMembers?: number; penaltyValue?: number },
+    creator: Keypair = payer,
+  ): Promise<string> {
+    const [gPda] = getGroupPda(code);
+    const [vPda] = getVaultPda(gPda);
+    return program.methods
+      .createGroup(
+        code,
+        new BN(opts.depositAmount),
+        0,
+        opts.totalPeriods ?? 4,
+        opts.maxMembers ?? 5,
+        0,
+        new BN(opts.penaltyValue ?? 0),
+      )
+      .accounts({
+        creator: creator.publicKey, groupConfig: gPda, vault: vPda,
+        mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      })
+      .signers(creator === payer ? [] : [creator])
+      .rpc();
+  }
+
+  async function createWeeklyGroup(
+    code: string,
+    opts: { depositAmount: number; totalPeriods?: number; maxMembers?: number; penaltyValue?: number },
+  ): Promise<{ gPda: PublicKey; vPda: PublicKey }> {
+    await createGroupCall(code, opts);
+    const [gPda] = getGroupPda(code);
+    const [vPda] = getVaultPda(gPda);
+    return { gPda, vPda };
+  }
+
+  function joinCall(member: Member, gPda: PublicKey, vPda: PublicKey, mint: PublicKey = usdcMint): Promise<string> {
+    return program.methods.joinGroup()
+      .accounts({
+        member: member.keypair.publicKey, groupConfig: gPda, memberRecord: member.recordPda,
+        memberTokenAccount: member.tokenAccount, vault: vPda, mint,
+        tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+      })
+      .signers([member.keypair])
+      .rpc();
+  }
+
+  async function joinNewMember(gPda: PublicKey, vPda: PublicKey, funding: number): Promise<Member> {
+    const { keypair, tokenAccount } = await createFundedMember(funding);
+    const [recordPda] = getMemberPda(gPda, keypair.publicKey);
+    const member = { keypair, tokenAccount, recordPda };
+    await joinCall(member, gPda, vPda);
+    return member;
+  }
+
+  function depositCall(member: Member, gPda: PublicKey, vPda: PublicKey): Promise<string> {
+    return program.methods.deposit()
+      .accounts({
+        member: member.keypair.publicKey, groupConfig: gPda, memberRecord: member.recordPda,
+        memberTokenAccount: member.tokenAccount, vault: vPda, mint: usdcMint,
+        tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([member.keypair])
+      .rpc();
+  }
+
+  async function startCycle(gPda: PublicKey): Promise<bigint> {
+    await program.methods.startCycle()
+      .accounts({ creator: payer.publicKey, groupConfig: gPda })
+      .rpc();
+    const group = await program.account.groupConfig.fetch(gPda);
+    return BigInt(group.cycleStart.toString());
+  }
+
+  function memberPairs(members: Member[]) {
+    return members.flatMap((m) => [
+      { pubkey: m.recordPda, isWritable: false, isSigner: false },
+      { pubkey: m.tokenAccount, isWritable: true, isSigner: false },
+    ]);
+  }
+
+  function distributeCall(
+    gPda: PublicKey, vPda: PublicKey, members: Member[], treasuryAta: PublicKey | null,
+  ): Promise<string> {
+    return program.methods.distribute()
+      .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })])
+      .accounts({
+        payer: payer.publicKey, creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+        mint: usdcMint, treasuryTokenAccount: treasuryAta, tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .remainingAccounts(memberPairs(members))
+      .rpc();
+  }
+
+  function cancelCall(gPda: PublicKey, vPda: PublicKey, members: Member[]): Promise<string> {
+    return program.methods.emergencyCancel()
+      .accounts({
+        creator: payer.publicKey, groupConfig: gPda, vault: vPda,
+        mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .remainingAccounts(memberPairs(members))
+      .rpc();
+  }
+
+  async function settleGroupWithOneMiss(code: string, penaltyValue: number, treasuryAta: PublicKey): Promise<void> {
+    const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000, totalPeriods: 2, penaltyValue });
+    const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+    const m2 = await joinNewMember(gPda, vPda, 100_000_000);
+    const cycleStart = await startCycle(gPda);
+    setUnixTime(cycleStart + BigInt(WEEK_SECS));
+    await depositCall(m1, gPda, vPda);
+    setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+    await distributeCall(gPda, vPda, [m1, m2], treasuryAta);
+  }
+
+  async function createFeeRecipientAta(): Promise<PublicKey> {
+    const recipientAta = getAssociatedTokenAddressSync(usdcMint, FEE_RECIPIENT);
+    await provider.sendAndConfirm(
+      new Transaction().add(
+        createAssociatedTokenAccountInstruction(payer.publicKey, recipientAta, FEE_RECIPIENT, usdcMint)
+      ),
+      [payer],
+    );
+    return recipientAta;
+  }
+
+  function withdrawFeesCall(treasuryAta: PublicKey, recipientAta: PublicKey): Promise<string> {
+    const recipientKp = loadFeeRecipientKeypair();
+    return program.methods.withdrawFees()
+      .accounts({
+        recipient: recipientKp.publicKey, treasuryTokenAccount: treasuryAta,
+        recipientTokenAccount: recipientAta, mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID,
+      })
+      .signers([recipientKp])
+      .rpc();
+  }
+
   // ─── create_group tests ───────────────────────────────────
 
   describe("create_group", () => {
@@ -418,6 +580,69 @@ describe("safenudge", () => {
       } catch (e: any) {
         assert.include(e.message, "InvalidGroupCode");
       }
+    });
+
+    it("fails with zero deposit amount", async () => {
+      await expectError(createGroupCall("zero-deposit", { depositAmount: 0 }), "InvalidDepositAmount");
+      assert.isNull(context.banksClient.getAccount(getGroupPda("zero-deposit")[0]));
+    });
+
+    it("fails with period count 0 or 53, accepts 52", async () => {
+      await expectError(
+        createGroupCall("periods-zero", { depositAmount: 10_000_000, totalPeriods: 0 }),
+        "InvalidPeriodCount",
+      );
+      await expectError(
+        createGroupCall("periods-53", { depositAmount: 10_000_000, totalPeriods: 53 }),
+        "InvalidPeriodCount",
+      );
+
+      const { gPda } = await createWeeklyGroup("periods-52", { depositAmount: 10_000_000, totalPeriods: 52 });
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.totalPeriods, 52);
+    });
+
+    it("fails with max_members 1", async () => {
+      await expectError(
+        createGroupCall("size-one", { depositAmount: 10_000_000, maxMembers: 1 }),
+        "InvalidGroupSize",
+      );
+      assert.isNull(context.banksClient.getAccount(getGroupPda("size-one")[0]));
+    });
+
+    it("fails with a 33-char group code, accepts 32", async () => {
+      const code32 = "a".repeat(32);
+      const { gPda } = await createWeeklyGroup(code32, { depositAmount: 10_000_000 });
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.groupCode, code32);
+
+      const code33 = "a".repeat(33);
+      const bogusGroup = Keypair.generate().publicKey;
+      await expectError(
+        program.methods
+          .createGroup(code33, new BN(10_000_000), 0, 4, 5, 0, new BN(0))
+          .accounts({
+            creator: payer.publicKey, groupConfig: bogusGroup, vault: getVaultPda(bogusGroup)[0],
+            mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          })
+          .rpc(),
+        "Length of the seed is too long for address generation",
+      );
+      assert.isNull(context.banksClient.getAccount(bogusGroup));
+    });
+
+    it("fails when the group code is already taken, original group unchanged", async () => {
+      const { gPda } = await createWeeklyGroup("taken-code", { depositAmount: 10_000_000 });
+
+      const squatter = (await createFundedMember(0)).keypair;
+      await expectError(
+        createGroupCall("taken-code", { depositAmount: 1_000_000 }, squatter),
+        "already in use",
+      );
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.creator.toBase58(), payer.publicKey.toBase58());
+      assert.equal(group.depositAmount.toNumber(), 10_000_000);
     });
   });
 
@@ -639,6 +864,69 @@ describe("safenudge", () => {
           /ConstraintAssociated|AccountNotAssociatedTokenAccount|2009/,
         );
       }
+    });
+
+    it("fails when the member balance is below the deposit amount", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("join-poor", { depositAmount: 10_000_000 });
+      const { keypair, tokenAccount } = await createFundedMember(9_999_999);
+      const [recordPda] = getMemberPda(gPda, keypair.publicKey);
+
+      await expectError(joinCall({ keypair, tokenAccount, recordPda }, gPda, vPda), "Error: insufficient funds");
+
+      assert.isNull(context.banksClient.getAccount(recordPda));
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 9_999_999n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.currentMembers, 0);
+    });
+
+    it("fails with InvalidMint when joining with a different mint", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("join-wrong-mint", { depositAmount: 10_000_000 });
+
+      const otherMint = Keypair.generate();
+      const keypair = (await createFundedMember(0)).keypair;
+      const otherAta = getAssociatedTokenAddressSync(otherMint.publicKey, keypair.publicKey);
+      const lamports = await provider.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          SystemProgram.createAccount({
+            fromPubkey: payer.publicKey, newAccountPubkey: otherMint.publicKey,
+            space: MINT_SIZE, lamports, programId: TOKEN_PROGRAM_ID,
+          }),
+          createInitializeMintInstruction(otherMint.publicKey, DECIMALS, mintAuthority.publicKey, null),
+          createAssociatedTokenAccountInstruction(payer.publicKey, otherAta, keypair.publicKey, otherMint.publicKey),
+          createMintToInstruction(otherMint.publicKey, otherAta, mintAuthority.publicKey, 100_000_000),
+        ),
+        [payer, otherMint, mintAuthority],
+      );
+      const [recordPda] = getMemberPda(gPda, keypair.publicKey);
+
+      await expectError(
+        joinCall({ keypair, tokenAccount: otherAta, recordPda }, gPda, vPda, otherMint.publicKey),
+        "InvalidMint",
+      );
+      assert.equal(await getTokenBalanceOrZero(otherAta), 100_000_000n);
+    });
+
+    it("fails when the group has completed", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("join-completed", { depositAmount: 10_000_000, totalPeriods: 1 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await distributeCall(gPda, vPda, [m1, m2], null);
+
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000);
+      const [recordPda] = getMemberPda(gPda, keypair.publicKey);
+      const joiner = { keypair, tokenAccount, recordPda };
+      await expectError(joinCall(joiner, gPda, vPda), "AccountNotInitialized");
+      const liveTokenAccountInVaultSlot = m1.tokenAccount;
+      await expectError(joinCall(joiner, gPda, liveTokenAccountInVaultSlot), "InvalidGroupStatus");
+
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+      assert.equal(group.currentMembers, 2);
     });
   });
 
@@ -994,6 +1282,59 @@ describe("safenudge", () => {
       } catch (e: any) {
         assert.include(e.message, "InvalidGroupStatus");
       }
+    });
+
+    it("fails with CycleEnded at exactly cycle end, accepts one second earlier", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("dep-cycle-end", { depositAmount: 5_000_000, totalPeriods: 2 });
+      const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 100_000_000);
+      const cycleStart = await startCycle(gPda);
+
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS - 1));
+      await depositCall(m1, gPda, vPda);
+
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+      await expectError(depositCall(m2, gPda, vPda), "CycleEnded");
+
+      const m2Record = await program.account.memberRecord.fetch(m2.recordPda);
+      assert.equal(m2Record.depositsMade, 1);
+      assert.equal(await getTokenBalanceOrZero(vPda), 15_000_000n);
+    });
+
+    it("counts a deposit at exactly the period boundary toward the new period", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("dep-boundary", { depositAmount: 5_000_000, totalPeriods: 4 });
+      const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+      await joinNewMember(gPda, vPda, 100_000_000);
+      const cycleStart = await startCycle(gPda);
+
+      setUnixTime(cycleStart + BigInt(WEEK_SECS - 1));
+      await expectError(depositCall(m1, gPda, vPda), "AlreadyDeposited");
+
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await depositCall(m1, gPda, vPda);
+
+      const record = await program.account.memberRecord.fetch(m1.recordPda);
+      assert.deepEqual(record.periodsDeposited.slice(0, 4), [true, true, false, false]);
+      assert.equal(record.totalDeposited.toNumber(), 10_000_000);
+    });
+
+    it("fails when the signer is not a member", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("dep-outsider", { depositAmount: 5_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+      await joinNewMember(gPda, vPda, 100_000_000);
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+
+      const { keypair, tokenAccount } = await createFundedMember(100_000_000);
+      const [ownRecordPda] = getMemberPda(gPda, keypair.publicKey);
+
+      await expectError(depositCall({ keypair, tokenAccount, recordPda: ownRecordPda }, gPda, vPda), "AccountNotInitialized");
+      await expectError(depositCall({ keypair, tokenAccount, recordPda: m1.recordPda }, gPda, vPda), "ConstraintSeeds");
+
+      const m1Record = await program.account.memberRecord.fetch(m1.recordPda);
+      assert.equal(m1Record.depositsMade, 1);
+      assert.equal(await getTokenBalanceOrZero(tokenAccount), 100_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
     });
   });
 
@@ -2759,6 +3100,35 @@ describe("safenudge", () => {
         assert.include(e.message, "NoFeesToWithdraw");
       }
     });
+
+    it("fails with NoFeesToWithdraw on a second withdrawal after draining", async () => {
+      const treasuryAta = await initTreasury();
+      await settleGroupWithOneMiss("wf-drain", 4_000_000, treasuryAta);
+      const recipientAta = await createFeeRecipientAta();
+
+      await withdrawFeesCall(treasuryAta, recipientAta);
+      assert.equal(await getTokenBalanceOrZero(recipientAta), 200_000n);
+
+      advanceClock(1);
+      await expectError(withdrawFeesCall(treasuryAta, recipientAta), "NoFeesToWithdraw");
+      assert.equal(await getTokenBalanceOrZero(recipientAta), 200_000n);
+      assert.equal(await getTokenBalanceOrZero(treasuryAta), 0n);
+    });
+
+    it("accumulates fees from two groups and withdraws the sum", async () => {
+      const treasuryAta = await initTreasury();
+
+      await settleGroupWithOneMiss("wf-accum-a", 4_000_000, treasuryAta);
+      assert.equal(await getTokenBalanceOrZero(treasuryAta), 200_000n);
+
+      await settleGroupWithOneMiss("wf-accum-b", 2_000_000, treasuryAta);
+      assert.equal(await getTokenBalanceOrZero(treasuryAta), 300_000n);
+
+      const recipientAta = await createFeeRecipientAta();
+      await withdrawFeesCall(treasuryAta, recipientAta);
+      assert.equal(await getTokenBalanceOrZero(recipientAta), 300_000n);
+      assert.equal(await getTokenBalanceOrZero(treasuryAta), 0n);
+    });
   });
 
   // ─── init_treasury tests ──────────────────────────────────
@@ -3140,6 +3510,62 @@ describe("safenudge", () => {
         assert.include(e.message, "InvalidTokenAccountOwner");
       }
     });
+
+    it("cancels a group with zero members and closes the vault", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cancel-empty", { depositAmount: 10_000_000 });
+
+      await cancelCall(gPda, vPda, []);
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 3);
+      assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
+    });
+
+    it("refunds each member exactly their total_deposited mid-cycle and closes the vault", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cancel-uneven", { depositAmount: 10_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 100_000_000);
+      const m3 = await joinNewMember(gPda, vPda, 100_000_000);
+      const cycleStart = await startCycle(gPda);
+
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await depositCall(m1, gPda, vPda);
+      await depositCall(m2, gPda, vPda);
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+      await depositCall(m1, gPda, vPda);
+
+      const members = [m1, m2, m3];
+      const before = await Promise.all(members.map((m) => getTokenBalanceOrZero(m.tokenAccount)));
+      assert.equal(await getTokenBalanceOrZero(vPda), 60_000_000n);
+
+      await cancelCall(gPda, vPda, members);
+
+      const refunds = await Promise.all(
+        members.map(async (m, i) => (await getTokenBalanceOrZero(m.tokenAccount)) - before[i])
+      );
+      assert.deepEqual(refunds, [30_000_000n, 20_000_000n, 10_000_000n]);
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 3);
+      assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
+    });
+
+    it("fails when the group has completed", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cancel-completed", { depositAmount: 10_000_000, totalPeriods: 1 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await distributeCall(gPda, vPda, [m1, m2], null);
+
+      await expectError(cancelCall(gPda, vPda, [m1, m2]), "AccountNotInitialized");
+      const liveTokenAccountInVaultSlot = m1.tokenAccount;
+      await expectError(cancelCall(gPda, liveTokenAccountInVaultSlot, [m1, m2]), "InvalidGroupStatus");
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_000n);
+    });
   });
 
   // ─── integration tests ────────────────────────────────────
@@ -3367,6 +3793,50 @@ describe("safenudge", () => {
       });
 
       // Verify status == Completed
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.status, 2);
+    });
+
+    it("full lifecycle: 10 members, partial compliance, protocol fee", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("integ-10-fee", {
+        depositAmount: 3_000_000, totalPeriods: 2, maxMembers: 10, penaltyValue: 1_000_000,
+      });
+      const members: Member[] = [];
+      for (let i = 0; i < 10; i++) {
+        members.push(await joinNewMember(gPda, vPda, 100_000_000));
+      }
+      const cycleStart = await startCycle(gPda);
+
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      for (const m of members.slice(0, 7)) {
+        await depositCall(m, gPda, vPda);
+      }
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+
+      const treasuryAta = await initTreasury();
+      const treasuryBefore = await getTokenBalanceOrZero(treasuryAta);
+      const memberAtas = members.map((m) => m.tokenAccount);
+      const balancesBefore = await Promise.all(memberAtas.map((a) => getTokenBalanceOrZero(a)));
+      assert.equal(await getTokenBalanceOrZero(vPda), 51_000_000n);
+
+      await distributeCall(gPda, vPda, members, treasuryAta);
+
+      const received = await Promise.all(
+        memberAtas.map(async (a, i) => (await getTokenBalanceOrZero(a)) - balancesBefore[i])
+      );
+      assert.deepEqual(received, [
+        6_407_142n, 6_407_142n, 6_407_142n, 6_407_142n, 6_407_142n, 6_407_142n, 6_407_142n,
+        2_000_000n, 2_000_000n, 2_000_006n,
+      ]);
+
+      await assertFundConservation({
+        vaultPda: vPda,
+        memberAtas,
+        memberBalancesBefore: balancesBefore,
+        treasuryBefore,
+        expectedFee: 150_000n,
+        totalDeposits: 51_000_000n,
+      });
       const group = await program.account.groupConfig.fetch(gPda);
       assert.equal(group.status, 2);
     });
