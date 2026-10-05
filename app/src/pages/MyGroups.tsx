@@ -16,10 +16,11 @@ type ListedStatus = GroupStatus | 'unknown'
 type GroupInfo = {
   groupCode: string
   status: ListedStatus
-  depositsMade: number
+  /** null when this wallet has no member record in the group: it created the group and never
+   *  joined, or its record was closed after the group settled. */
+  depositsMade: number | null
   totalPeriods: number
   depositAmount: number
-  creatorOnly?: boolean
 }
 
 const STATUS_MAP: Record<number, GroupStatus> = {
@@ -97,16 +98,15 @@ export default function MyGroups() {
           seenCodes.add(groupAccount.groupCode)
         }
 
-        // Append creator-owned groups the wallet hasn't joined yet
+        // Append creator-owned groups in which the wallet has no member record
         for (const g of createdGroups) {
           if (seenCodes.has(g.account.groupCode)) continue
           groupInfos.push({
             groupCode: g.account.groupCode,
             status: STATUS_MAP[g.account.status] || 'unknown',
-            depositsMade: 0,
+            depositsMade: null,
             totalPeriods: g.account.totalPeriods,
             depositAmount: g.account.depositAmount.toNumber(),
-            creatorOnly: true,
           })
           seenCodes.add(g.account.groupCode)
         }
@@ -175,7 +175,8 @@ export default function MyGroups() {
           </h1>
           <div className="flex flex-col gap-4">
             {groups.map((group) => {
-              const href = group.creatorOnly
+              const canJoin = group.depositsMade === null && group.status === 'open'
+              const href = canJoin
                 ? `/entrar/${group.groupCode}`
                 : `/grupo/${group.groupCode}`
               return (
@@ -191,17 +192,18 @@ export default function MyGroups() {
                             {t(STATUS_LABELS[group.status])}
                           </span>
                         </div>
-                        {group.creatorOnly ? (
+                        {canJoin && (
                           <span className="font-label text-label-md text-on-surface-variant">
                             {t('myGroups.creatorNotJoinedHint')}
                           </span>
-                        ) : (
+                        )}
+                        {group.depositsMade !== null && (
                           <span className="font-label text-label-md text-on-surface-variant">
                             {t('myGroups.progress', { current: group.depositsMade, total: group.totalPeriods })}
                           </span>
                         )}
                       </div>
-                      {group.creatorOnly ? (
+                      {canJoin ? (
                         <span className="flex-shrink-0 font-label text-label-md text-primary">
                           {t('myGroups.joinNow')}
                         </span>

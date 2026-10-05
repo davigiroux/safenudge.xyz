@@ -162,6 +162,7 @@ export default function GroupDashboard() {
   } = useMemberRecord(isValidCode ? code : undefined)
   const {
     data: members,
+    loading: membersLoading,
     error: membersError,
     refetch: refetchMembers,
   } = useGroupMembers(isValidCode ? code : undefined)
@@ -201,7 +202,12 @@ export default function GroupDashboard() {
 
   const isCreator = !!publicKey && publicKey.toString() === group?.creator
   const isCompleted = group?.status === 'completed'
-  const showSettlement = !!group && (cycleHasEnded || isCompleted) && members.length > 0
+  const isSettled = isCompleted || group?.status === 'cancelled'
+  // Member records can be closed after a group settles. A payout projection from the records
+  // that remain would show amounts nobody received.
+  const memberDetailGone = !!group && isSettled && !membersLoading && !membersError
+    && members.length !== group.currentMembers
+  const showSettlement = !!group && (cycleHasEnded || isCompleted) && members.length > 0 && !memberDetailGone
   const canCancel = isCreator
     && !membersError
     && (group?.status === 'open' || group?.status === 'active')
@@ -547,6 +553,14 @@ export default function GroupDashboard() {
               onDistribute={isCompleted ? undefined : handleDistribute}
             />
           </div>
+        )}
+
+        {memberDetailGone && (
+          <Card variant="surface" className="mb-6">
+            <p className="font-body text-body-md text-on-surface-variant">
+              {t('groupDashboard.memberDetailGone')}
+            </p>
+          </Card>
         )}
 
         {/* Desktop: 2-column layout. Mobile: single stack */}
