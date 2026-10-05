@@ -126,9 +126,9 @@ Creates a new savings group.
 - `creator` (signer) — recorded as `group_config.creator`. Pays nothing, so a creator with no SOL can sign
 - `rent_payer` (signer, mut) — pays the rent of `group_config` and `vault`. Recorded as `group_config.rent_payer`. May be the same key as `creator`
 - `group_config` (init, payer = `rent_payer`) — PDA derived from group code
-- `vault` (init, payer = `rent_payer`) — PDA-owned token account for USDC
-- `mint` — USDC mint
-- `token_program` — SPL Token program
+- `vault` (init, payer = `rent_payer`) — PDA-owned token account for the group mint
+- `mint` — the group mint. Must pass the mint rule below
+- `token_program` — SPL Token or Token-2022
 - `system_program`
 
 **Args:**
@@ -149,6 +149,15 @@ Creates a new savings group.
 - If fixed, `penalty_value <= deposit_amount` (per missed period; an unbounded value used to allow groups whose settlement math overflowed — issue #44 H-1)
 - If percentage, `penalty_value <= 5000` (max 50%)
 - `group_code` length 1-32 chars, alphanumeric + hyphens only
+- `mint` passes the mint rule (`UnsupportedMint`)
+
+**Mint rule.** The program records each deposit as `deposit_amount` and later pays that amount back. That is only true for a mint where a transfer delivers what it sends and where no other party can move, block, or destroy vault tokens. `create_group` therefore rejects, with `UnsupportedMint`:
+
+- The native mint of SPL Token and of Token-2022. A wrapped-SOL account cannot be burned, so one lamport sent to the vault would block the cancel of a group with no members.
+- A Token-2022 mint with any extension outside this allowlist: `MetadataPointer`, `TokenMetadata`, `InterestBearingConfig`. Rejected examples: `TransferFeeConfig` (the vault receives less than the recorded deposit, so the first member out is paid with other members' tokens and the last one cannot be paid), `TransferHook`, `PermanentDelegate`, `NonTransferable`, `DefaultAccountState`, `MintCloseAuthority`, `Pausable`, `ScaledUiAmount`, the group extensions, and the confidential-transfer family.
+- A Token-2022 mint with an extension type that this build cannot parse. Anchor's vault `init` reads the mint's extension list first and fails with `InvalidAccountData`. If it did not, the mint rule treats an unreadable list as unsupported.
+
+A legacy SPL mint has no extensions and passes. A freeze authority is allowed, because USDC has one; see the frozen-account rows in the threat model. The rule is `extensions_supported` in `state/supported_mint.rs`, a pure function over the extension types. The rule runs only at `create_group`: a mint cannot gain a rejected extension after it is initialized.
 
 **Effects:**
 - Creates `GroupConfig` with status = Open (0), `rent_payer` = the `rent_payer` signer, `settled_at` = 0
@@ -358,9 +367,10 @@ The same canonical-PDA + ATA-owner + uniqueness validations as `distribute` appl
 
 **A group with no members.** `leave_group` makes this an ordinary state. No member is owed anything, so any balance in the vault is tokens that someone sent to it outside the program. A token account with a balance cannot close, so one donated unit would otherwise block the cancel. When `current_members == 0` and the vault balance is above zero, the instruction burns that balance with `burn_checked`, signed by the vault PDA, and then closes the vault. No token moves to any address.
 
-- The burn changes the mint supply, so the transaction must mark `mint` writable. The IDL lists `mint` as read-only, because every other cancel only reads it. If the vault of an empty group holds tokens and `mint` is read-only, the instruction fails with Anchor's `ConstraintMut` and changes nothing.
+- The burn changes the mint supply, so the transaction must mark `mint` writable. The IDL lists `mint` as read-only, because every other cancel only reads it. If the vault of an empty group holds tokens and `mint` is read-only, the instruction fails with `MintNotWritable` and changes nothing.
 - A client that cancels a group with no members should always mark `mint` writable. A writable `mint` with an empty vault burns nothing, and a donation that lands just before the cancel then cannot make it fail.
 - With one or more members nothing is burned and `mint` stays read-only: the last-listed member receives the vault balance, as before.
+- The burn cannot run on a vault that the freeze authority of the mint froze. No instruction moves tokens out of a frozen vault, for a group of any size.
 - Sending the balance to the treasury token account was rejected. That account exists only after `FEE_RECIPIENT` runs `init_treasury` for the mint, so the creator's cancel would depend on another party.
 
 ---
@@ -476,19 +486,25 @@ A member leaves a group that has not started. The member gets the first deposit 
 - `group_config` (mut) — decrements the member count
 - `member_record` (mut, `close = rent_payer`) — seeds `["member", group_config, member]` with the stored bump
 - `rent_payer` (mut) — must equal `member_record.rent_payer`. Receives lamports only. It does not sign, and the program never reads it
-- `member_token_account` (mut) — the member's canonical ATA for the group mint (destination), enforced with the same `associated_token::` constraints as `join_group`
+- `member_token_account` (mut) — destination. Any token account for the group mint that the signer owns (`token::mint`, `token::authority`, `token::token_program`). It does not have to be the canonical ATA: settlement accepts any token account of a member too, and a member whose ATA is frozen needs a way out
 - `vault` (mut) — source. Signs its own transfer
 - `mint`
 - `token_program`
 
 **Args:** None
 
-**Validation, in this order:**
+**Validation.** Anchor first loads every account, then runs the constraints. So two groups of checks exist, and every load check comes before every constraint, the status check included.
+
+At load, in account order:
 - `member` signed (`AccountNotSigner`)
-- `group_config.status == Open (0)` (`InvalidGroupStatus`)
-- `member_record` is the canonical PDA for this group and this signer (`ConstraintSeeds`). A wallet with no record fails with `AccountNotInitialized`
+- `member_record` exists (`AccountNotInitialized`). This is what a wallet with no record gets, and a member who already left
+- `member_token_account` and `vault` exist and are token accounts (`AccountNotInitialized`). After `distribute` or `emergency_cancel` the vault is closed, so a leave sent then fails here and never reaches the status check
+
+Then the constraints, in this order:
+- `group_config.status == Open (0)` (`InvalidGroupStatus`). An Active group fails here
+- `member_record` is the canonical PDA for this group and this signer (`ConstraintSeeds`)
 - `rent_payer.key() == member_record.rent_payer` (`InvalidRentPayer`)
-- `member_token_account` is the canonical ATA of `(mint, member)` (`ConstraintTokenOwner`, `ConstraintAssociated`)
+- `member_token_account` has the group mint and the signer as owner (`ConstraintTokenMint`, `ConstraintTokenOwner`)
 - `vault` is the PDA of this group (`ConstraintSeeds`)
 - `mint.key() == group_config.mint` (`InvalidMint`)
 
@@ -497,7 +513,7 @@ A member leaves a group that has not started. The member gets the first deposit 
 - Transfers `member_record.total_deposited` from the vault to `member_token_account` with `transfer_checked`. While a group is Open this always equals `deposit_amount`
 - Closes `member_record` and pays its lamports to `rent_payer`. The 30-day retention of `close_member_record` does not apply: the group never settled, so there is no result to keep
 
-After a leave the same wallet can join again, and `join_group` writes a fresh record with the rent payer of that join. `start_cycle` counts only the members that remain, so it fails with `InsufficientMembers` if leaves took the group under 2. After Active, Completed or Cancelled the instruction fails with `InvalidGroupStatus`. A client that sends it after settlement sees `AccountNotInitialized` first, because the closed vault fails to load before any constraint runs.
+After a leave the same wallet can join again, and `join_group` writes a fresh record with the rent payer of that join. `start_cycle` counts only the members that remain, so it fails with `InsufficientMembers` if leaves took the group under 2. A client must treat `AccountNotInitialized` from a leave as "the group is no longer Open", the same as `InvalidGroupStatus`.
 
 The record rent goes to the wallet that paid it and to no other. A member whose rent a sponsor paid gets tokens and no lamports from a leave, so repeated join and leave moves no lamports from the sponsor to the member. Each join needs the sponsor's signature.
 
@@ -628,6 +644,10 @@ pub enum SafeNudgeError {
     InvalidRentPayer,
     #[msg("Member records stay open for the retention period after settlement")]
     RecordRetentionNotElapsed,
+    #[msg("This mint cannot be used for a group")]
+    UnsupportedMint,
+    #[msg("Mint must be writable to cancel a group with no members whose vault holds tokens")]
+    MintNotWritable,
 }
 ```
 
@@ -785,7 +805,7 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 - Vault rent is no longer paid inside settlement. A client that wants it returned sends `refund_vault_rent`.
 - Two instructions and two error codes are new: `refund_vault_rent`, `close_member_record`, `InvalidRentPayer`, `RecordRetentionNotElapsed`.
 
-`leave_group` changes no layout and no existing account list, so it needs no settlement of live groups. Two things change for a client. `current_members` can now go down while a group is Open. And a client that cancels a group with no members should mark `mint` writable (see `emergency_cancel`).
+`leave_group` changes no layout and no existing account list, so it needs no settlement of live groups. Four things change for a client. `current_members` can now go down while a group is Open. A client that cancels a group with no members should mark `mint` writable (see `emergency_cancel`). `create_group` rejects mints outside the mint rule with `UnsupportedMint`. And two error codes are new, appended after the existing ones: `UnsupportedMint` (6025) and `MintNotWritable` (6026).
 
 ### Testing Strategy
 
@@ -798,6 +818,8 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 - `emergency_cancel`: creator-only, full refund verification, status transitions
 - `leave_group`: deposit and rent returned to the right wallets, the join-leave loop with a sponsor, every status, every wrong account, the freed seat, and the vault balance after each leave
 - `emergency_cancel` of a group with no members: a balance in the vault is burned under SPL Token and Token-2022, and nothing is burned when the group has members
+- Mint rule: each rejected class of mint, both native mints, and the accepted shapes (plain Token-2022, interest-bearing with metadata, legacy SPL with a freeze authority)
+- Frozen member token account: `leave_group`, `distribute` and `emergency_cancel` fail into it and succeed with another token account of the same member
 - `refund_vault_rent` and `close_member_record`: refund to the recorded rent payer only, rejection before settlement, repeat calls, the create-then-cancel drain, transaction size for a 10-member group, and lamport conservation for a rent payer across a whole group
 - Accounts in the previous layout: rejected by every instruction
 
@@ -880,9 +902,12 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Group code reuse after close | `GroupConfig` is never closed and `refund_vault_rent` leaves it rent-exempt, so `["group", code]` stays allocated and old member records cannot validate against a new group. |
 | Record closed before settlement | `close_member_record` requires Completed or Cancelled. Settlement needs every record, and both statuses are final. `leave_group` closes a record only while the group is Open and decrements `current_members` in the same instruction, so settlement still finds exactly `current_members` records. |
 | Creator abandons an Open group | `start_cycle` and `emergency_cancel` need the creator. `leave_group` needs only the member: each member takes the first deposit back while the group is Open, and the record rent returns to its payer. What stays locked is the rent of `GroupConfig` and of the vault, which only a cancel by the creator releases. |
-| Frozen member token account blocks settlement (accepted for v1) | `distribute` and `emergency_cancel` pay every member in one transaction. A transfer to a frozen token account fails, so the settlement fails for the whole group. Any mint with a freeze authority makes this possible, and that includes USDC. A closed token account has the same effect, but anyone can create it again and the app does that before it settles. A frozen account cannot be fixed by the group: only the freeze authority of the mint can thaw it. Until then the funds of every member stay in the vault. No one can take them, and no one can withdraw them. A claim path, where settlement records each entitlement and a member whose transfer fails claims later, is planned with the v2 two-phase settlement (issue #56). `leave_group` is not affected in the same way: a frozen account blocks only the leave of its own member. |
-| Tokens sent to the vault of a group with no members | A token account with a balance cannot close. `emergency_cancel` burns the balance when `current_members == 0`, then closes the vault. No token goes to an address that a caller chooses. The burn can touch only donated tokens: every deposit enters through `join_group` or `deposit`, both tied to a member record, and `leave_group` pays out exactly what its record holds. |
-| Member leaves to block the start | A member can leave just before `start_cycle` lands. If that takes the group under 2 members, `start_cycle` fails and the creator waits for another member. No funds move except the leaver's own deposit. |
+| Frozen member token account blocks settlement in the app (accepted for v1) | `distribute` and `emergency_cancel` pay every member in one transaction. A transfer to a frozen token account fails, so that settlement transaction fails for the whole group. Any mint with a freeze authority makes this possible, and that includes USDC. A closed token account has the same effect, but anyone can create it again and the app does that before it settles. At program level a frozen account does not block the group: `validate_member_pair` accepts any token account that the member owns for the group mint, not only the canonical ATA. Anyone can create a new token account with that member as owner and pass it in place of the frozen one, and the settlement then succeeds (tested for both instructions). The app does not do this: it always passes each member's canonical ATA, so through the app the group stays blocked until the freeze authority thaws the account. Whether the app should pay a member's other account is an open product decision. The same freeze authority can also freeze the new account. A claim path, where settlement records each entitlement and a member whose transfer fails claims later, is planned with the v2 two-phase settlement (issue #56). In an Open group a frozen account blocks only its own member, and `leave_group` also accepts another token account of that member. |
+| Tokens sent to the vault of a group with no members | A token account with a balance cannot close. `emergency_cancel` burns the balance when `current_members == 0`, then closes the vault. No token goes to an address that a caller chooses. The burn can touch only donated tokens: every deposit enters through `join_group` or `deposit`, both tied to a member record, and `leave_group` pays out exactly what its record holds. The cancel needs `mint` writable in that case (`MintNotWritable`). It cannot succeed while the freeze authority of the mint keeps the vault frozen. |
+| A wallet joins and leaves again and again (accepted) | `emergency_cancel` must list every member, so a join or a leave that lands first makes it fail with `MemberCountMismatch`. A leave that takes the group under 2 members makes `start_cycle` fail with `InsufficientMembers`. One wallet can repeat this for the price of the transaction fees. The creator retries with the current member list. No funds are at risk, and every other member can still leave alone. |
+| `start_cycle` lands after members left (accepted for v1) | `start_cycle` takes no expected member count. If two or more members remain, the cycle starts for them, even if the creator signed when the group was larger. Members who want out must leave before the start. |
+| Mint that breaks the deposit accounting | `create_group` rejects the native mints and every Token-2022 mint outside the extension allowlist (`UnsupportedMint`). See the mint rule in the `create_group` spec. A transfer-fee mint would let the vault hold less than the recorded deposits. |
+| Freeze authority freezes a vault (accepted) | Mints with a freeze authority are allowed. That authority can freeze a group vault, and then no instruction moves its tokens until it is thawed. This is the issuer's power over every holder of the token, not specific to this program. |
 | Records closed while clients still show the result | `close_member_record` also requires 30 days since `settled_at` (300 seconds in devnet builds). |
 | Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 179 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
@@ -891,7 +916,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 
 | Instruction | Who can call | Fund movement | Status required | Key validation |
 |-------------|-------------|---------------|-----------------|----------------|
-| `create_group` | Anyone (creator signs, `rent_payer` signs and pays rent) | None | N/A (creates new) | Group code format, param ranges |
+| `create_group` | Anyone (creator signs, `rent_payer` signs and pays rent) | None | N/A (creates new) | Group code format, param ranges, supported mint |
 | `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent) | Member -> Vault | Open | Group not full, valid mint, member's canonical ATA |
 | `start_cycle` | Creator only | None | Open | `creator == signer`, members >= 2 |
 | `deposit` | Members only | Member -> Vault | Active | Valid MemberRecord, correct period, not already deposited |
@@ -901,7 +926,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | `init_treasury` | `FEE_RECIPIENT` only | None (signer pays ATA rent) | N/A (no group) | `fee_recipient == FEE_RECIPIENT` |
 | `refund_vault_rent` | Anyone | Lamports only: GroupConfig surplus -> `group_config.rent_payer` | Completed or Cancelled | `rent_payer == group_config.rent_payer` |
 | `close_member_record` | Anyone | Lamports only: MemberRecord rent -> `member_record.rent_payer` | Completed or Cancelled, and 30 days since `settled_at` | Canonical record PDA for the group, `rent_payer == member_record.rent_payer` |
-| `leave_group` | The member only | Vault -> the member's canonical ATA (`total_deposited`). MemberRecord rent -> `member_record.rent_payer` | Open | Member signs, canonical record PDA for the group and the signer, canonical ATA, `rent_payer == member_record.rent_payer` |
+| `leave_group` | The member only | Vault -> a token account the member owns (`total_deposited`). MemberRecord rent -> `member_record.rent_payer` | Open | Member signs, canonical record PDA for the group and the signer, destination owned by the signer, `rent_payer == member_record.rent_payer` |
 
 ### Program Constraints Template
 

@@ -107,7 +107,7 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
-| `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator) | None | — |
+| `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator). Rejects unsupported mints | None | — |
 | `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member) | Member → Vault | Open |
 | `leave_group` | The member only | Vault → that member (the first deposit back). Member record rent (SOL) → the wallet that paid it | Open |
 | `start_cycle` | Creator only | None | Open |
@@ -156,16 +156,21 @@ SafeNudge holds user funds. The security posture is structural, not bolted on. S
 5. **Permissionless distribution.** Anyone can settle a finished cycle. No single party can hold funds hostage.
 6. **`transfer_checked` everywhere.** Mint and decimals are validated at the CPI level — no token-confusion attacks.
 
-### Known limit: one frozen token account holds a whole group
+### Known limit: one frozen token account holds a whole group in the app
 
-Guarantee 5 has an exception in v1. `distribute` and `emergency_cancel` pay every member in one transaction. If one member's token account is frozen, that transfer fails and the settlement fails for everyone.
+Guarantee 5 has an exception in v1. `distribute` and `emergency_cancel` pay every member in one transaction. If one member's token account is frozen, that transfer fails and the whole settlement transaction fails.
 
 - Any mint with a freeze authority makes this possible. USDC has one.
 - A closed token account has the same effect, but anyone can create it again, and the app does so before it settles.
-- A frozen account cannot be fixed by the group. Only the freeze authority of the mint can thaw it. Until then every member's funds stay in the vault: nobody can take them, and nobody can withdraw them.
+- Through the app, the group cannot fix a frozen account: the app always pays each member's standard token account. Until the freeze authority of the mint thaws it, every member's funds stay in the vault. Nobody can take them.
+- The program itself is less strict. `distribute` and `emergency_cancel` accept any token account that the member owns for the group's mint. A caller who builds the transaction by hand can create a new token account for that member, pass it in place of the frozen one, and the settlement goes through. The app does not do this today.
 - A claim path, where a member whose transfer fails claims later and the others are paid at once, is planned with the v2 settlement redesign ([issue #56](https://github.com/davigiroux/safenudge.xyz/issues/56)).
 
-Before a cycle starts no member depends on another: `leave_group` returns a member's deposit while the group is `Open`, with no action from the creator. A group with no members can always be cancelled by its creator, even if someone sent tokens to its vault. That balance is burned, never paid out.
+Before a cycle starts no member depends on another: `leave_group` returns a member's deposit while the group is `Open`, with no action from the creator, to any token account that member owns. The creator can cancel a group with no members even if someone sent tokens to its vault: that balance is burned, never paid out. One condition remains for every group: the issuer of a token with a freeze authority can freeze the vault itself, and then nothing moves until it is thawed.
+
+### Which tokens a group can use
+
+A group's accounting assumes that a transfer delivers exactly what it sends and that nobody outside the program can move or block vault tokens. `create_group` rejects every mint that breaks this: wrapped SOL, and any Token-2022 mint with an extension outside a short allowlist (metadata and interest-bearing). Transfer fees, transfer hooks, permanent delegates, default-frozen accounts, and the rest are refused with `UnsupportedMint`. Classic SPL tokens such as USDC pass.
 
 ### Upgrade authority — the honest caveat
 
