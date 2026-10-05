@@ -100,6 +100,7 @@
     "weekly": "Weekly",
     "biweekly": "Biweekly",
     "monthly": "Monthly",
+    "fiveMinutes": "Every 5 minutes",
     "duration": "Cycle Duration",
     "periods": "{{count}} periods",
     "endsOn": "Ends on: {{date}}",
@@ -143,6 +144,8 @@
     "distribute": "Distribute",
     "emergencyCancel": "Cancel Group",
     "membersList": "Members",
+    "groupUnsupported": "This group uses a newer version of SafeNudge. Refresh the page and try again.",
+    "membersLoadFailed": "We couldn't load the members right now. Shall we try again?",
     "totalDeposited": "Total deposited",
     "streak": "streak",
     "sendNudge": "Send nudge",
@@ -150,7 +153,8 @@
     "periodAmount": {
       "weekly": "Weekly Amount",
       "biweekly": "Biweekly Amount",
-      "monthly": "Monthly Amount"
+      "monthly": "Monthly Amount",
+      "fiveMinutes": "Amount per period"
     },
     "paymentDay": "Payment Day",
     "endDate": "End Date",
@@ -159,6 +163,7 @@
     "statusActive": "Active",
     "statusCompleted": "Completed",
     "statusCancelled": "Cancelled",
+    "statusUnknown": "Unavailable",
     "startCycle": "Start Cycle",
     "depositAlready": "Already deposited",
     "groupNotFound": "Group not found",

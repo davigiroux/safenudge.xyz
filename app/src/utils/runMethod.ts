@@ -1,18 +1,19 @@
 import type { Connection, PublicKey, Transaction } from '@solana/web3.js'
+import { TxConfirmError } from './txErrors'
 
 export type TxStages = {
   send: () => Promise<string>
   confirm: (sig: string) => Promise<void>
 }
 
-type MethodBuilder = { transaction: () => Promise<Transaction> }
+export type MethodBuilder = { transaction: () => Promise<Transaction> }
 
 type SignerWallet = {
   publicKey: PublicKey
   signTransaction: <T extends Transaction>(tx: T) => Promise<T>
 }
 
-type ProgramLike = {
+export type ProgramLike = {
   provider: {
     connection: Connection
     wallet?: SignerWallet
@@ -56,7 +57,7 @@ export function runMethod(
         'confirmed',
       )
       if (result.value.err) {
-        throw new Error(`Transaction failed: ${JSON.stringify(result.value.err)}`)
+        throw new TxConfirmError(result.value.err)
       }
     },
   }

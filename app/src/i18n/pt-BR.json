@@ -100,6 +100,7 @@
     "weekly": "Semanal",
     "biweekly": "Quinzenal",
     "monthly": "Mensal",
+    "fiveMinutes": "A cada 5 minutos",
     "duration": "Duração do Ciclo",
     "periods": "{{count}} períodos",
     "endsOn": "Termina em: {{date}}",
@@ -143,6 +144,8 @@
     "distribute": "Distribuir",
     "emergencyCancel": "Cancelar Grupo",
     "membersList": "Membros",
+    "groupUnsupported": "Este grupo usa uma versão mais nova do SafeNudge. Atualize a página e tente de novo.",
+    "membersLoadFailed": "Não conseguimos carregar os membros agora. Vamos tentar de novo?",
     "totalDeposited": "Total depositado",
     "streak": "sequência",
     "sendNudge": "Enviar cutucada",
@@ -150,7 +153,8 @@
     "periodAmount": {
       "weekly": "Valor Semanal",
       "biweekly": "Valor Quinzenal",
-      "monthly": "Valor Mensal"
+      "monthly": "Valor Mensal",
+      "fiveMinutes": "Valor por período"
     },
     "paymentDay": "Dia de Pagamento",
     "endDate": "Data Final",
@@ -159,6 +163,7 @@
     "statusActive": "Ativo",
     "statusCompleted": "Concluído",
     "statusCancelled": "Cancelado",
+    "statusUnknown": "Indisponível",
     "startCycle": "Iniciar Ciclo",
     "depositAlready": "Já depositou",
     "groupNotFound": "Grupo não encontrado",

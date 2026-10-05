@@ -2,22 +2,19 @@ import { useCallback, useEffect, useState } from 'react'
 import { useConnection } from '@solana/wallet-adapter-react'
 import { useAnchorProgram } from './useAnchorProgram'
 import { getGroupConfigPDA } from '../utils/pda'
+import { frequencyFromCode, type FrequencyName } from '../utils/frequency'
 import type { PublicKey } from '@solana/web3.js'
 import type { BN } from '@coral-xyz/anchor'
 
 export type GroupStatus = 'open' | 'active' | 'completed' | 'cancelled'
 
-const STATUS_MAP: Record<number, GroupStatus> = {
+export type GroupConfigError = 'unsupported' | 'unavailable'
+
+const STATUS_BY_CODE: Record<number, GroupStatus> = {
   0: 'open',
   1: 'active',
   2: 'completed',
   3: 'cancelled',
-}
-
-const FREQUENCY_MAP: Record<number, string> = {
-  0: 'weekly',
-  1: 'biweekly',
-  2: 'monthly',
 }
 
 export type GroupConfigData = {
@@ -25,7 +22,8 @@ export type GroupConfigData = {
   creator: string
   mint: string
   depositAmount: number
-  frequency: string
+  frequency: FrequencyName
+  periodSeconds: number
   totalPeriods: number
   maxMembers: number
   currentMembers: number
@@ -53,12 +51,34 @@ type GroupConfigAccount = {
   bump: number
 }
 
+function parseGroupConfig(account: GroupConfigAccount, pda: PublicKey): GroupConfigData | null {
+  const status = STATUS_BY_CODE[account.status]
+  const frequency = frequencyFromCode(account.frequency)
+  if (!status || !frequency) return null
+  return {
+    groupCode: account.groupCode,
+    creator: account.creator.toString(),
+    mint: account.mint.toString(),
+    depositAmount: account.depositAmount.toNumber(),
+    frequency: frequency.name,
+    periodSeconds: frequency.periodSeconds,
+    totalPeriods: account.totalPeriods,
+    maxMembers: account.maxMembers,
+    currentMembers: account.currentMembers,
+    penaltyType: account.penaltyType,
+    penaltyValue: account.penaltyValue.toNumber(),
+    status,
+    cycleStart: account.cycleStart.toNumber(),
+    pda: pda.toString(),
+  }
+}
+
 export function useGroupConfig(groupCode: string | undefined) {
   const program = useAnchorProgram()
   const { connection } = useConnection()
   const [data, setData] = useState<GroupConfigData | null>(null)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [error, setError] = useState<GroupConfigError | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
   const refetch = useCallback(() => setReloadKey((k) => k + 1), [])
 
@@ -79,25 +99,13 @@ export function useGroupConfig(groupCode: string | undefined) {
         const account = await program.account.groupConfig.fetch(pda) as unknown as GroupConfigAccount
 
         if (!cancelled) {
-          setData({
-            groupCode: account.groupCode,
-            creator: account.creator.toString(),
-            mint: account.mint.toString(),
-            depositAmount: account.depositAmount.toNumber(),
-            frequency: FREQUENCY_MAP[account.frequency] || 'unknown',
-            totalPeriods: account.totalPeriods,
-            maxMembers: account.maxMembers,
-            currentMembers: account.currentMembers,
-            penaltyType: account.penaltyType,
-            penaltyValue: account.penaltyValue.toNumber(),
-            status: STATUS_MAP[account.status] || 'open',
-            cycleStart: account.cycleStart.toNumber(),
-            pda: pda.toString(),
-          })
+          const parsed = parseGroupConfig(account, pda)
+          setData(parsed)
+          if (!parsed) setError('unsupported')
         }
-      } catch (err) {
+      } catch {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to fetch group')
+          setError('unavailable')
           setData(null)
         }
       } finally {

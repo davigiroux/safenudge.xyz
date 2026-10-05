@@ -117,14 +117,7 @@ export function projectDistribution(
   }
 }
 
-const PERIOD_SECONDS: Record<string, number> = {
-  weekly: 7 * 86400,
-  biweekly: 14 * 86400,
-  monthly: 30 * 86400,
-}
-
 /** Unix seconds when the active cycle ends (cycle_start + periods * duration). */
 export function cycleEndUnix(group: GroupConfigData): number {
-  const periodSecs = PERIOD_SECONDS[group.frequency] ?? PERIOD_SECONDS.weekly
-  return group.cycleStart + group.totalPeriods * periodSecs
+  return group.cycleStart + group.totalPeriods * group.periodSeconds
 }

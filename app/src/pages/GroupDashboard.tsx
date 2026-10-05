@@ -12,7 +12,8 @@ import { CancelGroupSheet } from '../components/CancelGroupSheet'
 import { useAnchorProgram } from '../hooks/useAnchorProgram'
 import { useTransaction } from '../hooks/useTransaction'
 import { runMethod } from '../utils/runMethod'
-import { useGroupConfig } from '../hooks/useGroupConfig'
+import { settlementRemainingAccounts, settlementStages } from '../utils/settlement'
+import { useGroupConfig, type GroupStatus } from '../hooks/useGroupConfig'
 import { useMemberRecord } from '../hooks/useMemberRecord'
 import { useGroupMembers, type GroupMemberData } from '../hooks/useGroupMembers'
 import { getGroupConfigPDA, getVaultPDA, getMemberRecordPDA, getTreasuryAuthorityPDA } from '../utils/pda'
@@ -48,13 +49,7 @@ function deriveStatus(member: GroupMemberData, currentPeriod: number, groupActiv
   return 'missed'
 }
 
-const PERIOD_SECONDS: Record<string, number> = {
-  weekly: 7 * 86400,
-  biweekly: 14 * 86400,
-  monthly: 30 * 86400,
-}
-
-const STATUS_LABELS: Record<string, string> = {
+const STATUS_LABELS: Record<GroupStatus, string> = {
   open: 'groupDashboard.statusOpen',
   active: 'groupDashboard.statusActive',
   completed: 'groupDashboard.statusCompleted',
@@ -157,9 +152,11 @@ export default function GroupDashboard() {
     isMember,
     refetch: refetchMember,
   } = useMemberRecord(isValidCode ? code : undefined)
-  const { data: members, refetch: refetchMembers } = useGroupMembers(
-    isValidCode ? code : undefined,
-  )
+  const {
+    data: members,
+    error: membersError,
+    refetch: refetchMembers,
+  } = useGroupMembers(isValidCode ? code : undefined)
 
   const refetchAll = () => {
     refetchGroup()
@@ -172,16 +169,18 @@ export default function GroupDashboard() {
   // Calculate current period from real data. The chain-time offset corrects
   // for skewed device clocks so the UI's period math agrees with the
   // program's Clock::get() view (issue #44 M-2).
-  const periodDuration = group ? (PERIOD_SECONDS[group.frequency] || 7 * 86400) : 7 * 86400
   const now = Math.floor(Date.now() / 1000) + chainTimeOffset
-  const elapsed = group ? now - group.cycleStart : 0
   const currentPeriod = group && group.status === 'active'
-    ? Math.min(Math.floor(elapsed / periodDuration), group.totalPeriods - 1)
+    ? Math.min(Math.floor((now - group.cycleStart) / group.periodSeconds), group.totalPeriods - 1)
     : 0
   const totalPeriods = group?.totalPeriods ?? 0
 
+  const cycleEnd = group ? cycleEndUnix(group) : 0
+  const cycleHasEnded = group?.status === 'active' && now >= cycleEnd
+
   // Deposit eligibility
   const canDeposit = group?.status === 'active'
+    && !cycleHasEnded
     && isMember
     && memberRecord
     && !memberRecord.periodsDeposited[currentPeriod]
@@ -193,11 +192,11 @@ export default function GroupDashboard() {
     && (group?.currentMembers ?? 0) >= 2
 
   const isCreator = !!publicKey && publicKey.toString() === group?.creator
-  const cycleEnd = group ? cycleEndUnix(group) : 0
-  const cycleHasEnded = group?.status === 'active' && now >= cycleEnd
   const isCompleted = group?.status === 'completed'
   const showSettlement = !!group && (cycleHasEnded || isCompleted) && members.length > 0
-  const canCancel = isCreator && (group?.status === 'open' || group?.status === 'active')
+  const canCancel = isCreator
+    && !membersError
+    && (group?.status === 'open' || group?.status === 'active')
 
   const projection = useMemo(
     () => (showSettlement && group ? projectDistribution(group, members) : null),
@@ -326,17 +325,6 @@ export default function GroupDashboard() {
     }
   }
 
-  function buildSettlementRemainingAccounts(memberList: GroupMemberData[]) {
-    return memberList.flatMap((m) => {
-      const memberPk = new PublicKey(m.member)
-      const ata = getAssociatedTokenAddressSync(usdcMint, memberPk)
-      return [
-        { pubkey: new PublicKey(m.pda), isWritable: false, isSigner: false },
-        { pubkey: ata, isWritable: true, isSigner: false },
-      ]
-    })
-  }
-
   async function handleDistribute() {
     if (!program || !publicKey || !code || !group || wrongCluster) return
     lastActionRef.current = handleDistribute
@@ -358,7 +346,7 @@ export default function GroupDashboard() {
     })
 
     const sig = await execute(
-      runMethod(
+      settlementStages(
         program.methods
           .distribute()
           .accountsPartial({
@@ -370,8 +358,10 @@ export default function GroupDashboard() {
             treasuryTokenAccount,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
-          .remainingAccounts(buildSettlementRemainingAccounts(members)),
+          .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
         program,
+        members,
+        usdcMint,
       ),
       {
         onError: (err) =>
@@ -402,7 +392,7 @@ export default function GroupDashboard() {
     track('emergency_cancel_submitted', { group_code_hash: groupHash })
 
     const sig = await execute(
-      runMethod(
+      settlementStages(
         program.methods
           .emergencyCancel()
           .accountsPartial({
@@ -412,8 +402,10 @@ export default function GroupDashboard() {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
           })
-          .remainingAccounts(buildSettlementRemainingAccounts(members)),
+          .remainingAccounts(settlementRemainingAccounts(members, usdcMint)),
         program,
+        members,
+        usdcMint,
       ),
       {
         onError: (err) =>
@@ -465,14 +457,14 @@ export default function GroupDashboard() {
         <div className="flex flex-col items-center justify-center min-h-[60vh] px-4">
           <Icon name="search_off" size={48} className="text-error mb-4" />
           <p className="font-body text-body-lg text-error">
-            {t('groupDashboard.groupNotFound')}
+            {t(groupError === 'unsupported' ? 'groupDashboard.groupUnsupported' : 'groupDashboard.groupNotFound')}
           </p>
         </div>
       </PageLayout>
     )
   }
 
-  const statusLabel = STATUS_LABELS[group.status] || STATUS_LABELS.open
+  const statusLabel = STATUS_LABELS[group.status]
   const depositAmountFormatted = `${formatTokenAmount(group.depositAmount)} USDC`
 
   return (
@@ -595,15 +587,32 @@ export default function GroupDashboard() {
               <h2 className="font-headline text-title-lg text-on-surface mb-3">
                 {t('groupDashboard.membersList')}
               </h2>
-              <div className="flex flex-col gap-3">
-                {members.map((m) => {
-                  const status = deriveStatus(m, currentPeriod, group.status === 'active')
-                  const isYou = !!publicKey && publicKey.toString() === m.member
-                  return (
-                    <MemberCard key={m.member} member={m} status={status} isYou={isYou} />
-                  )
-                })}
-              </div>
+              {membersError ? (
+                <div
+                  className="bg-surface-container-lowest rounded-xl p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                  role="alert"
+                >
+                  <div className="flex items-center gap-3">
+                    <Icon name="warning" size={20} className="text-tertiary" />
+                    <span className="font-body text-body-md text-on-surface">
+                      {t('groupDashboard.membersLoadFailed')}
+                    </span>
+                  </div>
+                  <Button variant="tertiary" icon="refresh" onClick={refetchMembers}>
+                    {t('transaction.tryAgain')}
+                  </Button>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  {members.map((m) => {
+                    const status = deriveStatus(m, currentPeriod, group.status === 'active')
+                    const isYou = !!publicKey && publicKey.toString() === m.member
+                    return (
+                      <MemberCard key={m.member} member={m} status={status} isYou={isYou} />
+                    )
+                  })}
+                </div>
+              )}
             </div>
 
             {/* Send Nudge — first behind/missed member who isn't you */}
