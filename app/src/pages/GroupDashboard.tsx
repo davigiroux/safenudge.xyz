@@ -55,6 +55,13 @@ function deriveStatus(member: GroupMemberData, currentPeriod: number, groupActiv
   return 'missed'
 }
 
+const GROUP_NOT_OPEN = 'InvalidGroupStatus'
+
+/** A leave after settlement fails on the closed vault, before the program's own status check. */
+function leaveErrorCode(programCode: string | null | undefined): string | null {
+  return programCode === 'AccountNotInitialized' ? GROUP_NOT_OPEN : programCode ?? null
+}
+
 const STATUS_LABELS: Record<GroupStatus, string> = {
   open: 'groupDashboard.statusOpen',
   active: 'groupDashboard.statusActive',
@@ -484,12 +491,15 @@ export default function GroupDashboard() {
         program,
       ),
       {
-        onError: (err) =>
+        onError: (err) => {
           track('group_leave_failed', {
             group_code_hash: groupHash,
             error_kind: err.kind,
             program_code: err.programCode ?? null,
-          }),
+          })
+          setLeaveOpen(false)
+          if (leaveErrorCode(err.programCode) === GROUP_NOT_OPEN) refetchAll()
+        },
       },
     )
     if (sig) {
@@ -847,6 +857,7 @@ export default function GroupDashboard() {
         open={leaveOpen}
         groupName={code ?? ''}
         refundAmount={`${formatTokenAmount(memberRecord?.totalDeposited ?? 0)} USDC`}
+        wrongNetwork={wrongCluster}
         loading={txState === 'signing' || txState === 'confirming'}
         onConfirm={handleLeave}
         onClose={() => setLeaveOpen(false)}
@@ -873,7 +884,7 @@ export default function GroupDashboard() {
           state={txState === 'signing' ? 'signing' : txState === 'confirming' ? 'confirming' : txState === 'success' ? 'success' : 'error'}
           groupCode={code}
           errorKind={errorKind}
-          errorProgramCode={errorProgramCode}
+          errorProgramCode={txIsLeave ? leaveErrorCode(errorProgramCode) : errorProgramCode}
           successTitle={txIsLeave ? t('leaveGroup.successTitle') : undefined}
           successDetail={txIsLeave ? t('leaveGroup.successDetail') : undefined}
           onRetry={() => {

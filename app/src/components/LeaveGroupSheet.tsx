@@ -6,6 +6,7 @@ type LeaveGroupSheetProps = {
   open: boolean
   groupName: string
   refundAmount: string
+  wrongNetwork?: boolean
   loading?: boolean
   onConfirm: () => void
   onClose: () => void
@@ -21,6 +22,7 @@ export function LeaveGroupSheet({
   open,
   groupName,
   refundAmount,
+  wrongNetwork = false,
   loading = false,
   onConfirm,
   onClose,
@@ -79,8 +81,22 @@ export function LeaveGroupSheet({
             ))}
           </div>
 
+          {wrongNetwork && (
+            <div className="mt-6 rounded-xl bg-tertiary-fixed/20 p-4 flex items-center gap-3" role="alert">
+              <Icon name="warning" size={20} className="text-tertiary" />
+              <span className="font-body text-body-md text-on-surface">{t('errors.wrongNetwork')}</span>
+            </div>
+          )}
+
           <div className="mt-7 flex flex-col gap-2">
-            <Button variant="primary" icon="logout" className="w-full" onClick={onConfirm} loading={loading}>
+            <Button
+              variant="primary"
+              icon="logout"
+              className="w-full"
+              onClick={onConfirm}
+              loading={loading}
+              disabled={wrongNetwork}
+            >
               {t('leaveGroup.confirmCta')}
             </Button>
             <button
