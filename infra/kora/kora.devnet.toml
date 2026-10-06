@@ -27,9 +27,19 @@ estimate_bundle_fee = false
 sign_and_send_bundle = false
 sign_bundle = false
 
+# Per-user transaction cap. With free pricing Kora keys it on the request's
+# `user_id`, which the client chooses (the app sends the wallet address), so it
+# stops a runaway client, not a key holder who rotates `user_id`. No cache_url:
+# the counts live in memory and reset when Kora restarts. A full group lifecycle
+# is about 7 transactions per user.
 [kora.usage_limit]
-enabled = false
+enabled = true
 fallback_if_unavailable = false
+
+[[kora.usage_limit.rules]]
+type = "transaction"
+max = 50
+window_seconds = 3600
 
 [validation]
 # Largest rent one request may take from the relay. SafePool sends `create_group`
