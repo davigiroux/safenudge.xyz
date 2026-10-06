@@ -53,6 +53,26 @@ Kora listens on `0.0.0.0` and has no host flag. Keep the port off the network: i
 
 Use a wallet created for this purpose. It needs devnet SOL and nothing else: it holds no tokens and has no authority over any SafeNudge account.
 
+## Hosted devnet relay
+
+Phones running a devnet build cannot reach a relay on a developer's machine, so a devnet relay also runs on Railway (project `safenudge-kora-devnet`, service `kora`). `Dockerfile` in this directory builds Kora at the pinned commit with `kora.devnet.toml` and `signers.devnet.toml` baked in, and listens on Railway's `PORT`.
+
+Secrets are Railway variables, never files in this repo:
+
+| Variable | Value |
+|---|---|
+| `KORA_SIGNER_KEY` | the relay wallet's secret key (a wallet used for nothing else, devnet SOL only) |
+| `KORA_API_KEY` | a random string, different from any local relay's key |
+| `RPC_URL` | optional; defaults to `https://api.devnet.solana.com` |
+
+Deploy a change to the config or the pinned commit from this directory:
+
+```bash
+railway up --service kora --environment production
+```
+
+The API key ships inside app builds, so it is public in practice. The section above on mainnet applies: this shape is for devnet only.
+
 ## Client sequence
 
 ```ts
