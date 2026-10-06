@@ -2,7 +2,7 @@
 
 [Kora](https://github.com/solana-foundation/kora) is the Solana Foundation's fee-payer relay. Here it pays transaction fees and, as the program's `rent_payer`, account rent. A wallet that holds tokens and no SOL can then create a group, join, deposit and settle. Background and test results are in issue #73.
 
-This directory holds the relay config only. The app does not call the relay yet.
+This directory holds the relay config only. The web app calls the relay when `VITE_KORA_URL` is set.
 
 ## What the config allows
 
@@ -17,6 +17,8 @@ This directory holds the relay config only. The app does not call the relay yet.
 | A transfer out of the relay signer | rejected |
 | A durable-nonce transaction | rejected |
 | Rent above `max_allowed_lamports` in one request | rejected |
+| No `user_id` in a sign request | rejected (read from source, not run) |
+| More than 50 transactions for one `user_id` in an hour | rejected (read from source, not run) |
 | No API key, when `KORA_API_KEY` is set | HTTP 401 |
 
 Relay cost per action at the current rent rate: `join_group` 1,493,520 lamports (returned by `close_member_record` 30 days after settlement, or at once by `leave_group`), `create_group` 3,048,000 (the vault half returns through `refund_vault_rent`, the GroupConfig half never does), everything else is the transaction fee.
@@ -27,7 +29,7 @@ Kora prints this warning for the config, and it is accurate:
 
 > Fee payer policy allows System CreateAccount instructions. Risk: Users can make the fee payer pay for arbitrary account creations.
 
-`require_one_of_programs` checks that a SafeNudge instruction is present. It does not limit what else the relay pays for in the same transaction, and with free pricing the per-user limits use an identifier the client chooses. An API key shipped to a browser is public. On devnet that costs test SOL. On mainnet the relay must not be reachable from the browser: a server-side step builds each sponsored transaction and holds the key (issue #73, decision of 2026-10-05).
+`require_one_of_programs` checks that a SafeNudge instruction is present. It does not limit what else the relay pays for in the same transaction, and with free pricing the per-user limits use an identifier the client chooses. An API key shipped to a browser is public. A key holder can take up to `max_allowed_lamports` (about 0.006 SOL) per request. The usage limit caps one `user_id` at 50 transactions an hour (about 0.3 SOL), but the client picks the `user_id`, so a new one per request removes that cap. Only `rate_limit` (100 requests a second) applies to all clients together. The counts live in memory and reset when Kora restarts. On devnet that costs test SOL. On mainnet the relay must not be reachable from the browser: a server-side step builds each sponsored transaction and holds the key (issue #73, decision of 2026-10-05).
 
 Also: stable Kora releases do not have `require_one_of_programs` yet, and the audited commit predates it. Pin the commit below.
 
@@ -46,6 +48,8 @@ export KORA_API_KEY=...      # any random string; clients send it as x-api-key
 kora --config infra/kora/kora.devnet.toml --rpc-url https://api.devnet.solana.com \
   rpc start --signers-config infra/kora/signers.devnet.toml --port 8080
 ```
+
+Kora listens on `0.0.0.0` and has no host flag. Keep the port off the network: in Docker, publish it as `-p 127.0.0.1:8080:8080`.
 
 Use a wallet created for this purpose. It needs devnet SOL and nothing else: it holds no tokens and has no authority over any SafeNudge account.
 
@@ -70,6 +74,7 @@ const signed = await wallet.signTransaction(tx)   // the member signs, holding n
 
 const res = await call('signAndSendTransaction', {
   transaction: signed.serialize({ requireAllSignatures: false }).toString('base64'),
+  user_id: member.toBase58(),   // required: the usage limit counts per user_id
 })
 // res.result.signature, or res.error.message with the reason for a rejection
 ```
@@ -78,4 +83,4 @@ Never pass the relay as `creator` or `member`. It is the fee payer and the rent 
 
 ## When the rent rate or the layouts change
 
-`max_allowed_lamports` is the rent of one `create_group`. Recompute it from `solana rent 179` plus `solana rent 165`.
+`max_allowed_lamports` is the rent of one `create_group` with the creator's `join_group` and one token account: `solana rent` of 179, 165, 166 and 165 bytes, added together. The comment above it in `kora.devnet.toml` shows the sum.

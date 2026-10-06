@@ -27,16 +27,29 @@ estimate_bundle_fee = false
 sign_and_send_bundle = false
 sign_bundle = false
 
+# Per-user transaction cap. With free pricing Kora keys it on the request's
+# `user_id`, which the client chooses (the app sends the wallet address), so it
+# stops a runaway client, not a key holder who rotates `user_id`. No cache_url:
+# the counts live in memory and reset when Kora restarts. A full group lifecycle
+# is about 7 transactions per user.
 [kora.usage_limit]
-enabled = false
+enabled = true
 fallback_if_unavailable = false
 
+[[kora.usage_limit.rules]]
+type = "transaction"
+max = 50
+window_seconds = 3600
+
 [validation]
-# Largest rent one request may take from the relay: `create_group` creates the
-# GroupConfig (179 bytes) and the vault token account (165 bytes).
-# (128 + 179) * 5080 + (128 + 165) * 5080 = 3,048,000 lamports at the current
-# rent rate. `join_group` needs 1,493,520. Recompute if the rent rate changes.
-max_allowed_lamports = 3048000
+# Largest rent one request may take from the relay. SafePool sends `create_group`
+# and the creator's `join_group` in one transaction, with an idempotent token
+# account create that Kora counts even when the account exists:
+#   GroupConfig 179 B + vault 165 B             (128 + 179) * 5080 + (128 + 165) * 5080 = 3,048,000
+#   MemberRecord 166 B                          (128 + 166) * 5080                     = 1,493,520
+#   member token account 165 B                  (128 + 165) * 5080                     = 1,488,440
+# Total 6,029,960 lamports at the current rent rate. Recompute if the rent rate changes.
+max_allowed_lamports = 6029960
 max_priority_fee_lamports = 50000
 max_signatures = 4
 price_source = "Mock"
