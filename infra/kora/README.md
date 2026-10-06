@@ -2,7 +2,7 @@
 
 [Kora](https://github.com/solana-foundation/kora) is the Solana Foundation's fee-payer relay. Here it pays transaction fees and, as the program's `rent_payer`, account rent. A wallet that holds tokens and no SOL can then create a group, join, deposit and settle. Background and test results are in issue #73.
 
-This directory holds the relay config only. The app does not call the relay yet.
+This directory holds the relay config only. The web app calls the relay when `VITE_KORA_URL` is set.
 
 ## What the config allows
 
