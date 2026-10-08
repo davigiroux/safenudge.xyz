@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::SafeNudgeError;
+use crate::events::CycleStarted;
 use crate::state::{GroupConfig, STATUS_ACTIVE, STATUS_OPEN};
 
 #[derive(Accounts)]
@@ -26,6 +27,13 @@ impl<'info> StartCycle<'info> {
         // ── Effects ─────────────────────────────────────────
         self.group_config.status = STATUS_ACTIVE;
         self.group_config.cycle_start = clock.unix_timestamp;
+
+        emit!(CycleStarted {
+            group: self.group_config.key(),
+            members: self.group_config.current_members,
+            cycle_start: self.group_config.cycle_start,
+            cycle_end: self.group_config.cycle_end()?,
+        });
 
         Ok(())
     }

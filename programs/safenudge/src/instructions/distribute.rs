@@ -5,7 +5,8 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
-use crate::state::{period_duration_secs, validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_COMPLETED};
+use crate::events::{GroupSettled, MemberSettled};
+use crate::state::{validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_COMPLETED};
 use crate::PROTOCOL_FEE_BPS;
 
 #[derive(Accounts)]
@@ -68,19 +69,8 @@ impl<'info> Distribute<'info> {
 
         // ── Checks ──────────────────────────────────────────
 
-        // Calculate period duration in seconds
-        let period_duration = period_duration_secs(group.frequency)?;
-
-        // Check cycle has ended
-        let cycle_duration = (group.total_periods as i64)
-            .checked_mul(period_duration)
-            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-        let cycle_end = group
-            .cycle_start
-            .checked_add(cycle_duration)
-            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
         require!(
-            clock.unix_timestamp >= cycle_end,
+            clock.unix_timestamp >= group.cycle_end()?,
             SafeNudgeError::CycleNotEnded
         );
 
@@ -104,6 +94,8 @@ impl<'info> Distribute<'info> {
         // ── Pass 1: Calculate penalties and payouts ──────────
 
         struct MemberPayout {
+            member: Pubkey,
+            penalty: u64,
             payout: u64,
             is_compliant: bool,
             total_deposited: u64,
@@ -192,6 +184,8 @@ impl<'info> Distribute<'info> {
                 .ok_or(SafeNudgeError::ArithmeticOverflow)?;
 
             member_payouts.push(MemberPayout {
+                member: member_record.member,
+                penalty,
                 payout: base_payout,
                 is_compliant,
                 total_deposited: member_record.total_deposited,
@@ -239,18 +233,27 @@ impl<'info> Distribute<'info> {
             0
         };
 
-        let mut final_payouts: Vec<u64> = Vec::with_capacity(member_count);
+        // With no compliant member every deposit returns, so no penalty is charged.
+        let mut settled: Vec<MemberSettled> = Vec::with_capacity(member_count);
         for mp in &member_payouts {
-            let final_payout = if compliant_count == 0 {
-                mp.total_deposited
+            let (penalty, final_payout) = if compliant_count == 0 {
+                (0, mp.total_deposited)
             } else if mp.is_compliant {
-                mp.payout
+                let payout = mp
+                    .payout
                     .checked_add(bonus_per_compliant)
-                    .ok_or(SafeNudgeError::ArithmeticOverflow)?
+                    .ok_or(SafeNudgeError::ArithmeticOverflow)?;
+                (mp.penalty, payout)
             } else {
-                mp.payout
+                (mp.penalty, mp.payout)
             };
-            final_payouts.push(final_payout);
+            settled.push(MemberSettled {
+                group: group_key,
+                member: mp.member,
+                deposited: mp.total_deposited,
+                penalty,
+                payout: final_payout,
+            });
         }
 
         // ── Effects ─────────────────────────────────────────
@@ -298,9 +301,10 @@ impl<'info> Distribute<'info> {
             // Last member gets vault remainder to prevent dust
             let amount = if i == member_count.checked_sub(1).ok_or(SafeNudgeError::ArithmeticOverflow)? {
                 ctx.accounts.vault.reload()?;
+                settled[i].payout = ctx.accounts.vault.amount;
                 ctx.accounts.vault.amount
             } else {
-                final_payouts[i]
+                settled[i].payout
             };
 
             if amount > 0 {
@@ -331,6 +335,27 @@ impl<'info> Distribute<'info> {
             signer,
         );
         close_account(close_ctx)?;
+
+        let mut total_penalties_charged: u64 = 0;
+        let mut total_paid: u64 = 0;
+        for event in settled {
+            total_penalties_charged = total_penalties_charged
+                .checked_add(event.penalty)
+                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
+            total_paid = total_paid
+                .checked_add(event.payout)
+                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
+            emit!(event);
+        }
+        emit!(GroupSettled {
+            group: group_key,
+            members: ctx.accounts.group_config.current_members,
+            compliant_count: u8::try_from(compliant_count)
+                .map_err(|_| SafeNudgeError::ArithmeticOverflow)?,
+            total_penalties: total_penalties_charged,
+            protocol_fee,
+            total_paid,
+        });
 
         Ok(())
     }

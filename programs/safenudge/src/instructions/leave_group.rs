@@ -4,6 +4,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
+use crate::events::MemberLeft;
 use crate::state::{GroupConfig, MemberRecord, STATUS_OPEN};
 
 /// Returns a member's deposit while the group is Open and closes the member record.
@@ -81,6 +82,13 @@ impl<'info> LeaveGroup<'info> {
         let cpi_ctx =
             CpiContext::new_with_signer(self.token_program.key(), cpi_accounts, signer);
         transfer_checked(cpi_ctx, refund, self.mint.decimals)?;
+
+        emit!(MemberLeft {
+            group: group_key,
+            member: self.member.key(),
+            refund,
+            current_members: self.group_config.current_members,
+        });
 
         Ok(())
     }
