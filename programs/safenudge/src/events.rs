@@ -102,5 +102,6 @@ pub struct GroupCancelled {
 #[event]
 pub struct FeesWithdrawn {
     pub recipient: Pubkey,
+    pub mint: Pubkey,
     pub amount: u64,
 }

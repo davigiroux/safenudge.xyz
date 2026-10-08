@@ -1469,6 +1469,10 @@ export type Safenudge = {
             "type": "pubkey"
           },
           {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
             "name": "amount",
             "type": "u64"
           }

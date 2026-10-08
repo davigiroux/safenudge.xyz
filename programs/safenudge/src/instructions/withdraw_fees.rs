@@ -66,6 +66,7 @@ impl<'info> WithdrawFees<'info> {
 
         emit!(FeesWithdrawn {
             recipient: ctx.accounts.recipient.key(),
+            mint: ctx.accounts.mint.key(),
             amount,
         });
 
