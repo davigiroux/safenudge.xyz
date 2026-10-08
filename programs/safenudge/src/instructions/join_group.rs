@@ -4,6 +4,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
+use crate::events::MemberJoined;
 use crate::state::{GroupConfig, MemberRecord, STATUS_OPEN};
 
 #[derive(Accounts)]
@@ -93,6 +94,14 @@ impl<'info> JoinGroup<'info> {
             self.group_config.deposit_amount,
             self.mint.decimals,
         )?;
+
+        emit!(MemberJoined {
+            group: self.group_config.key(),
+            member: self.member.key(),
+            rent_payer: self.rent_payer.key(),
+            amount: self.group_config.deposit_amount,
+            current_members: self.group_config.current_members,
+        });
 
         Ok(())
     }

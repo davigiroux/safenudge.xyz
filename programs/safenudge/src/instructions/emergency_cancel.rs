@@ -5,6 +5,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
+use crate::events::GroupCancelled;
 use crate::state::{validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_CANCELLED, STATUS_OPEN};
 
 #[derive(Accounts)]
@@ -100,6 +101,7 @@ impl<'info> EmergencyCancel<'info> {
         let signer_seeds: &[&[u8]] = &[b"vault", group_key.as_ref(), &bump_bytes];
         let signer = &[signer_seeds];
 
+        let mut refunded_total: u64 = 0;
         for i in 0..member_count {
             let token_idx = i
                 .checked_mul(2)
@@ -115,6 +117,9 @@ impl<'info> EmergencyCancel<'info> {
             } else {
                 refund_amounts[i]
             };
+            refunded_total = refunded_total
+                .checked_add(amount)
+                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
 
             if amount > 0 {
                 let cpi_accounts = TransferChecked {
@@ -158,6 +163,14 @@ impl<'info> EmergencyCancel<'info> {
             signer,
         );
         close_account(close_ctx)?;
+
+        emit!(GroupCancelled {
+            group: group_key,
+            creator: ctx.accounts.creator.key(),
+            members: ctx.accounts.group_config.current_members,
+            refunded_total,
+            burned: unowed_balance,
+        });
 
         Ok(())
     }

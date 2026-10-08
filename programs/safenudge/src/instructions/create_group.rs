@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_spl::token_interface::{Mint, TokenAccount, TokenInterface};
 
 use crate::errors::SafeNudgeError;
+use crate::events::GroupCreated;
 use crate::state::{require_supported_mint, GroupConfig, MAX_FREQUENCY, STATUS_OPEN};
 
 #[derive(Accounts)]
@@ -103,6 +104,16 @@ impl<'info> CreateGroup<'info> {
         group.status = STATUS_OPEN;
         group.bump = bumps.group_config;
         group.group_code = group_code;
+
+        emit!(GroupCreated {
+            group: group.key(),
+            creator: group.creator,
+            rent_payer: group.rent_payer,
+            mint: group.mint,
+            deposit_amount,
+            total_periods,
+            max_members,
+        });
 
         Ok(())
     }

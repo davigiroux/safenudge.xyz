@@ -43,6 +43,7 @@ pub const MAINNET_PROGRAM_ID: &str = "11111111111111111111111111111111";
 declare_id!("11111111111111111111111111111111");
 
 pub mod errors;
+pub mod events;
 pub mod instructions;
 pub mod state;
 

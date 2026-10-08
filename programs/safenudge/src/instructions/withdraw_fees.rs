@@ -4,6 +4,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
+use crate::events::FeesWithdrawn;
 use crate::FEE_RECIPIENT;
 
 #[derive(Accounts)]
@@ -62,6 +63,11 @@ impl<'info> WithdrawFees<'info> {
             signer,
         );
         transfer_checked(cpi_ctx, amount, ctx.accounts.mint.decimals)?;
+
+        emit!(FeesWithdrawn {
+            recipient: ctx.accounts.recipient.key(),
+            amount,
+        });
 
         Ok(())
     }

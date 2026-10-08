@@ -4,6 +4,7 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
+use crate::events::DepositMade;
 use crate::state::{period_duration_secs, GroupConfig, MemberRecord, STATUS_ACTIVE};
 
 #[derive(Accounts)]
@@ -55,17 +56,12 @@ impl<'info> Deposit<'info> {
 
         // ── Checks ──────────────────────────────────────────
 
-        // Calculate period duration in seconds
         let period_duration = period_duration_secs(self.group_config.frequency)?;
 
-        // Check cycle hasn't ended
-        let cycle_duration = (self.group_config.total_periods as i64)
-            .checked_mul(period_duration)
-            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-        let cycle_end = self.group_config.cycle_start
-            .checked_add(cycle_duration)
-            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-        require!(clock.unix_timestamp < cycle_end, SafeNudgeError::CycleEnded);
+        require!(
+            clock.unix_timestamp < self.group_config.cycle_end()?,
+            SafeNudgeError::CycleEnded
+        );
 
         // Calculate current period
         let elapsed = clock.unix_timestamp
@@ -111,6 +107,14 @@ impl<'info> Deposit<'info> {
             self.group_config.deposit_amount,
             self.mint.decimals,
         )?;
+
+        emit!(DepositMade {
+            group: self.group_config.key(),
+            member: self.member.key(),
+            period: current_period,
+            amount: self.group_config.deposit_amount,
+            deposits_made: self.member_record.deposits_made,
+        });
 
         Ok(())
     }

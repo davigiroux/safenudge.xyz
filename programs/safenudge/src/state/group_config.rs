@@ -45,6 +45,18 @@ pub struct GroupConfig {
 
 const _: () = assert!(8 + GroupConfig::INIT_SPACE == 179);
 
+impl GroupConfig {
+    /// First unix timestamp after the last deposit period of the cycle.
+    pub fn cycle_end(&self) -> Result<i64> {
+        let cycle_duration = i64::from(self.total_periods)
+            .checked_mul(period_duration_secs(self.frequency)?)
+            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
+        self.cycle_start
+            .checked_add(cycle_duration)
+            .ok_or(SafeNudgeError::ArithmeticOverflow.into())
+    }
+}
+
 /// Highest accepted `frequency` code. Devnet builds accept one more than mainnet; see
 /// `period_duration_secs`.
 pub const MAX_FREQUENCY: u8 = if cfg!(feature = "devnet") { 3 } else { 2 };
@@ -98,6 +110,30 @@ mod tests {
     #[test]
     fn record_retention_end_rejects_a_timestamp_that_overflows() {
         assert!(record_retention_end(i64::MAX).is_err());
+    }
+
+    #[test]
+    fn cycle_end_adds_every_period_to_the_cycle_start() {
+        let mut group = GroupConfig {
+            creator: Pubkey::default(),
+            rent_payer: Pubkey::default(),
+            mint: Pubkey::default(),
+            deposit_amount: 0,
+            penalty_value: 0,
+            cycle_start: 1_000,
+            settled_at: 0,
+            frequency: 0,
+            total_periods: 4,
+            max_members: 0,
+            current_members: 0,
+            penalty_type: 0,
+            status: 0,
+            bump: 0,
+            group_code: String::new(),
+        };
+        assert_eq!(group.cycle_end().unwrap(), 1_000 + 4 * 604_800);
+        group.cycle_start = i64::MAX;
+        assert!(group.cycle_end().is_err());
     }
 
     #[test]
