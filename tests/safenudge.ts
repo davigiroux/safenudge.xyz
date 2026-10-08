@@ -7,7 +7,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { LiteSVMProvider, fromWorkspace } from "anchor-litesvm";
 import { Clock, FailedTransactionMetadata, Rent } from "litesvm";
 import {
-  PublicKey, Keypair, SystemProgram, Transaction, TransactionInstruction, ComputeBudgetProgram,
+  PublicKey, Keypair, SystemProgram, Transaction, TransactionInstruction,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -513,7 +513,6 @@ describe("safenudge", () => {
     gPda: PublicKey, vPda: PublicKey, members: Member[], treasuryAta: PublicKey | null,
   ): Promise<string> {
     return program.methods.distribute()
-      .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 })])
       .accounts({
         payer: payer.publicKey, groupConfig: gPda, vault: vPda,
         mint: usdcMint, treasuryTokenAccount: treasuryAta, tokenProgram: TOKEN_PROGRAM_ID,
@@ -2481,7 +2480,6 @@ describe("safenudge", () => {
         { pubkey: m.ata, isWritable: true, isSigner: false },
       ]);
       await program.methods.distribute()
-        .preInstructions([ComputeBudgetProgram.setComputeUnitLimit({ units: 400_000 })])
         .accounts({
           payer: payer.publicKey,
           groupConfig: gPda,
