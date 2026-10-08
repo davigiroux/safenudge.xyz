@@ -184,8 +184,8 @@ Alert names are checked against the IDL at startup: an event alert for an event 
 ### What Microscope cannot alert on
 
 - **"The program was upgraded."** Microscope does not decode the BPF Upgradeable Loader. A Squads `transaction_executed` record does not say what the transaction ran; the content is in the earlier `transaction_created` record. So we alert on every proposal and every execution on the authority multisig, and a human reads the proposal. Any execution on that multisig is unexpected outside a planned upgrade window.
-- **An upgrade signed outside the multisig.** If upgrade authority is ever moved off the multisig, the multisig alerts no longer cover it. Until `--final`, also check the program's upgrade authority on a schedule (`solana program show <PROGRAM_ID>`) and alert when it is not the Squad vault. That check runs outside Microscope.
-- **Groups past `cycle_end` with no settlement.** Microscope alerts on records that exist, not on records that are missing. A scheduled job that reads `CycleStarted.cycle_end` (or `GroupConfig` accounts) and finds unsettled groups covers this.
+- **An upgrade signed outside the multisig.** If upgrade authority is ever moved off the multisig, the multisig alerts no longer cover it. Until `--final`, also check the program's upgrade authority on a schedule (`solana program show <PROGRAM_ID>`) and alert when it is not the Squad vault. See §7.
+- **Groups past `cycle_end` with no settlement.** Microscope alerts on records that exist, not on records that are missing. See §7.
 - **Missing events.** If logs were truncated, an `emit!` event is absent and nothing records the absence. Only payloads that fail to decode produce `event_decode_failure`.
 
 ## 5. Deployment
@@ -213,8 +213,20 @@ Add these to the upgrade checklist in `ARCHITECTURE.md` ("Upgrades that change a
 3. Records before the upgrade are decoded with the new IDL if backfilled again; do not re-backfill across a layout change.
 4. Expect a Squads alert for every step of the upgrade itself. An upgrade that produced no alert means monitoring is broken.
 
-## 7. Open questions
+## 7. Checks outside Microscope
 
-- Paging channel for critical alerts: Telegram only, or PagerDuty for the multisig rules.
-- Who receives alerts besides the program author.
-- Where the authority check and the stuck-settlement job (§4) run.
+Two checks from §4 need a scheduled job, because they alert on a state, not on a transaction:
+
+| Check | Reads | Alerts when |
+| --- | --- | --- |
+| Upgrade authority | Program's `ProgramData` account | Authority is not the Squad vault (or, after `--final`, is not `None`) |
+| Unsettled groups | `GroupConfig` accounts (`memcmp` on status) | Status is Active and `cycle_start + total_periods × period` passed more than 24 hours ago |
+
+They run as a systemd timer (every 10 minutes) on the same VM as Microscope, as a small script in this repository, and send to the same Telegram bot. Not GitHub Actions: scheduled workflows can start hours late and are disabled after 60 days without repository activity.
+
+The script also sends one message per day saying all checks passed. A missing daily message means the VM, the bot, or the script is down. Microscope's own alerts cannot report that, because they run on the same machine.
+
+## 8. Decisions
+
+- Alert channel: Telegram only. PagerDuty can be added per rule later without changing anything else.
+- Recipients: the maintainer's Telegram. Chat IDs and bot tokens live only in `.env` on the deployment host.
