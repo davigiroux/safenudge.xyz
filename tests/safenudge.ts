@@ -5547,7 +5547,7 @@ describe("safenudge", () => {
         [recipientKp],
       );
 
-      assert.deepEqual(events, [{ name: "feesWithdrawn", data: { recipient: FEE_RECIPIENT.toBase58(), amount: 100_000n } }]);
+      assert.deepEqual(events, [{ name: "feesWithdrawn", data: { recipient: FEE_RECIPIENT.toBase58(), mint: usdcMint.toBase58(), amount: 100_000n } }]);
     });
   });
 

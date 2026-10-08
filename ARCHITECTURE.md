@@ -593,7 +593,7 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | `MemberSettled` | `distribute`, once per member | `group`, `member`, `deposited`, `penalty` (charged; 0 when no member is compliant), `payout` (sent; the last member's includes the rounding remainder) |
 | `GroupSettled` | `distribute`, after every `MemberSettled` | `group`, `members`, `compliant_count`, `total_penalties`, `protocol_fee`, `total_paid`. `total_paid + protocol_fee` equals the vault balance before settlement |
 | `GroupCancelled` | `emergency_cancel` | `group`, `creator`, `members`, `refunded_total`, `burned` (non-zero only for a group with no members) |
-| `FeesWithdrawn` | `withdraw_fees` | `recipient`, `amount` |
+| `FeesWithdrawn` | `withdraw_fees` | `recipient`, `mint`, `amount` |
 
 `init_treasury`, `refund_vault_rent` and `close_member_record` emit nothing.
 
