@@ -1126,6 +1126,125 @@
       ]
     }
   ],
+  "events": [
+    {
+      "name": "CycleStarted",
+      "discriminator": [
+        231,
+        147,
+        105,
+        141,
+        120,
+        108,
+        122,
+        245
+      ]
+    },
+    {
+      "name": "DepositMade",
+      "discriminator": [
+        210,
+        201,
+        130,
+        183,
+        244,
+        203,
+        155,
+        199
+      ]
+    },
+    {
+      "name": "FeesWithdrawn",
+      "discriminator": [
+        234,
+        15,
+        0,
+        119,
+        148,
+        241,
+        40,
+        21
+      ]
+    },
+    {
+      "name": "GroupCancelled",
+      "discriminator": [
+        59,
+        49,
+        243,
+        198,
+        10,
+        174,
+        169,
+        2
+      ]
+    },
+    {
+      "name": "GroupCreated",
+      "discriminator": [
+        132,
+        94,
+        184,
+        198,
+        77,
+        165,
+        13,
+        26
+      ]
+    },
+    {
+      "name": "GroupSettled",
+      "discriminator": [
+        200,
+        143,
+        16,
+        245,
+        188,
+        210,
+        168,
+        67
+      ]
+    },
+    {
+      "name": "MemberJoined",
+      "discriminator": [
+        156,
+        199,
+        149,
+        88,
+        193,
+        203,
+        191,
+        210
+      ]
+    },
+    {
+      "name": "MemberLeft",
+      "discriminator": [
+        48,
+        83,
+        72,
+        92,
+        111,
+        227,
+        133,
+        142
+      ]
+    },
+    {
+      "name": "MemberSettled",
+      "discriminator": [
+        72,
+        233,
+        24,
+        245,
+        134,
+        123,
+        209,
+        78
+      ]
+    }
+  ],
   "errors": [
     {
       "code": 6000,
@@ -1265,6 +1384,129 @@
   ],
   "types": [
     {
+      "name": "CycleStarted",
+      "docs": [
+        "The creator started the cycle."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "members",
+            "type": "u8"
+          },
+          {
+            "name": "cycle_start",
+            "type": "i64"
+          },
+          {
+            "name": "cycle_end",
+            "docs": [
+              "First timestamp at which `distribute` accepts the group."
+            ],
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "DepositMade",
+      "docs": [
+        "A member deposited for a period."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "period",
+            "docs": [
+              "Zero-based period index."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "deposits_made",
+            "docs": [
+              "Deposits after this one, the join deposit included."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "FeesWithdrawn",
+      "docs": [
+        "The fee recipient withdrew the treasury balance of one mint."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "recipient",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GroupCancelled",
+      "docs": [
+        "The creator cancelled the group and the vault closed."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "members",
+            "type": "u8"
+          },
+          {
+            "name": "refunded_total",
+            "docs": [
+              "Tokens sent to members."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "burned",
+            "docs": [
+              "Tokens burned from the vault of a group with no members. Zero otherwise."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "GroupConfig",
       "docs": [
         "One savings group. Never closed.",
@@ -1385,6 +1627,154 @@
       }
     },
     {
+      "name": "GroupCreated",
+      "docs": [
+        "A group was created by `create_group`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "deposit_amount",
+            "type": "u64"
+          },
+          {
+            "name": "total_periods",
+            "type": "u8"
+          },
+          {
+            "name": "max_members",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "GroupSettled",
+      "docs": [
+        "`distribute` settled the group and closed the vault."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "members",
+            "type": "u8"
+          },
+          {
+            "name": "compliant_count",
+            "type": "u8"
+          },
+          {
+            "name": "total_penalties",
+            "docs": [
+              "Sum of `MemberSettled.penalty`."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "protocol_fee",
+            "type": "u64"
+          },
+          {
+            "name": "total_paid",
+            "docs": [
+              "Sum of `MemberSettled.payout`. Plus `protocol_fee`, equals the vault balance before",
+              "settlement."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MemberJoined",
+      "docs": [
+        "A member joined with the first deposit."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "rent_payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "docs": [
+              "First deposit moved into the vault."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "current_members",
+            "docs": [
+              "Members after this join."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MemberLeft",
+      "docs": [
+        "A member left an Open group and got the recorded deposit back."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "refund",
+            "type": "u64"
+          },
+          {
+            "name": "current_members",
+            "docs": [
+              "Members after this leave."
+            ],
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
       "name": "MemberRecord",
       "docs": [
         "One member's participation in one group."
@@ -1446,6 +1836,43 @@
               "Offset 165. PDA bump for member_record."
             ],
             "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "MemberSettled",
+      "docs": [
+        "One member's result of `distribute`."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "member",
+            "type": "pubkey"
+          },
+          {
+            "name": "deposited",
+            "type": "u64"
+          },
+          {
+            "name": "penalty",
+            "docs": [
+              "Penalty charged. Zero when no member was compliant, because all deposits then return."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "payout",
+            "docs": [
+              "Tokens sent to the member. The last member also gets the rounding remainder."
+            ],
+            "type": "u64"
           }
         ]
       }
