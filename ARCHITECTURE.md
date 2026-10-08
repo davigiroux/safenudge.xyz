@@ -579,6 +579,24 @@ Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor 
 
 ---
 
+### Events
+
+Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their last step, after every mutation and CPI. A failed transaction carries no event. Fields are flat, amounts are raw token units, and events add no accounts or arguments. See [docs/monitoring.md](./docs/monitoring.md) section 3 for the rationale and how monitoring consumes them.
+
+| Event | Emitted by | Fields |
+|-------|------------|--------|
+| `GroupCreated` | `create_group` | `group`, `creator`, `rent_payer`, `mint`, `deposit_amount`, `total_periods`, `max_members` |
+| `MemberJoined` | `join_group` | `group`, `member`, `rent_payer`, `amount`, `current_members` (after the join) |
+| `MemberLeft` | `leave_group` | `group`, `member`, `refund`, `current_members` (after the leave) |
+| `CycleStarted` | `start_cycle` | `group`, `members`, `cycle_start`, `cycle_end` (`GroupConfig::cycle_end`, the time `distribute` checks) |
+| `DepositMade` | `deposit` | `group`, `member`, `period` (zero-based), `amount`, `deposits_made` |
+| `MemberSettled` | `distribute`, once per member | `group`, `member`, `deposited`, `penalty` (charged; 0 when no member is compliant), `payout` (sent; the last member's includes the rounding remainder) |
+| `GroupSettled` | `distribute`, after every `MemberSettled` | `group`, `members`, `compliant_count`, `total_penalties`, `protocol_fee`, `total_paid`. `total_paid + protocol_fee` equals the vault balance before settlement |
+| `GroupCancelled` | `emergency_cancel` | `group`, `creator`, `members`, `refunded_total`, `burned` (non-zero only for a group with no members) |
+| `FeesWithdrawn` | `withdraw_fees` | `recipient`, `amount` |
+
+`init_treasury`, `refund_vault_rent` and `close_member_record` emit nothing.
+
 ### PDA Derivation Summary
 
 | Account | Seeds | Purpose |
