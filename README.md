@@ -352,6 +352,7 @@ Branch names: `feat/<scope>`, `fix/<scope>`, `test/<scope>`, `security/<scope>`.
 - [`ARCHITECTURE.md`](./ARCHITECTURE.md) — Account layouts, instruction specs, PDA derivation, security architecture
 - [`ROADMAP.md`](./ROADMAP.md) — Operational view: what's shipped, what's in flight, what's next
 - [`CLAUDE.md`](./CLAUDE.md) — Engineering rules, agent-role discipline, forbidden patterns, CI contract
+- [`docs/monitoring.md`](./docs/monitoring.md) — On-chain monitoring with Solana Microscope, alert rules, proposed program events
 - [`docs/design-system.md`](./docs/design-system.md) — SafeNudge Bossa: the Organic Trust Framework
 - [`docs/design-tokens.json`](./docs/design-tokens.json) — Material Design 3 tokens (colour, type, elevation)
 
