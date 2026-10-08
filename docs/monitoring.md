@@ -73,7 +73,7 @@ Amounts are raw token units (`u64`); the client formats them. One event per stat
 | `distribute` | `MemberSettled` (one per member) | `group`, `member`, `deposited`, `penalty`, `payout` | Per-member outcome; payout cap checks |
 | `distribute` | `GroupSettled` | `group`, `members`, `compliant_count`, `total_penalties`, `protocol_fee`, `total_paid` | Fee revenue; conservation check off-chain (`total_paid + protocol_fee` equals the vault balance before settlement) |
 | `emergency_cancel` | `GroupCancelled` | `group`, `creator`, `members`, `refunded_total`, `burned` | `burned > 0` is rare and must be visible |
-| `withdraw_fees` | `FeesWithdrawn` | `recipient`, `amount` | Treasury outflow |
+| `withdraw_fees` | `FeesWithdrawn` | `recipient`, `mint`, `amount` | Treasury outflow |
 | `init_treasury` | none | — | Instruction record is enough (one-shot) |
 | `refund_vault_rent`, `close_member_record` | none | — | Lamport-only, no token movement |
 
