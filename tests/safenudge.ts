@@ -366,7 +366,7 @@ describe("safenudge", () => {
 
   function sendAs(
     feePayer: Keypair, ixs: TransactionInstruction[], signers: Keypair[] = [],
-  ): { bytes: number; computeUnits: bigint } {
+  ): { bytes: number; computeUnits: bigint; logs: string[] } {
     const tx = new Transaction().add(...ixs);
     tx.feePayer = feePayer.publicKey;
     tx.recentBlockhash = provider.client.latestBlockhash();
@@ -376,7 +376,36 @@ describe("safenudge", () => {
     if (result instanceof FailedTransactionMetadata) {
       throw Object.assign(new Error(result.err().toString()), { logs: result.meta().logs() });
     }
-    return { bytes, computeUnits: result.computeUnitsConsumed() };
+    return { bytes, computeUnits: result.computeUnitsConsumed(), logs: result.logs() };
+  }
+
+  type ProgramEvent = { name: string; data: Record<string, string | number | bigint> };
+
+  // Decodes `emit!` events the way a log indexer does: base64 payloads on "Program data: " lines.
+  // Keys become base58 strings and BN values become bigints so tests compare against literals.
+  function decodeEvents(logs: string[]): ProgramEvent[] {
+    const PREFIX = "Program data: ";
+    return logs
+      .filter((line) => line.startsWith(PREFIX))
+      .map((line) => program.coder.events.decode(line.slice(PREFIX.length)))
+      .filter((event) => event !== null)
+      .map((event) => ({
+        name: event.name,
+        data: Object.fromEntries(
+          Object.entries(event.data as Record<string, unknown>).map(([key, value]) => [
+            key,
+            value instanceof PublicKey ? value.toBase58()
+              : BN.isBN(value) ? BigInt(value.toString())
+              : (value as number),
+          ]),
+        ),
+      }));
+  }
+
+  async function eventsOf(
+    method: { instruction(): Promise<TransactionInstruction> }, signers: Keypair[] = [],
+  ): Promise<ProgramEvent[]> {
+    return decodeEvents(sendAs(payer, [await method.instruction()], signers).logs);
   }
 
   function withoutSignature(ix: TransactionInstruction, account: PublicKey): TransactionInstruction {
@@ -483,15 +512,17 @@ describe("safenudge", () => {
     return member;
   }
 
-  function depositCall(member: Member, gPda: PublicKey, vPda: PublicKey): Promise<string> {
+  function depositMethod(member: Member, gPda: PublicKey, vPda: PublicKey) {
     return program.methods.deposit()
       .accounts({
         member: member.keypair.publicKey, groupConfig: gPda, memberRecord: member.recordPda,
         memberTokenAccount: member.tokenAccount, vault: vPda, mint: usdcMint,
         tokenProgram: TOKEN_PROGRAM_ID,
-      })
-      .signers([member.keypair])
-      .rpc();
+      });
+  }
+
+  function depositCall(member: Member, gPda: PublicKey, vPda: PublicKey): Promise<string> {
+    return depositMethod(member, gPda, vPda).signers([member.keypair]).rpc();
   }
 
   async function startCycle(gPda: PublicKey): Promise<bigint> {
@@ -509,16 +540,19 @@ describe("safenudge", () => {
     ]);
   }
 
-  function distributeCall(
-    gPda: PublicKey, vPda: PublicKey, members: Member[], treasuryAta: PublicKey | null,
-  ): Promise<string> {
+  function distributeMethod(gPda: PublicKey, vPda: PublicKey, members: Member[], treasuryAta: PublicKey | null) {
     return program.methods.distribute()
       .accounts({
         payer: payer.publicKey, groupConfig: gPda, vault: vPda,
         mint: usdcMint, treasuryTokenAccount: treasuryAta, tokenProgram: TOKEN_PROGRAM_ID,
       })
-      .remainingAccounts(memberPairs(members))
-      .rpc();
+      .remainingAccounts(memberPairs(members));
+  }
+
+  function distributeCall(
+    gPda: PublicKey, vPda: PublicKey, members: Member[], treasuryAta: PublicKey | null,
+  ): Promise<string> {
+    return distributeMethod(gPda, vPda, members, treasuryAta).rpc();
   }
 
   function cancelMethod(
@@ -5174,18 +5208,34 @@ describe("safenudge", () => {
       const sponsorBefore = lamportsOf(sponsor.publicKey);
       const memberAtas = members.map((m) => m.tokenAccount);
       const balancesBefore = await Promise.all(memberAtas.map((a) => getTokenBalanceOrZero(a)));
-      const ix = await program.methods.distribute()
-        .accounts({
-          payer: payer.publicKey, groupConfig: gPda, vault: vPda,
-          mint: usdcMint, treasuryTokenAccount: treasuryAta, tokenProgram: TOKEN_PROGRAM_ID,
-        })
-        .remainingAccounts(memberPairs(members))
-        .instruction();
+      const vaultBefore = await getTokenBalanceOrZero(vPda);
+      const ix = await distributeMethod(gPda, vPda, members, treasuryAta).instruction();
 
       const cost = sendAs(payer, [ix, await refundVaultRentMethod(gPda, sponsor.publicKey).instruction()]);
 
       assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
       assert.isBelow(Number(cost.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      const events = decodeEvents(cost.logs);
+      const memberSettled = events.filter((e) => e.name === "memberSettled");
+      assert.equal(memberSettled.length, members.length);
+      assert.deepEqual(memberSettled.map((e) => e.data), members.map((m, i) => ({
+        group: gPda.toBase58(),
+        member: m.keypair.publicKey.toBase58(),
+        deposited: i < 7 ? 6_000_000n : 3_000_000n,
+        penalty: i < 7 ? 0n : 1_000_000n,
+        payout: i < 7 ? 6_407_142n : i < 9 ? 2_000_000n : 2_000_006n,
+      })));
+      const groupSettled = events.filter((e) => e.name === "groupSettled");
+      assert.deepEqual(groupSettled.map((e) => e.data), [{
+        group: gPda.toBase58(), members: 10, compliantCount: 7,
+        totalPenalties: 3_000_000n, protocolFee: 150_000n, totalPaid: 50_850_000n,
+      }]);
+      assert.equal(
+        (groupSettled[0].data.totalPaid as bigint) + (groupSettled[0].data.protocolFee as bigint),
+        vaultBefore,
+        "GroupSettled.total_paid + protocol_fee equals the vault before settlement",
+      );
+      assert.equal(vaultBefore, 51_000_000n);
       assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(ACCOUNT_SIZE));
       assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
       await assertFundConservation({
@@ -5330,6 +5380,176 @@ describe("safenudge", () => {
   });
 
   // ─── integration tests ────────────────────────────────────
+
+  describe("events", () => {
+    const DEPOSIT = 10_000_000;
+
+    async function openGroupWithTwoMembers(code: string, penaltyValue = 0) {
+      const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: DEPOSIT, totalPeriods: 2, penaltyValue });
+      const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 100_000_000);
+      return { gPda, vPda, m1, m2 };
+    }
+
+    it("test_create_group_valid_params_emits_group_created", async () => {
+      const sponsor = await fundedKeypair();
+      const [gPda] = getGroupPda("ev-create");
+
+      const events = await eventsOf(
+        createGroupMethod("ev-create", { depositAmount: DEPOSIT, totalPeriods: 6, maxMembers: 8 }, payer.publicKey, sponsor.publicKey),
+        [sponsor],
+      );
+
+      assert.deepEqual(events, [{
+        name: "groupCreated",
+        data: {
+          group: gPda.toBase58(), creator: payer.publicKey.toBase58(), rentPayer: sponsor.publicKey.toBase58(),
+          mint: usdcMint.toBase58(), depositAmount: 10_000_000n, totalPeriods: 6, maxMembers: 8,
+        },
+      }]);
+    });
+
+    it("test_join_group_valid_join_emits_member_joined", async () => {
+      const { gPda, vPda } = await openGroupWithTwoMembers("ev-join");
+      const sponsor = await fundedKeypair();
+      const { keypair, tokenAccount } = await createFundedMember(DEPOSIT);
+      const m3 = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+
+      const events = await eventsOf(joinMethod(m3, gPda, vPda, sponsor.publicKey), [keypair, sponsor]);
+
+      assert.deepEqual(events, [{
+        name: "memberJoined",
+        data: {
+          group: gPda.toBase58(), member: keypair.publicKey.toBase58(), rentPayer: sponsor.publicKey.toBase58(),
+          amount: 10_000_000n, currentMembers: 3,
+        },
+      }]);
+    });
+
+    it("test_leave_group_open_group_emits_member_left", async () => {
+      const { gPda, vPda, m2 } = await openGroupWithTwoMembers("ev-leave");
+
+      const events = await eventsOf(leaveMethod(m2, gPda, vPda), [m2.keypair]);
+
+      assert.deepEqual(events, [{
+        name: "memberLeft",
+        data: { group: gPda.toBase58(), member: m2.keypair.publicKey.toBase58(), refund: 10_000_000n, currentMembers: 1 },
+      }]);
+    });
+
+    it("test_start_cycle_two_members_emits_cycle_started_with_the_end_distribute_enforces", async () => {
+      const { gPda, vPda, m1, m2 } = await openGroupWithTwoMembers("ev-start");
+      const now = context.banksClient.getClock().unixTimestamp;
+
+      const events = await eventsOf(program.methods.startCycle().accounts({ creator: payer.publicKey, groupConfig: gPda }));
+
+      assert.deepEqual(events, [{
+        name: "cycleStarted",
+        data: { group: gPda.toBase58(), members: 2, cycleStart: now, cycleEnd: now + BigInt(2 * WEEK_SECS) },
+      }]);
+      const cycleEnd = events[0].data.cycleEnd as bigint;
+      setUnixTime(cycleEnd - 1n);
+      await expectError(distributeCall(gPda, vPda, [m1, m2], null), "CycleNotEnded");
+      setUnixTime(cycleEnd);
+      await distributeCall(gPda, vPda, [m1, m2], null);
+    });
+
+    it("test_deposit_current_period_emits_deposit_made", async () => {
+      const { gPda, vPda, m1 } = await openGroupWithTwoMembers("ev-deposit");
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+
+      const events = await eventsOf(depositMethod(m1, gPda, vPda), [m1.keypair]);
+
+      assert.deepEqual(events, [{
+        name: "depositMade",
+        data: { group: gPda.toBase58(), member: m1.keypair.publicKey.toBase58(), period: 1, amount: 10_000_000n, depositsMade: 2 },
+      }]);
+    });
+
+    it("test_deposit_twice_same_period_fails_and_emits_no_deposit_made", async () => {
+      const { gPda, vPda, m1 } = await openGroupWithTwoMembers("ev-deposit-twice");
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await depositCall(m1, gPda, vPda);
+      let logs: string[] = [];
+
+      try {
+        sendAs(payer, [await depositMethod(m1, gPda, vPda).instruction()], [m1.keypair]);
+      } catch (e: any) {
+        logs = e.logs;
+      }
+
+      assert.include(logs.join("\n"), "AlreadyDeposited");
+      assert.deepEqual(decodeEvents(logs), []);
+    });
+
+    it("test_distribute_no_compliant_member_emits_zero_penalties_and_full_refunds", async () => {
+      const { gPda, vPda, m1, m2 } = await openGroupWithTwoMembers("ev-none-compliant", 1_000_000);
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+
+      const events = await eventsOf(distributeMethod(gPda, vPda, [m1, m2], null));
+
+      assert.deepEqual(events, [
+        ...[m1, m2].map((m) => ({
+          name: "memberSettled",
+          data: { group: gPda.toBase58(), member: m.keypair.publicKey.toBase58(), deposited: 10_000_000n, penalty: 0n, payout: 10_000_000n },
+        })),
+        {
+          name: "groupSettled",
+          data: { group: gPda.toBase58(), members: 2, compliantCount: 0, totalPenalties: 0n, protocolFee: 0n, totalPaid: 20_000_000n },
+        },
+      ]);
+    });
+
+    it("test_emergency_cancel_active_group_emits_group_cancelled_with_refunds", async () => {
+      const { gPda, vPda, m1, m2 } = await openGroupWithTwoMembers("ev-cancel");
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await depositCall(m1, gPda, vPda);
+
+      const events = await eventsOf(cancelMethod(gPda, vPda, [m1, m2], payer.publicKey));
+
+      assert.deepEqual(events, [{
+        name: "groupCancelled",
+        data: { group: gPda.toBase58(), creator: payer.publicKey.toBase58(), members: 2, refundedTotal: 30_000_000n, burned: 0n },
+      }]);
+    });
+
+    it("test_emergency_cancel_empty_group_with_tokens_emits_burned_amount", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("ev-cancel-burn", { depositAmount: DEPOSIT });
+      await provider.sendAndConfirm(
+        new Transaction().add(createMintToInstruction(usdcMint, vPda, mintAuthority.publicKey, 7)),
+        [payer, mintAuthority],
+      );
+      const cancelIx = await cancelMethod(gPda, vPda, [], payer.publicKey).instruction();
+
+      const events = decodeEvents(sendAs(payer, [withWritable(cancelIx, usdcMint)]).logs);
+
+      assert.deepEqual(events, [{
+        name: "groupCancelled",
+        data: { group: gPda.toBase58(), creator: payer.publicKey.toBase58(), members: 0, refundedTotal: 0n, burned: 7n },
+      }]);
+    });
+
+    it("test_withdraw_fees_after_fee_settlement_emits_fees_withdrawn", async () => {
+      const treasuryAta = await initTreasury();
+      await settleGroupWithOneMiss("ev-withdraw", 2_000_000, treasuryAta);
+      const recipientAta = await createFeeRecipientAta();
+      const recipientKp = loadFeeRecipientKeypair();
+
+      const events = await eventsOf(
+        program.methods.withdrawFees().accounts({
+          recipient: recipientKp.publicKey, treasuryTokenAccount: treasuryAta,
+          recipientTokenAccount: recipientAta, mint: usdcMint, tokenProgram: TOKEN_PROGRAM_ID,
+        }),
+        [recipientKp],
+      );
+
+      assert.deepEqual(events, [{ name: "feesWithdrawn", data: { recipient: FEE_RECIPIENT.toBase58(), amount: 100_000n } }]);
+    });
+  });
 
   describe("integration", () => {
     it("full lifecycle: 3 members, 4 weekly deposits, partial compliance", async () => {
