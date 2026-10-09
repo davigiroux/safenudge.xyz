@@ -1,0 +1,16 @@
+[package]
+name = "lite-anchor-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Proc macros for lite-anchor. Run on the host, so they use std freely."
+license = "Apache-2.0"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+bs58 = "0.5"
+proc-macro2 = "1"
+quote = "1"
+sha2 = "0.10"
+syn = { version = "2", features = ["full", "extra-traits"] }
