@@ -1,0 +1,15 @@
+[package]
+name = "lite-anchor"
+version = "0.1.0"
+edition = "2021"
+description = "Anchor-style account validation for no_std Solana programs built with upstream Rust"
+license = "Apache-2.0"
+
+[dependencies]
+lite-anchor-macros = { path = "../lite-anchor-macros" }
+pinocchio = { version = "0.11.2", default-features = false, features = ["copy", "cpi"] }
+
+# Off-chain builds (host unit tests, rust-analyzer) derive PDAs in software. On-chain builds use
+# the `sol_create_program_address` syscall and need neither.
+[target.'cfg(not(target_arch = "bpf"))'.dependencies]
+solana-address = { version = "2", features = ["curve25519"] }
