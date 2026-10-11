@@ -304,9 +304,14 @@ real faucets. Nothing run here counts toward that.
 ### Start it
 
 ```bash
-curl -sL https://run.surfpool.run/ | bash    # one-time install
+curl -sL https://run.surfpool.run/ | VERSION=v1.6.1 bash    # one-time install
 surfpool start --network devnet --no-deploy
 ```
+
+Use 1.6.1 or newer. In 1.6.0, `Clock.slot` holds the slot index for about
+two seconds after a time jump, and `getBlockTime` falls about a day behind
+the `Clock` sysvar per 7-day jump. 1.6.0 also prints the full datasource
+URL, API key included, in fetch errors.
 
 - `--network devnet` is required, not a preference. `useClusterCheck`
   compares `getGenesisHash()` against devnet's hash; a forked Surfpool
@@ -324,9 +329,14 @@ RPC is on `http://127.0.0.1:8899`, Studio (a local explorer) on
 `http://127.0.0.1:18488`. Surfpool writes logs to `.surfpool/` in the
 directory you start it from; that path is gitignored.
 
-If a transaction fails with `Failed to fetch accounts from remote`, the public
-devnet RPC dropped Surfpool's fetch. Restart Surfpool and retry, or fork from
-a private endpoint with `--rpc-url <url>` in place of `--network devnet`.
+If a transaction fails after 30 seconds with `Failed to fetch accounts from
+remote`, Surfpool deadlocked on its own connection pool: `sendTransaction`
+blocks the HTTP worker whose pooled connection the fetch needs. It happens
+when a simulation is followed by a send after the fork has been idle for
+about 90 seconds. Retry the transaction, and restart Surfpool if it fails
+again. The fix is
+[surfpool#849](https://github.com/solana-foundation/surfpool/pull/849), not
+in 1.6.1.
 
 ### Point the app at it
 
@@ -380,9 +390,9 @@ Follow "Full distribute path" above, replacing each "week N" wait with one
 time-travel jump. The expected end state is the same, including the
 conservation invariant and the 5% fee to the treasury.
 
-Reference result (2026-10-04, Surfpool 1.6.0, fresh fork of program bytes
-`75dbe35f…` deployed at slot 507417016, treasury ATA fetched from devnet,
-driven by a script with three keypairs rather than Phantom): 5 USDC deposit,
+Reference result (2026-10-11, Surfpool 1.6.1, fresh fork of the program
+deployed at slot 510067265, treasury ATA fetched from devnet, driven by a
+script with three keypairs rather than Phantom): 5 USDC deposit,
 fixed 1 USDC penalty, C misses periods 1 and 2. Status `Concluído`, vault
 closed, A and B receive 20.95 USDC each, C receives 8, treasury 0.10.
 Payouts plus fee equal the 50 USDC deposited.
