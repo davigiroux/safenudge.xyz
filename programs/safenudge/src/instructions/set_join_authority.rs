@@ -41,7 +41,7 @@ pub struct SetJoinAuthority<'info> {
 }
 
 impl<'info> SetJoinAuthority<'info> {
-    pub fn handler(&mut self, authority: Pubkey, bumps: &SetJoinAuthorityBumps) -> Result<()> {
+    pub fn handler(&mut self, authority: Pubkey) -> Result<()> {
         // ── Checks ──────────────────────────────────────────
         // Neither key can ever authorize a join, so either would block every join, the
         // creator's own included. The default key is the System Program ID, which never signs.
@@ -53,10 +53,7 @@ impl<'info> SetJoinAuthority<'info> {
         );
 
         // ── Effects ─────────────────────────────────────────
-        let gate = &mut self.join_gate;
-        gate.group = self.group_config.key();
-        gate.authority = authority;
-        gate.bump = bumps.join_gate;
+        self.join_gate.authority = authority;
 
         Ok(())
     }

@@ -167,6 +167,6 @@ pub mod safenudge {
     /// Makes every later join_group of an Open, empty group require the signature of
     /// `authority`. Once per group; there is no instruction to change or remove it.
     pub fn set_join_authority(ctx: Context<SetJoinAuthority>, authority: Pubkey) -> Result<()> {
-        ctx.accounts.handler(authority, &ctx.bumps)
+        ctx.accounts.handler(authority)
     }
 }

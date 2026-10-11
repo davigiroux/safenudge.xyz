@@ -355,7 +355,7 @@ describe("safenudge", () => {
   const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
   const GROUP_CONFIG_SIZE = 179;
   const MEMBER_RECORD_SIZE = 166;
-  const JOIN_GATE_SIZE = 73;
+  const JOIN_GATE_SIZE = 40;
   const CURRENT_MEMBERS_OFFSET = 139;
 
   function rentFor(bytes: number): bigint {
@@ -1537,27 +1537,24 @@ describe("safenudge", () => {
   });
 
   describe("set_join_authority", () => {
-    it("stores group, authority and bump and charges the rent to the group's rent payer", async () => {
+    it("stores the authority and charges the rent to the group's rent payer", async () => {
       const sponsor = await fundedKeypair();
       const { gPda } = await createWeeklyGroup("sja-happy", { depositAmount: 10_000_000 }, sponsor);
       const authority = Keypair.generate().publicKey;
-      const [gatePda, gateBump] = getJoinGatePda(gPda);
+      const [gatePda] = getJoinGatePda(gPda);
       const sponsorBefore = lamportsOf(sponsor.publicKey);
       const creatorBefore = lamportsOf(payer.publicKey);
 
       sendAs(sponsor, [await setJoinAuthorityMethod(gPda, authority, payer.publicKey, sponsor.publicKey).instruction()], [payer]);
 
       const gate = await program.account.joinGate.fetch(gatePda);
-      assert.equal(gate.group.toBase58(), gPda.toBase58());
       assert.equal(gate.authority.toBase58(), authority.toBase58());
-      assert.equal(gate.bump, gateBump);
       const data = Buffer.from(context.banksClient.getAccount(gatePda).data);
       assert.equal(data.length, JOIN_GATE_SIZE);
       assert.equal(data.subarray(0, 8).toString(), "snJoinG1");
-      assert.deepEqual(data.subarray(8, 40), gPda.toBuffer());
-      assert.deepEqual(data.subarray(40, 72), authority.toBuffer());
-      assert.equal(lamportsOf(gatePda), 1_398_960n);
-      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), 1_398_960n + 2n * SIGNATURE_FEE);
+      assert.deepEqual(data.subarray(8, 40), authority.toBuffer());
+      assert.equal(lamportsOf(gatePda), 1_169_280n);
+      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), 1_169_280n + 2n * SIGNATURE_FEE);
       assert.equal(lamportsOf(payer.publicKey), creatorBefore);
     });
 
@@ -1574,7 +1571,7 @@ describe("safenudge", () => {
 
       const gate = await program.account.joinGate.fetch(gatePda);
       assert.equal(gate.authority.toBase58(), authority.toBase58());
-      assert.equal(lamportsOf(gatePda), 1_398_960n);
+      assert.equal(lamportsOf(gatePda), 1_169_280n);
     });
 
     it("fails with InvalidGroupStatus while Active, before it checks the creator", async () => {
@@ -5684,7 +5681,7 @@ describe("safenudge", () => {
 
       assert.isNull(context.banksClient.getAccount(gPda));
       assert.isNull(context.banksClient.getAccount(gatePda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 5_574_960n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 5_345_280n);
     });
 
     it("fails with ConstraintSeeds when another address is passed as the join gate, and the gate stays", async () => {
@@ -5696,7 +5693,7 @@ describe("safenudge", () => {
       await expectError(() => sendAs(payer, [withAccount(ix, gatePda, elsewhere)]), "ConstraintSeeds");
 
       assert.equal(lamportsOf(gPda), GROUP_CONFIG_RENT + VAULT_RENT);
-      assert.equal(lamportsOf(gatePda), 1_398_960n);
+      assert.equal(lamportsOf(gatePda), 1_169_280n);
     });
 
     it("leaves a new group at the code of a closed gated group open to a stranger", async () => {
