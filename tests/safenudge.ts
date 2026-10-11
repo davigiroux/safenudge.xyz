@@ -7,7 +7,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { LiteSVMProvider, fromWorkspace } from "anchor-litesvm";
 import { Clock, FailedTransactionMetadata, Rent } from "litesvm";
 import {
-  PublicKey, Keypair, SystemProgram, Transaction, TransactionInstruction,
+  PublicKey, Keypair, SystemProgram, Transaction, TransactionInstruction, NonceAccount, NONCE_ACCOUNT_LENGTH,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -374,11 +374,48 @@ describe("safenudge", () => {
     tx.recentBlockhash = provider.client.latestBlockhash();
     tx.sign(...new Set([feePayer, ...signers]));
     const bytes = tx.serialize().length;
+    const result = submit(tx);
+    return { bytes, computeUnits: result.computeUnitsConsumed(), logs: result.logs() };
+  }
+
+  function submit(tx: Transaction) {
     const result = provider.client.sendTransaction(tx);
     if (result instanceof FailedTransactionMetadata) {
       throw Object.assign(new Error(result.err().toString()), { logs: result.meta().logs() });
     }
-    return { bytes, computeUnits: result.computeUnitsConsumed(), logs: result.logs() };
+    return result;
+  }
+
+  async function createNonceAccount(authority: PublicKey): Promise<PublicKey> {
+    const nonce = Keypair.generate();
+    await provider.sendAndConfirm(
+      SystemProgram.createNonceAccount({
+        fromPubkey: payer.publicKey, noncePubkey: nonce.publicKey, authorizedPubkey: authority,
+        lamports: Number(rentFor(NONCE_ACCOUNT_LENGTH)),
+      }),
+      [payer, nonce],
+    );
+    // AdvanceNonceAccount fails while the stored nonce still matches the current blockhash.
+    provider.client.expireBlockhash();
+    return nonce.publicKey;
+  }
+
+  function nonceValue(nonce: PublicKey): string {
+    return NonceAccount.fromAccountData(Buffer.from(context.banksClient.getAccount(nonce).data)).nonce;
+  }
+
+  // Signs a durable nonce transaction: AdvanceNonceAccount first, the stored nonce as its blockhash.
+  function signOverNonce(
+    feePayer: Keypair, nonce: PublicKey, ixs: TransactionInstruction[], signers: Keypair[] = [],
+  ): Transaction {
+    const tx = new Transaction().add(
+      SystemProgram.nonceAdvance({ noncePubkey: nonce, authorizedPubkey: feePayer.publicKey }),
+      ...ixs,
+    );
+    tx.feePayer = feePayer.publicKey;
+    tx.recentBlockhash = nonceValue(nonce);
+    tx.sign(...new Set([feePayer, ...signers]));
+    return tx;
   }
 
   type ProgramEvent = { name: string; data: Record<string, string | number | bigint> };
@@ -1616,6 +1653,17 @@ describe("safenudge", () => {
 
       assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
     });
+
+    it("fails with InvalidJoinAuthority for the program ID", async () => {
+      const { gPda } = await createWeeklyGroup("sja-program-id", { depositAmount: 10_000_000 });
+
+      await expectError(
+        setJoinAuthorityMethod(gPda, program.programId, payer.publicKey, payer.publicKey).rpc(),
+        "InvalidJoinAuthority",
+      );
+
+      assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
+    });
   });
 
   describe("join_group with a join gate", () => {
@@ -1736,6 +1784,70 @@ describe("safenudge", () => {
       assert.equal(record.rentPayer.toBase58(), sponsor.publicKey.toBase58());
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
       assert.equal(lamportsOf(creator.publicKey), 0n);
+    });
+
+    it("fails with DurableNonceNotAllowed when an approved join advances a durable nonce, and succeeds without it", async () => {
+      const { gPda, vPda, authority } = await gatedGroup("gate-nonce");
+      const member = await newJoiner(gPda);
+      const nonce = await createNonceAccount(member.keypair.publicKey);
+      const join = await joinMethod(
+        member, gPda, vPda, member.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey,
+      ).instruction();
+
+      await expectError(
+        () => submit(signOverNonce(member.keypair, nonce, [join], [authority])),
+        "Error Code: DurableNonceNotAllowed. Error Number: 6031.",
+      );
+      await assertNotJoined(member, gPda, vPda);
+
+      sendAs(member.keypair, [join], [authority]);
+
+      assert.equal((await program.account.memberRecord.fetch(member.recordPda)).member.toBase58(), member.keypair.publicKey.toBase58());
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+    });
+
+    it("lets anyone join a group with no gate in a durable nonce transaction", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("open-nonce", { depositAmount: 10_000_000 });
+      const member = await newJoiner(gPda);
+      const nonce = await createNonceAccount(member.keypair.publicKey);
+      const nonceBefore = nonceValue(nonce);
+      const join = await joinMethod(member, gPda, vPda, member.keypair.publicKey).instruction();
+
+      submit(signOverNonce(member.keypair, nonce, [join]));
+
+      assert.notEqual(nonceValue(nonce), nonceBefore);
+      assert.equal((await program.account.memberRecord.fetch(member.recordPda)).member.toBase58(), member.keypair.publicKey.toBase58());
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+    });
+
+    it("fails with DurableNonceNotAllowed when an approval held over a durable nonce reaches a new gated group at the same code", async () => {
+      const code = "gate-nonce-replay";
+      const sponsor = await fundedKeypair();
+      const authority = Keypair.generate();
+      const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000 }, sponsor);
+      await setJoinAuthorityMethod(gPda, authority.publicKey, payer.publicKey, sponsor.publicKey).signers([sponsor]).rpc();
+      const holder = await newJoiner(gPda);
+      const nonce = await createNonceAccount(holder.keypair.publicKey);
+      const held = signOverNonce(holder.keypair, nonce, [
+        await joinMethod(holder, gPda, vPda, holder.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey).instruction(),
+      ], [authority]);
+
+      await cancelCall(gPda, vPda, []);
+      await closeGroupMethod(gPda, sponsor.publicKey).rpc();
+      await createWeeklyGroup(code, { depositAmount: 10_000_000 }, sponsor);
+      await setJoinAuthorityMethod(gPda, authority.publicKey, payer.publicKey, sponsor.publicKey).signers([sponsor]).rpc();
+      const approved = await newJoiner(gPda);
+      await joinMethod(approved, gPda, vPda, approved.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey)
+        .signers([approved.keypair, authority]).rpc();
+
+      await expectError(() => submit(held), "Error Code: DurableNonceNotAllowed. Error Number: 6031.");
+
+      assert.isNull(context.banksClient.getAccount(holder.recordPda));
+      assert.equal(await getTokenBalanceOrZero(holder.tokenAccount), 10_000_000n);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
     });
 
     it("lets a member leave a gated group with no authority", async () => {
