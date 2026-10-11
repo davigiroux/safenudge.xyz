@@ -60,8 +60,10 @@ pub enum SafeNudgeError {
     GroupHasOpenRecords,
     #[msg("The join authority can only be set before anyone joins")]
     GroupHasMembers,
-    #[msg("The join authority cannot be the default public key")]
+    #[msg("The join authority cannot be the default public key or the program ID")]
     InvalidJoinAuthority,
     #[msg("This group needs its join authority to approve the join")]
     JoinNotApproved,
+    #[msg("A gated join cannot use a durable nonce")]
+    DurableNonceNotAllowed,
 }

@@ -21,6 +21,7 @@ devnet = []
 [dependencies]
 anchor-lang = "1.0.2"
 anchor-spl = "1.0.2"
+solana-instructions-sysvar = "3.0.0"
 
 # Enforces the CLAUDE.md arithmetic rule. CI runs `cargo clippy -p safenudge`.
 [lints.clippy]
