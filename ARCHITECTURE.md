@@ -23,7 +23,7 @@ The program uses three account types, all derived as PDAs. `GroupConfig` and `Me
 
 #### GroupConfig
 
-Stores the group's parameters and state. Created once per group and never closed: the PDA keeps the group code taken, so a later group cannot reuse the code and inherit the old group's member records.
+Stores the group's parameters and state. Created once per group. `close_group` closes it after settlement, once `current_members` is zero. Until then the PDA keeps the group code taken, so a later group cannot reuse the code and inherit the old group's member records. See "Group code reuse after close" under Security.
 
 Every fixed-size field comes before `group_code`, the only variable-length field. Each field above `group_code` therefore sits at the same byte offset in every group, and clients can `memcmp`-filter on it.
 
@@ -41,7 +41,7 @@ pub struct GroupConfig {
     pub frequency: u8,             // offset 136. 0 = weekly, 1 = biweekly, 2 = monthly (3 = 5min, devnet builds)
     pub total_periods: u8,         // offset 137. Number of deposit periods in the cycle
     pub max_members: u8,           // offset 138. Max group size (2-10)
-    pub current_members: u8,       // offset 139. Members who joined. Not decremented when a record is closed
+    pub current_members: u8,       // offset 139. Open member records: +1 join_group, -1 leave_group and close_member_record
     pub penalty_type: u8,          // offset 140. 0 = fixed amount, 1 = percentage
     pub status: u8,                // offset 141. 0 = open, 1 = active, 2 = completed, 3 = cancelled
     pub bump: u8,                  // offset 142. PDA bump
@@ -80,7 +80,7 @@ pub struct MemberRecord {
 
 | Rent | Paid at | Returned by | Destination |
 |------|---------|-------------|-------------|
-| GroupConfig (179 bytes) | `create_group` | Never. GroupConfig stays open | — |
+| GroupConfig (179 bytes) | `create_group` | `close_group`, after settlement and once every member record is closed | `group_config.rent_payer` |
 | Vault (165 bytes) | `create_group` | `refund_vault_rent`, after `distribute` or `emergency_cancel` closed the vault into GroupConfig | `group_config.rent_payer` |
 | MemberRecord (166 bytes) | `join_group` | `leave_group` while the group is Open, or `close_member_record` 30 days after settlement | `member_record.rent_payer` |
 
@@ -444,7 +444,7 @@ The second check is a raw `constraint`, not `has_one`. Anchor 1.0.2 runs every `
 **Effects:**
 - Moves `group_config` lamports above the rent-exempt minimum for its 179 bytes to `rent_payer`
 - When nothing is above the minimum, succeeds and moves nothing. A second call, or a call batched with other instructions, cannot fail for that reason
-- Never takes `group_config` below the rent-exempt minimum, so the account stays open
+- Never takes `group_config` below the rent-exempt minimum, so the account stays open until `close_group`
 - Lamports that anyone sends to `group_config` also go to `rent_payer` on the next call
 
 The amount follows the rent rate at the time of the call. If the rate is lower than at `create_group`, the refund includes part of the rent paid for `GroupConfig` itself, which the rent payer also funded. If the rate is higher, the refund is smaller or zero.
@@ -456,7 +456,7 @@ The amount follows the rent rate at the time of the call. If the rate is lower t
 Closes one `MemberRecord` of a settled group and returns its rent to the wallet that paid it. Anyone can call it, once the retention period after settlement has passed. One record per instruction: a client puts up to 10 of them, plus `refund_vault_rent`, in one transaction (1,023 bytes with 10 different rent payers).
 
 **Accounts:**
-- `group_config` — read-only. Closing a record changes nothing in the group
+- `group_config` (mut) — `current_members` goes down by one
 - `member_record` (mut, `close = rent_payer`) — seeds `["member", group_config, member_record.member]` with the stored bump
 - `rent_payer` (mut) — must equal `member_record.rent_payer`. Receives lamports only. The program never reads it
 
@@ -469,9 +469,10 @@ Closes one `MemberRecord` of a settled group and returns its rent to the wallet 
 - `rent_payer.key() == member_record.rent_payer` (`InvalidRentPayer`)
 
 **Effects:**
+- Decrements `group_config.current_members` with `checked_sub`
 - Transfers all lamports of the record to `rent_payer` and closes the record
 
-Settlement reads every member record, so a record cannot close while the group is Open or Active. Completed and Cancelled never revert, `join_group` requires Open, and `GroupConfig` is never closed. A closed record therefore cannot be created again, and its group code cannot be reused. A second close of the same record fails with `AccountNotInitialized`.
+Settlement reads every member record, so a record cannot close while the group is Open or Active. Completed and Cancelled never revert and `join_group` requires Open, so a closed record cannot be created again in this group. The decrement keeps `current_members` equal to the number of open records, which `close_group` checks before it frees the group code. A second close of the same record fails with `AccountNotInitialized`.
 
 `RECORD_RETENTION_SECS` is 2,592,000 (30 days). Devnet builds use 300, in the same `cfg!(feature = "devnet")` style as `MAX_FREQUENCY`. Clients read the member records of a settled group to show each member's result, so the records stay open for that period. After it, anyone can close them. A client that lists a wallet's groups through its member records then stops listing that group, and a client must not compute payouts from the records that remain.
 
@@ -518,6 +519,34 @@ After a leave the same wallet can join again, and `join_group` writes a fresh re
 The record rent goes to the wallet that paid it and to no other. A member whose rent a sponsor paid gets tokens and no lamports from a leave, so repeated join and leave moves no lamports from the sponsor to the member. Each join needs the sponsor's signature.
 
 A leave pays exactly the recorded deposit. Tokens that someone sent to the vault outside the program stay there. If the group later has no members, `emergency_cancel` burns them (see `emergency_cancel`).
+
+---
+
+#### 12. `close_group`
+
+Closes the `GroupConfig` of a settled group that has no member record left, and pays every lamport in it to the wallet that paid its rent. Anyone can call it.
+
+**Accounts:**
+- `group_config` (mut, `close = rent_payer`) — seeds `["group", group_config.group_code]` with the stored bump
+- `rent_payer` (mut) — must equal `group_config.rent_payer`. Receives lamports only. The program never reads it
+
+**Args:** None
+
+**Validation, in this order:**
+- `group_config.status == Completed (2) || group_config.status == Cancelled (3)` (`InvalidGroupStatus`)
+- `group_config.current_members == 0` (`GroupHasOpenRecords`)
+- `rent_payer.key() == group_config.rent_payer` (`InvalidRentPayer`), a raw `constraint` for the same reason as in `refund_vault_rent`
+
+**Effects:**
+- Transfers all lamports of `group_config` to `rent_payer` and closes the account. That includes the vault rent that settlement moved into it, when `refund_vault_rent` was not sent first: 4,176,000 lamports in total at today's rent rate
+
+`current_members` counts open member records for the whole life of a group: `join_group` adds one, and `leave_group` and `close_member_record` subtract one. No other instruction creates or closes a record. So zero proves that no record of this group exists, and a later `create_group` with the same code, which derives the same `GroupConfig` address and so the same `["member", group_config, member]` addresses, finds nothing to inherit. A new instruction that creates or closes a member record must change `current_members` in the same instruction.
+
+There is no retention check. A group with records waits for them, and their retention already applies. A group with no member at settlement, an emptied Open group that the creator cancelled, can close at once.
+
+Records closed before `close_member_record` decremented the count left `current_members` above zero. `close_group` fails for such a group with `GroupHasOpenRecords`, and the group stays open as before.
+
+A client sends `close_group` after the last `close_member_record`. After it, the group code is free: anyone can create a group with it, at the same addresses. A client must not hand out a code it used before, and must not treat a group address as unique over time.
 
 ---
 
@@ -595,13 +624,13 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | `GroupCancelled` | `emergency_cancel` | `group`, `creator`, `members`, `refunded_total`, `burned` (non-zero only for a group with no members) |
 | `FeesWithdrawn` | `withdraw_fees` | `recipient`, `mint`, `amount` |
 
-`init_treasury`, `refund_vault_rent` and `close_member_record` emit nothing.
+`init_treasury`, `refund_vault_rent`, `close_member_record` and `close_group` emit nothing.
 
 ### PDA Derivation Summary
 
 | Account | Seeds | Purpose |
 |---------|-------|---------|
-| GroupConfig | `["group", group_code]` | Group parameters and state. Never closed |
+| GroupConfig | `["group", group_code]` | Group parameters and state. Closed by `close_group` after settlement, once no member record is left |
 | MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking. Closed by `leave_group` while Open, or by `close_member_record` after settlement |
 | Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority) |
 | TreasuryAuthority | `["treasury"]` | Authority over the protocol-fee ATA; holds no data |
@@ -666,6 +695,8 @@ pub enum SafeNudgeError {
     UnsupportedMint,
     #[msg("Mint must be writable to cancel a group with no members whose vault holds tokens")]
     MintNotWritable,
+    #[msg("Close every member record before closing the group")]
+    GroupHasOpenRecords,
 }
 ```
 
@@ -825,6 +856,8 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 
 `leave_group` changes no layout and no existing account list, so it needs no settlement of live groups. Four things change for a client. `current_members` can now go down while a group is Open. A client that cancels a group with no members should mark `mint` writable (see `emergency_cancel`). `create_group` rejects mints outside the mint rule with `UnsupportedMint`. And two error codes are new, appended after the existing ones: `UnsupportedMint` (6025) and `MintNotWritable` (6026).
 
+`close_group` also changes no layout, so it needs no settlement of live groups. For a client: `close_member_record` now writes `group_config`, so the account must be writable; `close_group` is a new instruction; and `GroupHasOpenRecords` (6027) is a new error code. A group whose records were closed under the previous binary can never be closed (see `close_group`).
+
 ### Testing Strategy
 
 **Program (Anchor tests in TypeScript):**
@@ -916,9 +949,9 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Frontrunning distribution | Distribution is permissionless, and every computed payout depends only on on-chain state. The caller does choose the order of the remaining-account pairs, and the last-listed member gets the vault balance in place of a computed payout. In `distribute` that balance exceeds the computed payout by `redistributable % compliant_count`, at most `compliant_count - 1` base units: 9 in a 10-member group (0.000009 USDC at 6 decimals). In `emergency_cancel` the computed refunds sum to the vault balance, so the excess is 0. In both, tokens that someone transfers into the vault outside the program also go to the last-listed member. |
 | Durable nonce pre-signing | No time-sensitive admin actions. `start_cycle` captures `Clock::get()` at execution time, not from arguments. Period calculation uses on-chain clock. |
 | Rent refund redirected | Every rent refund goes to the `rent_payer` key stored in the account at `create_group` or `join_group`, where that wallet signed. `refund_vault_rent` and `close_member_record` take no destination argument and reject any other account with `InvalidRentPayer`. |
-| Rent payer drained by the creator | `emergency_cancel` and `distribute` pay no lamports to the creator or the caller. The vault rent goes to `GroupConfig` and from there only to `group_config.rent_payer`. What a rent payer does not get back is the `GroupConfig` rent, 179 bytes per group. |
-| Group code reuse after close | `GroupConfig` is never closed and `refund_vault_rent` leaves it rent-exempt, so `["group", code]` stays allocated and old member records cannot validate against a new group. |
-| Record closed before settlement | `close_member_record` requires Completed or Cancelled. Settlement needs every record, and both statuses are final. `leave_group` closes a record only while the group is Open and decrements `current_members` in the same instruction, so settlement still finds exactly `current_members` records. |
+| Rent payer drained by the creator | `emergency_cancel` and `distribute` pay no lamports to the creator or the caller. The vault rent goes to `GroupConfig` and from there only to `group_config.rent_payer`. `close_group` returns the `GroupConfig` rent to the same wallet once every record is closed. |
+| Group code reuse after close | `close_group` requires a settled status and `current_members == 0`. `current_members` goes up only with a record created by `join_group` and down only with a record closed by `leave_group` or `close_member_record`, so it is never lower than the number of open records. At zero no record exists, and a new group at the same code, which gets the same `GroupConfig` and member record addresses, inherits none. Records closed before the decrement existed can only leave the count too high, which keeps that group open. The invariant is a convention, not a type: a new instruction that creates or closes a record must update the count (tested in `close_group`, "lets a new group reuse the code with no old member record"). |
+| Record closed before settlement | `close_member_record` requires Completed or Cancelled. Settlement needs every record, and both statuses are final. `leave_group` closes a record only while the group is Open and decrements `current_members` in the same instruction, so settlement still finds exactly `current_members` records. `close_member_record` decrements it after settlement, when no settlement can run again. |
 | Creator abandons an Open group | `start_cycle` and `emergency_cancel` need the creator. `leave_group` needs only the member: each member takes the first deposit back while the group is Open, and the record rent returns to its payer. What stays locked is the rent of `GroupConfig` and of the vault, which only a cancel by the creator releases. |
 | Frozen member token account blocks settlement in the app (accepted for v1) | `distribute` and `emergency_cancel` pay every member in one transaction. A transfer to a frozen token account fails, so that settlement transaction fails for the whole group. Any mint with a freeze authority makes this possible, and that includes USDC. A closed token account has the same effect, but anyone can create it again and the app does that before it settles. At program level a frozen account does not block the group: `validate_member_pair` accepts any token account that the member owns for the group mint, not only the canonical ATA. Anyone can create a new token account with that member as owner and pass it in place of the frozen one, and the settlement then succeeds (tested for both instructions). The app does not do this: it always passes each member's canonical ATA, so through the app the group stays blocked until the freeze authority thaws the account. Whether the app should pay a member's other account is an open product decision. The same freeze authority can also freeze the new account. A claim path, where settlement records each entitlement and a member whose transfer fails claims later, is planned with the v2 two-phase settlement (issue #56). In an Open group a frozen account blocks only its own member, and `leave_group` also accepts another token account of that member. |
 | Tokens sent to the vault of a group with no members | A token account with a balance cannot close. `emergency_cancel` burns the balance when `current_members == 0`, then closes the vault. No token goes to an address that a caller chooses. The burn can touch only donated tokens: every deposit enters through `join_group` or `deposit`, both tied to a member record, and `leave_group` pays out exactly what its record holds. The cancel needs `mint` writable in that case (`MintNotWritable`). It cannot succeed while the freeze authority of the mint keeps the vault frozen. |
@@ -926,7 +959,9 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | `start_cycle` lands after members left (accepted for v1) | `start_cycle` takes no expected member count. If two or more members remain, the cycle starts for them, even if the creator signed when the group was larger. Members who want out must leave before the start. |
 | Mint that breaks the deposit accounting | `create_group` rejects the native mints and every Token-2022 mint outside the extension allowlist (`UnsupportedMint`). See the mint rule in the `create_group` spec. A transfer-fee mint would let the vault hold less than the recorded deposits. |
 | Freeze authority freezes a vault (accepted) | Mints with a freeze authority are allowed. That authority can freeze a group vault, and then no instruction moves its tokens until it is thawed. This is the issuer's power over every holder of the token, not specific to this program. |
-| Records closed while clients still show the result | `close_member_record` also requires 30 days since `settled_at` (300 seconds in devnet builds). |
+| Records closed while clients still show the result | `close_member_record` also requires 30 days since `settled_at` (300 seconds in devnet builds). `close_group` needs every record closed, so it waits for the same period. |
+| Old invite link opens a new group (accepted) | After `close_group` anyone can create a group with the freed code. An invite link that names only the code then opens that group, and a user can join strangers. No funds are at risk: the new group pays deposits back under its own rules. The code frees at least 30 days after settlement. Clients should not reuse codes and should show the creator before a join. |
+| History keyed on a group address (accepted) | A group created at a freed code has the same `GroupConfig`, vault and member record addresses as the closed one. An indexer or client that keys history on the group address can mix the two groups. Key on the address and the `GroupCreated` event that started it. |
 | Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 179 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 
