@@ -1957,31 +1957,18 @@
         "Makes `join_group` of one group require the signature of `authority`.",
         "",
         "Lives at PDA `[\"join\", group_config]`. `set_join_authority` creates it and `close_group`",
-        "closes it, so it never outlives its group."
+        "closes it, so it never outlives its group. The address names the group, so the account",
+        "stores only the authority."
       ],
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "group",
-            "docs": [
-              "Offset 8. The GroupConfig PDA this gate belongs to."
-            ],
-            "type": "pubkey"
-          },
-          {
             "name": "authority",
             "docs": [
-              "Offset 40. Must sign every join_group of the group."
+              "Offset 8. Must sign every join_group of the group."
             ],
             "type": "pubkey"
-          },
-          {
-            "name": "bump",
-            "docs": [
-              "Offset 72. PDA bump for join_gate."
-            ],
-            "type": "u8"
           }
         ]
       }
