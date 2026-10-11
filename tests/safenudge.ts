@@ -7,7 +7,7 @@ import { LAMPORTS_PER_SOL } from "@solana/web3.js";
 import { LiteSVMProvider, fromWorkspace } from "anchor-litesvm";
 import { Clock, FailedTransactionMetadata, Rent } from "litesvm";
 import {
-  PublicKey, Keypair, SystemProgram, Transaction, TransactionInstruction, NonceAccount, NONCE_ACCOUNT_LENGTH,
+  type AccountMeta, PublicKey, Keypair, SystemProgram, Transaction, TransactionInstruction, NonceAccount, NONCE_ACCOUNT_LENGTH,
 } from "@solana/web3.js";
 import {
   TOKEN_PROGRAM_ID,
@@ -447,13 +447,8 @@ describe("safenudge", () => {
     return decodeEvents(sendAs(payer, [await method.instruction()], signers).logs);
   }
 
-  function withoutSignature(ix: TransactionInstruction, account: PublicKey): TransactionInstruction {
-    const keys = ix.keys.map((k) => (k.pubkey.equals(account) ? { ...k, isSigner: false } : k));
-    return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
-  }
-
-  function withWritable(ix: TransactionInstruction, account: PublicKey): TransactionInstruction {
-    const keys = ix.keys.map((k) => (k.pubkey.equals(account) ? { ...k, isWritable: true } : k));
+  function patchKey(ix: TransactionInstruction, account: PublicKey, patch: Partial<AccountMeta>): TransactionInstruction {
+    const keys = ix.keys.map((k) => (k.pubkey.equals(account) ? { ...k, ...patch } : k));
     return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
   }
 
@@ -513,10 +508,11 @@ describe("safenudge", () => {
     );
   }
 
+  type JoinOpts = { mint?: PublicKey; tokenProgram?: PublicKey; joinAuthority?: PublicKey | null };
+
   function joinMethod(
     member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey,
-    mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
-    joinAuthority: PublicKey | null = null,
+    { mint = usdcMint, tokenProgram = TOKEN_PROGRAM_ID, joinAuthority = null }: JoinOpts = {},
   ) {
     return program.methods.joinGroup()
       .accounts({
@@ -532,6 +528,12 @@ describe("safenudge", () => {
         creator, rentPayer, groupConfig: gPda, joinGate: getJoinGatePda(gPda)[0],
         systemProgram: SystemProgram.programId,
       });
+  }
+
+  function setJoinAuthorityCall(gPda: PublicKey, authority: PublicKey, rentPayer: Keypair = payer): Promise<string> {
+    return setJoinAuthorityMethod(gPda, authority, payer.publicKey, rentPayer.publicKey)
+      .signers(walletSigners(rentPayer))
+      .rpc();
   }
 
   function leaveMethod(
@@ -550,20 +552,24 @@ describe("safenudge", () => {
   }
 
   function joinCall(
-    member: Member, gPda: PublicKey, vPda: PublicKey, mint: PublicKey = usdcMint, rentPayer: Keypair = member.keypair,
+    member: Member, gPda: PublicKey, vPda: PublicKey,
+    { mint = usdcMint, rentPayer = member.keypair, joinAuthority }: { mint?: PublicKey; rentPayer?: Keypair; joinAuthority?: Keypair } = {},
   ): Promise<string> {
-    return joinMethod(member, gPda, vPda, rentPayer.publicKey, mint)
-      .signers(walletSigners(member.keypair, rentPayer))
+    return joinMethod(member, gPda, vPda, rentPayer.publicKey, { mint, joinAuthority: joinAuthority?.publicKey ?? null })
+      .signers(walletSigners(member.keypair, rentPayer, ...(joinAuthority ? [joinAuthority] : [])))
       .rpc();
   }
 
-  async function joinNewMember(
-    gPda: PublicKey, vPda: PublicKey, funding: number, rentPayer?: Keypair,
-  ): Promise<Member> {
+  async function newJoiner(gPda: PublicKey, funding: number | bigint = 10_000_000): Promise<Member> {
     const { keypair, tokenAccount } = await createFundedMember(funding);
-    const [recordPda] = getMemberPda(gPda, keypair.publicKey);
-    const member = { keypair, tokenAccount, recordPda };
-    await joinCall(member, gPda, vPda, usdcMint, rentPayer ?? keypair);
+    return { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+  }
+
+  async function joinNewMember(
+    gPda: PublicKey, vPda: PublicKey, funding: number | bigint, rentPayer?: Keypair,
+  ): Promise<Member> {
+    const member = await newJoiner(gPda, funding);
+    await joinCall(member, gPda, vPda, { rentPayer });
     return member;
   }
 
@@ -641,11 +647,6 @@ describe("safenudge", () => {
 
   function closeGroupMethod(gPda: PublicKey, rentPayer: PublicKey) {
     return program.methods.closeGroup().accounts({ groupConfig: gPda, rentPayer, joinGate: getJoinGatePda(gPda)[0] });
-  }
-
-  function withAccount(ix: TransactionInstruction, from: PublicKey, to: PublicKey): TransactionInstruction {
-    const keys = ix.keys.map((k) => (k.pubkey.equals(from) ? { ...k, pubkey: to } : k));
-    return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
   }
 
   async function settledGroup(
@@ -997,7 +998,7 @@ describe("safenudge", () => {
       const sponsorBefore = lamportsOf(sponsor.publicKey);
       const ix = await createGroupMethod("no-payer-sig", GROUP, creator.publicKey, sponsor.publicKey).instruction();
 
-      await expectError(() => sendAs(creator, [withoutSignature(ix, sponsor.publicKey)]), "AccountNotSigner");
+      await expectError(() => sendAs(creator, [patchKey(ix, sponsor.publicKey, { isSigner: false })]), "AccountNotSigner");
 
       assert.isNull(context.banksClient.getAccount(getGroupPda("no-payer-sig")[0]));
       assert.equal(lamportsOf(sponsor.publicKey), sponsorBefore);
@@ -1008,7 +1009,7 @@ describe("safenudge", () => {
       const sponsor = await fundedKeypair();
       const ix = await createGroupMethod("no-creator-sig", GROUP, creator.publicKey, sponsor.publicKey).instruction();
 
-      await expectError(() => sendAs(sponsor, [withoutSignature(ix, creator.publicKey)]), "AccountNotSigner");
+      await expectError(() => sendAs(sponsor, [patchKey(ix, creator.publicKey, { isSigner: false })]), "AccountNotSigner");
 
       assert.isNull(context.banksClient.getAccount(getGroupPda("no-creator-sig")[0]));
     });
@@ -1133,7 +1134,7 @@ describe("safenudge", () => {
       const [vPda] = getVaultPda(gPda);
       const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint, TOKEN_2022_PROGRAM_ID);
       const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
-      await joinMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+      await joinMethod(member, gPda, vPda, keypair.publicKey, { mint, tokenProgram: TOKEN_2022_PROGRAM_ID }).signers([keypair]).rpc();
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
       await leaveMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
       assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
@@ -1157,29 +1158,10 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      // Create funded member
-      const member = await createFundedMember(depositAmount * 10);
-      const [memberRecordPda] = getMemberPda(groupConfigPda, member.keypair.publicKey);
-
-      await program.methods
-        .joinGroup()
-        .accounts({
-          member: member.keypair.publicKey,
-          rentPayer: member.keypair.publicKey,
-          groupConfig: groupConfigPda,
-          memberRecord: memberRecordPda,
-          memberTokenAccount: member.tokenAccount,
-          vault: vaultPda,
-          mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID,
-          systemProgram: SystemProgram.programId,
-          joinAuthority: null,
-        })
-        .signers([member.keypair])
-        .rpc();
+      const member = await joinNewMember(groupConfigPda, vaultPda, depositAmount * 10);
 
       // Verify member record
-      const record = await program.account.memberRecord.fetch(memberRecordPda);
+      const record = await program.account.memberRecord.fetch(member.recordPda);
       assert.equal(record.group.toBase58(), groupConfigPda.toBase58());
       assert.equal(record.member.toBase58(), member.keypair.publicKey.toBase58());
       assert.equal(record.totalDeposited.toNumber(), depositAmount);
@@ -1209,33 +1191,14 @@ describe("safenudge", () => {
 
       // Join 2 members
       for (let i = 0; i < 2; i++) {
-        const m = await createFundedMember(depositAmount * 10);
-        const [mPda] = getMemberPda(groupConfigPda, m.keypair.publicKey);
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
-            memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([m.keypair])
-          .rpc();
+        await joinNewMember(groupConfigPda, vaultPda, depositAmount * 10);
       }
 
       // 3rd member should fail
-      const extra = await createFundedMember(depositAmount * 10);
-      const [extraPda] = getMemberPda(groupConfigPda, extra.keypair.publicKey);
+      const extra = await newJoiner(groupConfigPda, depositAmount * 10);
 
       try {
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: extra.keypair.publicKey, rentPayer: extra.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: extraPda,
-            memberTokenAccount: extra.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([extra.keypair])
-          .rpc();
+        await joinCall(extra, groupConfigPda, vaultPda);
         assert.fail("should have failed");
       } catch (e: any) {
         assert.include(e.message, "GroupFull");
@@ -1259,17 +1222,7 @@ describe("safenudge", () => {
 
       // Join 2 members
       for (let i = 0; i < 2; i++) {
-        const m = await createFundedMember(depositAmount * 10);
-        const [mPda] = getMemberPda(groupConfigPda, m.keypair.publicKey);
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
-            memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([m.keypair])
-          .rpc();
+        await joinNewMember(groupConfigPda, vaultPda, depositAmount * 10);
       }
 
       // Start cycle
@@ -1279,19 +1232,10 @@ describe("safenudge", () => {
         .rpc();
 
       // Try to join after cycle started
-      const late = await createFundedMember(depositAmount * 10);
-      const [latePda] = getMemberPda(groupConfigPda, late.keypair.publicKey);
+      const late = await newJoiner(groupConfigPda, depositAmount * 10);
 
       try {
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: late.keypair.publicKey, rentPayer: late.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: latePda,
-            memberTokenAccount: late.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([late.keypair])
-          .rpc();
+        await joinCall(late, groupConfigPda, vaultPda);
         assert.fail("should have failed");
       } catch (e: any) {
         assert.include(e.message, "InvalidGroupStatus");
@@ -1338,22 +1282,10 @@ describe("safenudge", () => {
 
       const [memberRecordPda] = getMemberPda(groupConfigPda, member.keypair.publicKey);
       try {
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: member.keypair.publicKey,
-            rentPayer: member.keypair.publicKey,
-            groupConfig: groupConfigPda,
-            memberRecord: memberRecordPda,
-            memberTokenAccount: rawAccount.publicKey,
-            vault: vaultPda,
-            mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-            joinAuthority: null,
-          })
-          .signers([member.keypair])
-          .rpc();
+        await joinCall(
+          { keypair: member.keypair, tokenAccount: rawAccount.publicKey, recordPda: memberRecordPda },
+          groupConfigPda, vaultPda,
+        );
         assert.fail("should have failed");
       } catch (e: any) {
         assert.match(
@@ -1399,7 +1331,7 @@ describe("safenudge", () => {
       const [recordPda] = getMemberPda(gPda, keypair.publicKey);
 
       await expectError(
-        joinCall({ keypair, tokenAccount: otherAta, recordPda }, gPda, vPda, otherMint.publicKey),
+        joinCall({ keypair, tokenAccount: otherAta, recordPda }, gPda, vPda, { mint: otherMint.publicKey }),
         "InvalidMint",
       );
       assert.equal(await getTokenBalanceOrZero(otherAta), 100_000_000n);
@@ -1486,7 +1418,7 @@ describe("safenudge", () => {
       const sponsorBefore = lamportsOf(sponsor.publicKey);
       const ix = await joinMethod({ keypair, tokenAccount, recordPda }, gPda, vPda, sponsor.publicKey).instruction();
 
-      await expectError(() => sendAs(keypair, [withoutSignature(ix, sponsor.publicKey)]), "AccountNotSigner");
+      await expectError(() => sendAs(keypair, [patchKey(ix, sponsor.publicKey, { isSigner: false })]), "AccountNotSigner");
 
       assert.isNull(context.banksClient.getAccount(recordPda));
       assert.equal(lamportsOf(sponsor.publicKey), sponsorBefore);
@@ -1499,7 +1431,7 @@ describe("safenudge", () => {
       const sponsor = await fundedKeypair();
       const ix = await joinMethod({ keypair, tokenAccount, recordPda }, gPda, vPda, sponsor.publicKey).instruction();
 
-      await expectError(() => sendAs(sponsor, [withoutSignature(ix, keypair.publicKey)]), "AccountNotSigner");
+      await expectError(() => sendAs(sponsor, [patchKey(ix, keypair.publicKey, { isSigner: false })]), "AccountNotSigner");
 
       assert.isNull(context.banksClient.getAccount(recordPda));
       assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
@@ -1513,7 +1445,7 @@ describe("safenudge", () => {
       const withSponsorTokens = { keypair: attacker.keypair, tokenAccount: sponsor.tokenAccount, recordPda };
 
       await expectError(
-        joinCall(withSponsorTokens, gPda, vPda, usdcMint, sponsor.keypair),
+        joinCall(withSponsorTokens, gPda, vPda, { rentPayer: sponsor.keypair }),
         "ConstraintTokenOwner",
       );
 
@@ -1567,7 +1499,7 @@ describe("safenudge", () => {
       );
       const authority = Keypair.generate().publicKey;
 
-      await setJoinAuthorityMethod(gPda, authority, payer.publicKey, payer.publicKey).rpc();
+      await setJoinAuthorityCall(gPda, authority);
 
       const gate = await program.account.joinGate.fetch(gatePda);
       assert.equal(gate.authority.toBase58(), authority.toBase58());
@@ -1582,7 +1514,7 @@ describe("safenudge", () => {
       const stranger = await fundedKeypair();
       const authority = Keypair.generate().publicKey;
 
-      await expectError(setJoinAuthorityMethod(gPda, authority, payer.publicKey, payer.publicKey).rpc(), "InvalidGroupStatus");
+      await expectError(setJoinAuthorityCall(gPda, authority), "InvalidGroupStatus");
       await expectError(
         setJoinAuthorityMethod(gPda, authority, stranger.publicKey, payer.publicKey).signers([stranger]).rpc(),
         "InvalidGroupStatus",
@@ -1596,7 +1528,7 @@ describe("safenudge", () => {
       await joinNewMember(gPda, vPda, 10_000_000);
 
       await expectError(
-        setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, payer.publicKey).rpc(),
+        setJoinAuthorityCall(gPda, Keypair.generate().publicKey),
         "GroupHasMembers",
       );
 
@@ -1619,7 +1551,7 @@ describe("safenudge", () => {
       const { gPda } = await createWeeklyGroup("sja-payer", { depositAmount: 10_000_000 }, sponsor);
 
       await expectError(
-        setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, payer.publicKey).rpc(),
+        setJoinAuthorityCall(gPda, Keypair.generate().publicKey),
         "InvalidRentPayer",
       );
 
@@ -1629,10 +1561,10 @@ describe("safenudge", () => {
     it("fails the second time and keeps the first authority", async () => {
       const { gPda } = await createWeeklyGroup("sja-twice", { depositAmount: 10_000_000 });
       const first = Keypair.generate().publicKey;
-      await setJoinAuthorityMethod(gPda, first, payer.publicKey, payer.publicKey).rpc();
+      await setJoinAuthorityCall(gPda, first);
 
       await expectError(
-        setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, payer.publicKey).rpc(),
+        setJoinAuthorityCall(gPda, Keypair.generate().publicKey),
         "already in use",
       );
 
@@ -1644,7 +1576,7 @@ describe("safenudge", () => {
       const { gPda } = await createWeeklyGroup("sja-default", { depositAmount: 10_000_000 });
 
       await expectError(
-        setJoinAuthorityMethod(gPda, PublicKey.default, payer.publicKey, payer.publicKey).rpc(),
+        setJoinAuthorityCall(gPda, PublicKey.default),
         "InvalidJoinAuthority",
       );
 
@@ -1655,7 +1587,7 @@ describe("safenudge", () => {
       const { gPda } = await createWeeklyGroup("sja-program-id", { depositAmount: 10_000_000 });
 
       await expectError(
-        setJoinAuthorityMethod(gPda, program.programId, payer.publicKey, payer.publicKey).rpc(),
+        setJoinAuthorityCall(gPda, program.programId),
         "InvalidJoinAuthority",
       );
 
@@ -1667,13 +1599,8 @@ describe("safenudge", () => {
     async function gatedGroup(code: string): Promise<{ gPda: PublicKey; vPda: PublicKey; authority: Keypair }> {
       const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000 });
       const authority = Keypair.generate();
-      await setJoinAuthorityMethod(gPda, authority.publicKey, payer.publicKey, payer.publicKey).rpc();
+      await setJoinAuthorityCall(gPda, authority.publicKey);
       return { gPda, vPda, authority };
-    }
-
-    async function newJoiner(gPda: PublicKey): Promise<Member> {
-      const { keypair, tokenAccount } = await createFundedMember(10_000_000);
-      return { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
     }
 
     async function assertNotJoined(member: Member, gPda: PublicKey, vPda: PublicKey): Promise<void> {
@@ -1698,8 +1625,7 @@ describe("safenudge", () => {
       const fake = Keypair.generate();
 
       await expectError(
-        joinMethod(stranger, gPda, vPda, stranger.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, fake.publicKey)
-          .signers([stranger.keypair, fake]).rpc(),
+        joinCall(stranger, gPda, vPda, { joinAuthority: fake }),
         "JoinNotApproved",
       );
 
@@ -1716,7 +1642,7 @@ describe("safenudge", () => {
       );
       const stranger = await newJoiner(gPda);
 
-      await expectError(joinCall(stranger, gPda, vPda, usdcMint, authority), "JoinNotApproved");
+      await expectError(joinCall(stranger, gPda, vPda, { rentPayer: authority }), "JoinNotApproved");
 
       await assertNotJoined(stranger, gPda, vPda);
     });
@@ -1728,7 +1654,7 @@ describe("safenudge", () => {
       const ix = await joinMethod(stranger, gPda, vPda, stranger.keypair.publicKey).instruction();
 
       await expectError(
-        () => sendAs(stranger.keypair, [withAccount(ix, getJoinGatePda(gPda)[0], getJoinGatePda(openGroup)[0])]),
+        () => sendAs(stranger.keypair, [patchKey(ix, getJoinGatePda(gPda)[0], { pubkey: getJoinGatePda(openGroup)[0] })]),
         "ConstraintSeeds",
       );
 
@@ -1740,8 +1666,7 @@ describe("safenudge", () => {
       const member = await newJoiner(gPda);
       const authorityBefore = lamportsOf(authority.publicKey);
 
-      await joinMethod(member, gPda, vPda, member.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey)
-        .signers([member.keypair, authority]).rpc();
+      await joinCall(member, gPda, vPda, { joinAuthority: authority });
 
       const record = await program.account.memberRecord.fetch(member.recordPda);
       assert.equal(record.member.toBase58(), member.keypair.publicKey.toBase58());
@@ -1768,7 +1693,7 @@ describe("safenudge", () => {
       assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
 
       const approvedJoin = await joinMethod(
-        creatorMember, gPda, vPda, sponsor.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey,
+        creatorMember, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey },
       ).instruction();
       sendAs(sponsor, [createIx, gateIx, approvedJoin], [creator, authority]);
 
@@ -1788,7 +1713,7 @@ describe("safenudge", () => {
       const member = await newJoiner(gPda);
       const nonce = await createNonceAccount(member.keypair.publicKey);
       const join = await joinMethod(
-        member, gPda, vPda, member.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey,
+        member, gPda, vPda, member.keypair.publicKey, { joinAuthority: authority.publicKey },
       ).instruction();
 
       await expectError(
@@ -1824,20 +1749,19 @@ describe("safenudge", () => {
       const sponsor = await fundedKeypair();
       const authority = Keypair.generate();
       const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000 }, sponsor);
-      await setJoinAuthorityMethod(gPda, authority.publicKey, payer.publicKey, sponsor.publicKey).signers([sponsor]).rpc();
+      await setJoinAuthorityCall(gPda, authority.publicKey, sponsor);
       const holder = await newJoiner(gPda);
       const nonce = await createNonceAccount(holder.keypair.publicKey);
       const held = signOverNonce(holder.keypair, nonce, [
-        await joinMethod(holder, gPda, vPda, holder.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey).instruction(),
+        await joinMethod(holder, gPda, vPda, holder.keypair.publicKey, { joinAuthority: authority.publicKey }).instruction(),
       ], [authority]);
 
       await cancelCall(gPda, vPda, []);
       await closeGroupMethod(gPda, sponsor.publicKey).rpc();
       await createWeeklyGroup(code, { depositAmount: 10_000_000 }, sponsor);
-      await setJoinAuthorityMethod(gPda, authority.publicKey, payer.publicKey, sponsor.publicKey).signers([sponsor]).rpc();
+      await setJoinAuthorityCall(gPda, authority.publicKey, sponsor);
       const approved = await newJoiner(gPda);
-      await joinMethod(approved, gPda, vPda, approved.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey)
-        .signers([approved.keypair, authority]).rpc();
+      await joinCall(approved, gPda, vPda, { joinAuthority: authority });
 
       await expectError(() => submit(held), "Error Code: DurableNonceNotAllowed. Error Number: 6031.");
 
@@ -1850,8 +1774,7 @@ describe("safenudge", () => {
     it("lets a member leave a gated group with no authority", async () => {
       const { gPda, vPda, authority } = await gatedGroup("gate-leave");
       const member = await newJoiner(gPda);
-      await joinMethod(member, gPda, vPda, member.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey)
-        .signers([member.keypair, authority]).rpc();
+      await joinCall(member, gPda, vPda, { joinAuthority: authority });
 
       await leaveCall(member, gPda, vPda);
 
@@ -1991,7 +1914,7 @@ describe("safenudge", () => {
       const sponsor = await fundedKeypair();
       await leaveCall(member, gPda, vPda);
 
-      await joinCall(member, gPda, vPda, usdcMint, sponsor);
+      await joinCall(member, gPda, vPda, { rentPayer: sponsor });
 
       const record = await program.account.memberRecord.fetch(member.recordPda);
       assert.equal(record.rentPayer.toBase58(), sponsor.publicKey.toBase58());
@@ -2067,7 +1990,7 @@ describe("safenudge", () => {
       assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
       assert.equal(await getTokenBalanceOrZero(vPda), 7n);
 
-      sendAs(payer, [withWritable(await cancelMethod(gPda, vPda, [], payer.publicKey).instruction(), usdcMint)]);
+      sendAs(payer, [patchKey(await cancelMethod(gPda, vPda, [], payer.publicKey).instruction(), usdcMint, { isWritable: true })]);
 
       assert.isNull(context.banksClient.getAccount(vPda));
       assert.equal(mintSupply(usdcMint), 10_000_000n);
@@ -2209,7 +2132,7 @@ describe("safenudge", () => {
       const [vPda] = getVaultPda(gPda);
       const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint);
       const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
-      await joinMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc();
+      await joinMethod(member, gPda, vPda, keypair.publicKey, { mint }).signers([keypair]).rpc();
       await freezeTokenAccount(tokenAccount, mint);
 
       await expectError(
@@ -2275,7 +2198,7 @@ describe("safenudge", () => {
       const ix = await leaveMethod(member, gPda, vPda, sponsor.publicKey).instruction();
 
       await expectError(
-        () => sendAs(sponsor, [withoutSignature(ix, member.keypair.publicKey)]),
+        () => sendAs(sponsor, [patchKey(ix, member.keypair.publicKey, { isSigner: false })]),
         "AccountNotSigner",
       );
 
@@ -2312,7 +2235,7 @@ describe("safenudge", () => {
       const [vPda] = getVaultPda(gPda);
       const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint, TOKEN_2022_PROGRAM_ID);
       const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
-      await joinMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
+      await joinMethod(member, gPda, vPda, keypair.publicKey, { mint, tokenProgram: TOKEN_2022_PROGRAM_ID }).signers([keypair]).rpc();
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
 
       await leaveMethod(member, gPda, vPda, keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID).signers([keypair]).rpc();
@@ -2342,17 +2265,7 @@ describe("safenudge", () => {
         .rpc();
 
       for (let i = 0; i < 2; i++) {
-        const m = await createFundedMember(depositAmount * 10);
-        const [mPda] = getMemberPda(groupConfigPda, m.keypair.publicKey);
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
-            memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([m.keypair])
-          .rpc();
+        await joinNewMember(groupConfigPda, vaultPda, depositAmount * 10);
       }
 
       await program.methods
@@ -2380,17 +2293,7 @@ describe("safenudge", () => {
         .rpc();
 
       for (let i = 0; i < 2; i++) {
-        const m = await createFundedMember(depositAmount * 10);
-        const [mPda] = getMemberPda(groupConfigPda, m.keypair.publicKey);
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
-            memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([m.keypair])
-          .rpc();
+        await joinNewMember(groupConfigPda, vaultPda, depositAmount * 10);
       }
 
       const imposter = Keypair.generate();
@@ -2428,17 +2331,7 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const m = await createFundedMember(depositAmount * 10);
-      const [mPda] = getMemberPda(groupConfigPda, m.keypair.publicKey);
-      await program.methods
-        .joinGroup()
-        .accounts({
-          member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
-          memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m.keypair])
-        .rpc();
+      await joinNewMember(groupConfigPda, vaultPda, depositAmount * 10);
 
       try {
         await program.methods
@@ -2466,17 +2359,7 @@ describe("safenudge", () => {
         .rpc();
 
       for (let i = 0; i < 2; i++) {
-        const m = await createFundedMember(depositAmount * 10);
-        const [mPda] = getMemberPda(groupConfigPda, m.keypair.publicKey);
-        await program.methods
-          .joinGroup()
-          .accounts({
-            member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
-            memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([m.keypair])
-          .rpc();
+        await joinNewMember(groupConfigPda, vaultPda, depositAmount * 10);
       }
 
       await program.methods
@@ -2534,25 +2417,9 @@ describe("safenudge", () => {
         .rpc();
 
       // Two members join
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // Start cycle
       await program.methods.startCycle()
@@ -2601,25 +2468,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m, tokenAccount: mAta } = await createFundedMember(100_000_000);
-      const [mPda] = getMemberPda(gPda, m.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m.publicKey, rentPayer: m.publicKey, groupConfig: gPda, memberRecord: mPda,
-          memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m]).rpc();
+      const { keypair: m, tokenAccount: mAta, recordPda: mPda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -2653,15 +2504,7 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m, tokenAccount: mAta } = await createFundedMember(100_000_000);
-      const [mPda] = getMemberPda(gPda, m.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m.publicKey, rentPayer: m.publicKey, groupConfig: gPda, memberRecord: mPda,
-          memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m]).rpc();
+      const { keypair: m, tokenAccount: mAta, recordPda: mPda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // Don't start cycle — try to deposit
       try {
@@ -2751,25 +2594,9 @@ describe("safenudge", () => {
         .rpc();
 
       // 2 members join (period 0 deposit included)
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // Start cycle
       await program.methods.startCycle()
@@ -2880,16 +2707,8 @@ describe("safenudge", () => {
       // — so all 10 members end the cycle fully compliant.
       const members: { pda: PublicKey; ata: PublicKey }[] = [];
       for (let i = 0; i < memberCount; i++) {
-        const { keypair, tokenAccount } = await createFundedMember(depositAmount);
-        const [mPda] = getMemberPda(gPda, keypair.publicKey);
-        await program.methods.joinGroup()
-          .accounts({
-            member: keypair.publicKey, rentPayer: keypair.publicKey, groupConfig: gPda, memberRecord: mPda,
-            memberTokenAccount: tokenAccount, vault: vPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-          })
-          .signers([keypair]).rpc();
-        members.push({ pda: mPda, ata: tokenAccount });
+        const { tokenAccount, recordPda } = await joinNewMember(gPda, vPda, depositAmount);
+        members.push({ pda: recordPda, ata: tokenAccount });
       }
 
       const groupAfterJoin = await program.account.groupConfig.fetch(gPda);
@@ -2966,25 +2785,9 @@ describe("safenudge", () => {
         .rpc();
 
       // 2 members join (both deposit period 0 via join = 10M each)
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       // Start cycle
       await program.methods.startCycle()
@@ -3091,25 +2894,9 @@ describe("safenudge", () => {
         .rpc();
 
       // 2 members join (both deposit period 0 via join = 10M each)
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       // Start cycle
       await program.methods.startCycle()
@@ -3214,25 +3001,9 @@ describe("safenudge", () => {
         .rpc();
 
       // 2 members join (both deposit period 0 via join = 5M each)
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       // Start cycle
       await program.methods.startCycle()
@@ -3326,25 +3097,9 @@ describe("safenudge", () => {
         .rpc();
 
       // 2 members join (both deposit period 0 via join = 5M each)
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       // Start cycle
       await program.methods.startCycle()
@@ -3450,25 +3205,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -3511,25 +3250,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -3582,25 +3305,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -3649,25 +3356,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -3719,25 +3410,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -3804,25 +3479,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -3895,25 +3554,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(depositAmount);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, depositAmount);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(depositAmount);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, depositAmount);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -3976,25 +3619,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -4084,25 +3711,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -4161,25 +3772,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -4234,36 +3829,12 @@ describe("safenudge", () => {
           .rpc();
       }
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPdaA, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPdaA, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPdaA, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPdaA, vPdaA, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPdaA, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPdaA, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPdaA, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPdaA, vPdaA, 100_000_000);
 
       // Outsider joins group B — a real MemberRecord, wrong group.
-      const { keypair: mB, tokenAccount: mBAta } = await createFundedMember(100_000_000);
-      const [mBPda] = getMemberPda(gPdaB, mB.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: mB.publicKey, rentPayer: mB.publicKey, groupConfig: gPdaB, memberRecord: mBPda,
-          memberTokenAccount: mBAta, vault: vPdaB, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([mB]).rpc();
+      const { keypair: mB, tokenAccount: mBAta, recordPda: mBPda } = await joinNewMember(gPdaB, vPdaB, 100_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPdaA })
@@ -4382,25 +3953,9 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(200_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(200_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 200_000_000);
 
       await program.methods.startCycle()
         .accounts({ creator: payer.publicKey, groupConfig: gPda })
@@ -4614,15 +4169,7 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // Record balance before cancel
       const getTokenBalance = async (ata: PublicKey): Promise<bigint> => {
@@ -4672,25 +4219,9 @@ describe("safenudge", () => {
         .rpc();
 
       // 2 members join
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(100_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // Start cycle
       await program.methods.startCycle()
@@ -4748,15 +4279,7 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // Imposter tries to cancel
       const imposter = Keypair.generate();
@@ -4807,15 +4330,7 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // First cancel
       await program.methods.emergencyCancel()
@@ -4874,15 +4389,7 @@ describe("safenudge", () => {
         })
         .rpc();
 
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(100_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 100_000_000);
 
       // Creator's own ATA — would receive m1's refund if the program failed
       // to validate destination ownership.
@@ -4949,7 +4456,7 @@ describe("safenudge", () => {
         const creatorBefore = lamportsOf(creator.publicKey);
         const cancelIx = await cancelMethod(gPda, vPda, [], creator.publicKey, mint, tokenProgram).instruction();
 
-        sendAs(creator, [withWritable(cancelIx, mint)]);
+        sendAs(creator, [patchKey(cancelIx, mint, { isWritable: true })]);
 
         assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
         assert.equal(mintSupply(mint), 4n);
@@ -4985,7 +4492,7 @@ describe("safenudge", () => {
         );
         const cancelIx = await cancelMethod(gPda, vPda, [m1, m2], payer.publicKey).instruction();
 
-        sendAs(payer, [mintFlag === "writable" ? withWritable(cancelIx, usdcMint) : cancelIx]);
+        sendAs(payer, [mintFlag === "writable" ? patchKey(cancelIx, usdcMint, { isWritable: true }) : cancelIx]);
 
         assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
         assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_001n);
@@ -5005,7 +4512,7 @@ describe("safenudge", () => {
         for (let i = 0; i < 2; i++) {
           const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint);
           const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
-          await joinMethod(member, gPda, vPda, keypair.publicKey, mint).signers([keypair]).rpc();
+          await joinMethod(member, gPda, vPda, keypair.publicKey, { mint }).signers([keypair]).rpc();
           members.push(member);
         }
         const cycleStart = await startCycle(gPda);
@@ -5498,7 +5005,7 @@ describe("safenudge", () => {
         );
         const sponsorBefore = lamportsOf(sponsor.publicKey);
 
-        await joinCall({ keypair, tokenAccount, recordPda }, gPda, vPda, usdcMint, sponsor);
+        await joinCall({ keypair, tokenAccount, recordPda }, gPda, vPda, { rentPayer: sponsor });
         await cancelCall(gPda, vPda, [{ keypair, tokenAccount, recordPda }]);
         passRecordRetention();
         await closeRecordMethod(gPda, recordPda, sponsor.publicKey).rpc();
@@ -5666,8 +5173,7 @@ describe("safenudge", () => {
       code: string, sponsor: Keypair,
     ): Promise<{ gPda: PublicKey; gatePda: PublicKey }> {
       const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000 }, sponsor);
-      await setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, sponsor.publicKey)
-        .signers([sponsor]).rpc();
+      await setJoinAuthorityCall(gPda, Keypair.generate().publicKey, sponsor);
       await cancelCall(gPda, vPda, []);
       return { gPda, gatePda: getJoinGatePda(gPda)[0] };
     }
@@ -5690,7 +5196,7 @@ describe("safenudge", () => {
       const ix = await closeGroupMethod(gPda, sponsor.publicKey).instruction();
       const elsewhere = getJoinGatePda(getGroupPda("cg-gate-swap-other")[0])[0];
 
-      await expectError(() => sendAs(payer, [withAccount(ix, gatePda, elsewhere)]), "ConstraintSeeds");
+      await expectError(() => sendAs(payer, [patchKey(ix, gatePda, { pubkey: elsewhere })]), "ConstraintSeeds");
 
       assert.equal(lamportsOf(gPda), GROUP_CONFIG_RENT + VAULT_RENT);
       assert.equal(lamportsOf(gatePda), 1_169_280n);
@@ -6148,7 +5654,7 @@ describe("safenudge", () => {
       );
       const cancelIx = await cancelMethod(gPda, vPda, [], payer.publicKey).instruction();
 
-      const events = decodeEvents(sendAs(payer, [withWritable(cancelIx, usdcMint)]).logs);
+      const events = decodeEvents(sendAs(payer, [patchKey(cancelIx, usdcMint, { isWritable: true })]).logs);
 
       assert.deepEqual(events, [{
         name: "groupCancelled",
@@ -6193,35 +5699,11 @@ describe("safenudge", () => {
         .rpc();
 
       // 3 members join (each deposits period 0 via join = 10M each)
-      const { keypair: m1, tokenAccount: m1Ata } = await createFundedMember(500_000_000);
-      const [m1Pda] = getMemberPda(gPda, m1.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
-          memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m1]).rpc();
+      const { keypair: m1, tokenAccount: m1Ata, recordPda: m1Pda } = await joinNewMember(gPda, vPda, 500_000_000);
 
-      const { keypair: m2, tokenAccount: m2Ata } = await createFundedMember(500_000_000);
-      const [m2Pda] = getMemberPda(gPda, m2.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
-          memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m2]).rpc();
+      const { keypair: m2, tokenAccount: m2Ata, recordPda: m2Pda } = await joinNewMember(gPda, vPda, 500_000_000);
 
-      const { keypair: m3, tokenAccount: m3Ata } = await createFundedMember(500_000_000);
-      const [m3Pda] = getMemberPda(gPda, m3.publicKey);
-      await program.methods.joinGroup()
-        .accounts({
-          member: m3.publicKey, rentPayer: m3.publicKey, groupConfig: gPda, memberRecord: m3Pda,
-          memberTokenAccount: m3Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
-        })
-        .signers([m3]).rpc();
+      const { keypair: m3, tokenAccount: m3Ata, recordPda: m3Pda } = await joinNewMember(gPda, vPda, 500_000_000);
 
       // Verify 3 members joined
       const groupAfterJoin = await program.account.groupConfig.fetch(gPda);
