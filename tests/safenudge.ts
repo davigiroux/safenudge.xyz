@@ -355,6 +355,7 @@ describe("safenudge", () => {
   const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
   const GROUP_CONFIG_SIZE = 179;
   const MEMBER_RECORD_SIZE = 166;
+  const CURRENT_MEMBERS_OFFSET = 139;
 
   function rentFor(bytes: number): bigint {
     return provider.client.minimumBalanceForRentExemption(BigInt(bytes));
@@ -4891,12 +4892,24 @@ describe("safenudge", () => {
       assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(MEMBER_RECORD_SIZE));
       assert.equal(strangerBefore - lamportsOf(stranger.publicKey), SIGNATURE_FEE);
       const groupAfter = context.banksClient.getAccount(gPda);
-      assert.deepEqual(Buffer.from(groupAfter.data), Buffer.from(groupBefore.data));
+      const expectedData = Buffer.from(groupBefore.data);
+      expectedData[CURRENT_MEMBERS_OFFSET] = 1;
+      assert.deepEqual(Buffer.from(groupAfter.data), expectedData);
       assert.equal(groupAfter.lamports, groupBefore.lamports);
-      const group = await program.account.groupConfig.fetch(gPda);
-      assert.equal(group.currentMembers, 2);
       const other = await program.account.memberRecord.fetch(members[1].recordPda);
       assert.equal(other.member.toBase58(), members[1].keypair.publicKey.toBase58());
+    });
+
+    it("lowers current_members by one for each record it closes", async () => {
+      const { gPda, members } = await settledGroup("close-count", "distribute");
+      passRecordRetention();
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 2);
+
+      await closeRecordMethod(gPda, members[0].recordPda, members[0].keypair.publicKey).rpc();
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+
+      await closeRecordMethod(gPda, members[1].recordPda, members[1].keypair.publicKey).rpc();
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 0);
     });
 
     it("closes a record the member paid for after cancel and pays the member", async () => {

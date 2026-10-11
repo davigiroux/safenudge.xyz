@@ -30,7 +30,9 @@ pub struct GroupConfig {
     pub total_periods: u8,
     /// Offset 138. Max group size (2-10).
     pub max_members: u8,
-    /// Offset 139. Members with a seat.
+    /// Offset 139. Open MemberRecords of this group: join_group adds one, leave_group and
+    /// close_member_record subtract one. Zero proves no record exists, so `close_group` can
+    /// free the group code without a later group inheriting a record.
     pub current_members: u8,
     /// Offset 140. 0 = fixed amount, 1 = percentage (basis points).
     pub penalty_type: u8,
