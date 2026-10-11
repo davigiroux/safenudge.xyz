@@ -160,7 +160,7 @@ pub mod safenudge {
         CloseMemberRecord::handler(ctx)
     }
 
-    pub fn close_group(ctx: Context<CloseGroup>) -> Result<()> {
+    pub fn close_group<'info>(ctx: Context<'info, CloseGroup<'info>>) -> Result<()> {
         CloseGroup::handler(ctx)
     }
 
