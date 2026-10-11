@@ -603,7 +603,7 @@ describe("safenudge", () => {
   }
 
   function closeGroupMethod(gPda: PublicKey, rentPayer: PublicKey) {
-    return program.methods.closeGroup().accounts({ groupConfig: gPda, rentPayer });
+    return program.methods.closeGroup().accounts({ groupConfig: gPda, rentPayer, joinGate: getJoinGatePda(gPda)[0] });
   }
 
   function withAccount(ix: TransactionInstruction, from: PublicKey, to: PublicKey): TransactionInstruction {
@@ -5551,6 +5551,58 @@ describe("safenudge", () => {
       assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
       assert.equal(await getTokenBalanceOrZero(vPda), 5_000_000n);
       assert.equal(await getTokenBalanceOrZero(old.tokenAccount), 5_000_000n);
+    });
+
+    async function cancelledGatedGroup(
+      code: string, sponsor: Keypair,
+    ): Promise<{ gPda: PublicKey; gatePda: PublicKey }> {
+      const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000 }, sponsor);
+      await setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, sponsor.publicKey)
+        .signers([sponsor]).rpc();
+      await cancelCall(gPda, vPda, []);
+      return { gPda, gatePda: getJoinGatePda(gPda)[0] };
+    }
+
+    it("closes GroupConfig and JoinGate together and pays both rents to the rent payer", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, gatePda } = await cancelledGatedGroup("cg-gated", sponsor);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+      await closeGroupMethod(gPda, sponsor.publicKey).rpc();
+
+      assert.isNull(context.banksClient.getAccount(gPda));
+      assert.isNull(context.banksClient.getAccount(gatePda));
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 5_574_960n);
+    });
+
+    it("fails with ConstraintSeeds when another address is passed as the join gate, and the gate stays", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, gatePda } = await cancelledGatedGroup("cg-gate-swap", sponsor);
+      const ix = await closeGroupMethod(gPda, sponsor.publicKey).instruction();
+      const elsewhere = getJoinGatePda(getGroupPda("cg-gate-swap-other")[0])[0];
+
+      await expectError(() => sendAs(payer, [withAccount(ix, gatePda, elsewhere)]), "ConstraintSeeds");
+
+      assert.equal(lamportsOf(gPda), GROUP_CONFIG_RENT + VAULT_RENT);
+      assert.equal(lamportsOf(gatePda), 1_398_960n);
+    });
+
+    it("leaves a new group at the code of a closed gated group open to a stranger", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda: oldGroup, gatePda } = await cancelledGatedGroup("cg-gate-reuse", sponsor);
+      await closeGroupMethod(oldGroup, sponsor.publicKey).rpc();
+      const newCreator = await fundedKeypair();
+
+      await createGroupCall("cg-gate-reuse", { depositAmount: 5_000_000 }, newCreator);
+      const [gPda] = getGroupPda("cg-gate-reuse");
+      const [vPda] = getVaultPda(gPda);
+      const stranger = await joinNewMember(gPda, vPda, 5_000_000);
+
+      assert.equal(gPda.toBase58(), oldGroup.toBase58());
+      assert.equal(getJoinGatePda(gPda)[0].toBase58(), gatePda.toBase58());
+      assert.isNull(context.banksClient.getAccount(gatePda));
+      assert.equal((await program.account.memberRecord.fetch(stranger.recordPda)).group.toBase58(), gPda.toBase58());
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
     });
   });
 
