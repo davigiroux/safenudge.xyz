@@ -14,6 +14,53 @@ export type Safenudge = {
   },
   "instructions": [
     {
+      "name": "closeGroup",
+      "discriminator": [
+        40,
+        187,
+        201,
+        187,
+        18,
+        194,
+        122,
+        232
+      ],
+      "accounts": [
+        {
+          "name": "groupConfig",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  111,
+                  117,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config.group_code",
+                "account": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "not a signer or an authority. The constraint on `group_config` pins its key to the",
+            "wallet that signed and paid at create_group, so the caller cannot redirect the rent."
+          ],
+          "writable": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "closeMemberRecord",
       "discriminator": [
         187,
@@ -28,6 +75,7 @@ export type Safenudge = {
       "accounts": [
         {
           "name": "groupConfig",
+          "writable": true,
           "pda": {
             "seeds": [
               {
@@ -1386,6 +1434,11 @@ export type Safenudge = {
       "code": 6026,
       "name": "mintNotWritable",
       "msg": "Mint must be writable to cancel a group with no members whose vault holds tokens"
+    },
+    {
+      "code": 6027,
+      "name": "groupHasOpenRecords",
+      "msg": "Close every member record before closing the group"
     }
   ],
   "types": [
@@ -1519,7 +1572,7 @@ export type Safenudge = {
     {
       "name": "groupConfig",
       "docs": [
-        "One savings group. Never closed.",
+        "One savings group. `close_group` closes it once settled and every member record is closed.",
         "",
         "Every fixed-size field comes before `group_code`, the only variable-length one, so each field",
         "above it sits at the same byte offset in every group and clients can `memcmp`-filter on it."
@@ -1601,7 +1654,9 @@ export type Safenudge = {
           {
             "name": "currentMembers",
             "docs": [
-              "Offset 139. Members with a seat."
+              "Offset 139. Open MemberRecords of this group: join_group adds one, leave_group and",
+              "close_member_record subtract one. Zero proves no record exists, so `close_group` can",
+              "free the group code without a later group inheriting a record."
             ],
             "type": "u8"
           },
