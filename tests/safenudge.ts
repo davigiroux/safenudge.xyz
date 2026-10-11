@@ -355,6 +355,7 @@ describe("safenudge", () => {
   const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
   const GROUP_CONFIG_SIZE = 179;
   const MEMBER_RECORD_SIZE = 166;
+  const JOIN_GATE_SIZE = 73;
   const CURRENT_MEMBERS_OFFSET = 139;
 
   function rentFor(bytes: number): bigint {
@@ -468,6 +469,13 @@ describe("safenudge", () => {
     return { gPda, vPda };
   }
 
+  function getJoinGatePda(groupConfig: PublicKey): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from("join"), groupConfig.toBuffer()],
+      program.programId
+    );
+  }
+
   function joinMethod(
     member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey,
     mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
@@ -477,6 +485,14 @@ describe("safenudge", () => {
         member: member.keypair.publicKey, rentPayer, groupConfig: gPda, memberRecord: member.recordPda,
         memberTokenAccount: member.tokenAccount, vault: vPda, mint,
         tokenProgram, systemProgram: SystemProgram.programId,
+      });
+  }
+
+  function setJoinAuthorityMethod(gPda: PublicKey, authority: PublicKey, creator: PublicKey, rentPayer: PublicKey) {
+    return program.methods.setJoinAuthority(authority)
+      .accounts({
+        creator, rentPayer, groupConfig: gPda, joinGate: getJoinGatePda(gPda)[0],
+        systemProgram: SystemProgram.programId,
       });
   }
 
@@ -1472,6 +1488,125 @@ describe("safenudge", () => {
       assert.deepEqual(data.subarray(8, 40), gPda.toBuffer());
       assert.deepEqual(data.subarray(40, 72), member.keypair.publicKey.toBuffer());
       assert.deepEqual(data.subarray(72, 104), sponsor.publicKey.toBuffer());
+    });
+  });
+
+  describe("set_join_authority", () => {
+    it("stores group, authority and bump and charges the rent to the group's rent payer", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await createWeeklyGroup("sja-happy", { depositAmount: 10_000_000 }, sponsor);
+      const authority = Keypair.generate().publicKey;
+      const [gatePda, gateBump] = getJoinGatePda(gPda);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const creatorBefore = lamportsOf(payer.publicKey);
+
+      sendAs(sponsor, [await setJoinAuthorityMethod(gPda, authority, payer.publicKey, sponsor.publicKey).instruction()], [payer]);
+
+      const gate = await program.account.joinGate.fetch(gatePda);
+      assert.equal(gate.group.toBase58(), gPda.toBase58());
+      assert.equal(gate.authority.toBase58(), authority.toBase58());
+      assert.equal(gate.bump, gateBump);
+      const data = Buffer.from(context.banksClient.getAccount(gatePda).data);
+      assert.equal(data.length, JOIN_GATE_SIZE);
+      assert.equal(data.subarray(0, 8).toString(), "snJoinG1");
+      assert.deepEqual(data.subarray(8, 40), gPda.toBuffer());
+      assert.deepEqual(data.subarray(40, 72), authority.toBuffer());
+      assert.equal(lamportsOf(gatePda), 1_398_960n);
+      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), 1_398_960n + 2n * SIGNATURE_FEE);
+      assert.equal(lamportsOf(payer.publicKey), creatorBefore);
+    });
+
+    it("creates the gate when lamports were sent to its address first", async () => {
+      const { gPda } = await createWeeklyGroup("sja-prefunded", { depositAmount: 10_000_000 });
+      const [gatePda] = getJoinGatePda(gPda);
+      await provider.sendAndConfirm(
+        new Transaction().add(SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: gatePda, lamports: 1_000_000 })),
+        [payer],
+      );
+      const authority = Keypair.generate().publicKey;
+
+      await setJoinAuthorityMethod(gPda, authority, payer.publicKey, payer.publicKey).rpc();
+
+      const gate = await program.account.joinGate.fetch(gatePda);
+      assert.equal(gate.authority.toBase58(), authority.toBase58());
+      assert.equal(lamportsOf(gatePda), 1_398_960n);
+    });
+
+    it("fails with InvalidGroupStatus while Active, before it checks the creator", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("sja-active", { depositAmount: 10_000_000 });
+      await joinNewMember(gPda, vPda, 10_000_000);
+      await joinNewMember(gPda, vPda, 10_000_000);
+      await startCycle(gPda);
+      const stranger = await fundedKeypair();
+      const authority = Keypair.generate().publicKey;
+
+      await expectError(setJoinAuthorityMethod(gPda, authority, payer.publicKey, payer.publicKey).rpc(), "InvalidGroupStatus");
+      await expectError(
+        setJoinAuthorityMethod(gPda, authority, stranger.publicKey, payer.publicKey).signers([stranger]).rpc(),
+        "InvalidGroupStatus",
+      );
+
+      assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
+    });
+
+    it("fails with GroupHasMembers once a member has joined", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("sja-member", { depositAmount: 10_000_000 });
+      await joinNewMember(gPda, vPda, 10_000_000);
+
+      await expectError(
+        setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, payer.publicKey).rpc(),
+        "GroupHasMembers",
+      );
+
+      assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
+    });
+
+    it("fails with UnauthorizedCreator when the signer is not the creator", async () => {
+      const sponsor = await fundedKeypair();
+      const stranger = await fundedKeypair();
+      const { gPda } = await createWeeklyGroup("sja-stranger", { depositAmount: 10_000_000 }, sponsor);
+      const ix = await setJoinAuthorityMethod(gPda, stranger.publicKey, stranger.publicKey, sponsor.publicKey).instruction();
+
+      await expectError(() => sendAs(sponsor, [ix], [stranger]), "UnauthorizedCreator");
+
+      assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
+    });
+
+    it("fails with InvalidRentPayer when another wallet pays the rent", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await createWeeklyGroup("sja-payer", { depositAmount: 10_000_000 }, sponsor);
+
+      await expectError(
+        setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, payer.publicKey).rpc(),
+        "InvalidRentPayer",
+      );
+
+      assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
+    });
+
+    it("fails the second time and keeps the first authority", async () => {
+      const { gPda } = await createWeeklyGroup("sja-twice", { depositAmount: 10_000_000 });
+      const first = Keypair.generate().publicKey;
+      await setJoinAuthorityMethod(gPda, first, payer.publicKey, payer.publicKey).rpc();
+
+      await expectError(
+        setJoinAuthorityMethod(gPda, Keypair.generate().publicKey, payer.publicKey, payer.publicKey).rpc(),
+        "already in use",
+      );
+
+      const gate = await program.account.joinGate.fetch(getJoinGatePda(gPda)[0]);
+      assert.equal(gate.authority.toBase58(), first.toBase58());
+    });
+
+    it("fails with InvalidJoinAuthority for the default public key", async () => {
+      const { gPda } = await createWeeklyGroup("sja-default", { depositAmount: 10_000_000 });
+
+      await expectError(
+        setJoinAuthorityMethod(gPda, PublicKey.default, payer.publicKey, payer.publicKey).rpc(),
+        "InvalidJoinAuthority",
+      );
+
+      assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
     });
   });
 
