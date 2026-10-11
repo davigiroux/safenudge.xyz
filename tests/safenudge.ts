@@ -479,12 +479,13 @@ describe("safenudge", () => {
   function joinMethod(
     member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey,
     mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+    joinAuthority: PublicKey | null = null,
   ) {
     return program.methods.joinGroup()
       .accounts({
         member: member.keypair.publicKey, rentPayer, groupConfig: gPda, memberRecord: member.recordPda,
         memberTokenAccount: member.tokenAccount, vault: vPda, mint,
-        tokenProgram, systemProgram: SystemProgram.programId,
+        tokenProgram, systemProgram: SystemProgram.programId, joinGate: getJoinGatePda(gPda)[0], joinAuthority,
       });
   }
 
@@ -603,6 +604,11 @@ describe("safenudge", () => {
 
   function closeGroupMethod(gPda: PublicKey, rentPayer: PublicKey) {
     return program.methods.closeGroup().accounts({ groupConfig: gPda, rentPayer });
+  }
+
+  function withAccount(ix: TransactionInstruction, from: PublicKey, to: PublicKey): TransactionInstruction {
+    const keys = ix.keys.map((k) => (k.pubkey.equals(from) ? { ...k, pubkey: to } : k));
+    return new TransactionInstruction({ programId: ix.programId, keys, data: ix.data });
   }
 
   async function settledGroup(
@@ -1130,6 +1136,7 @@ describe("safenudge", () => {
           mint: usdcMint,
           tokenProgram: TOKEN_PROGRAM_ID,
           systemProgram: SystemProgram.programId,
+          joinAuthority: null,
         })
         .signers([member.keypair])
         .rpc();
@@ -1172,7 +1179,7 @@ describe("safenudge", () => {
           .accounts({
             member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
             memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([m.keypair])
           .rpc();
@@ -1188,7 +1195,7 @@ describe("safenudge", () => {
           .accounts({
             member: extra.keypair.publicKey, rentPayer: extra.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: extraPda,
             memberTokenAccount: extra.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([extra.keypair])
           .rpc();
@@ -1222,7 +1229,7 @@ describe("safenudge", () => {
           .accounts({
             member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
             memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([m.keypair])
           .rpc();
@@ -1244,7 +1251,7 @@ describe("safenudge", () => {
           .accounts({
             member: late.keypair.publicKey, rentPayer: late.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: latePda,
             memberTokenAccount: late.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([late.keypair])
           .rpc();
@@ -1306,6 +1313,7 @@ describe("safenudge", () => {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
+            joinAuthority: null,
           })
           .signers([member.keypair])
           .rpc();
@@ -1607,6 +1615,154 @@ describe("safenudge", () => {
       );
 
       assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
+    });
+  });
+
+  describe("join_group with a join gate", () => {
+    async function gatedGroup(code: string): Promise<{ gPda: PublicKey; vPda: PublicKey; authority: Keypair }> {
+      const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000 });
+      const authority = Keypair.generate();
+      await setJoinAuthorityMethod(gPda, authority.publicKey, payer.publicKey, payer.publicKey).rpc();
+      return { gPda, vPda, authority };
+    }
+
+    async function newJoiner(gPda: PublicKey): Promise<Member> {
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000);
+      return { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+    }
+
+    async function assertNotJoined(member: Member, gPda: PublicKey, vPda: PublicKey): Promise<void> {
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 0);
+    }
+
+    it("fails with JoinNotApproved when the join authority does not sign", async () => {
+      const { gPda, vPda } = await gatedGroup("gate-no-auth");
+      const stranger = await newJoiner(gPda);
+
+      await expectError(joinCall(stranger, gPda, vPda), "JoinNotApproved");
+
+      await assertNotJoined(stranger, gPda, vPda);
+    });
+
+    it("fails with JoinNotApproved when another wallet signs as join authority", async () => {
+      const { gPda, vPda } = await gatedGroup("gate-wrong-auth");
+      const stranger = await newJoiner(gPda);
+      const fake = Keypair.generate();
+
+      await expectError(
+        joinMethod(stranger, gPda, vPda, stranger.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, fake.publicKey)
+          .signers([stranger.keypair, fake]).rpc(),
+        "JoinNotApproved",
+      );
+
+      await assertNotJoined(stranger, gPda, vPda);
+    });
+
+    it("fails with JoinNotApproved when the authority signs only as rent payer", async () => {
+      const { gPda, vPda, authority } = await gatedGroup("gate-auth-as-payer");
+      await provider.sendAndConfirm(
+        new Transaction().add(SystemProgram.transfer({
+          fromPubkey: payer.publicKey, toPubkey: authority.publicKey, lamports: LAMPORTS_PER_SOL,
+        })),
+        [payer],
+      );
+      const stranger = await newJoiner(gPda);
+
+      await expectError(joinCall(stranger, gPda, vPda, usdcMint, authority), "JoinNotApproved");
+
+      await assertNotJoined(stranger, gPda, vPda);
+    });
+
+    it("fails with ConstraintSeeds when the empty gate address of another group is passed", async () => {
+      const { gPda, vPda } = await gatedGroup("gate-swap");
+      const { gPda: openGroup } = await createWeeklyGroup("gate-swap-open", { depositAmount: 10_000_000 });
+      const stranger = await newJoiner(gPda);
+      const ix = await joinMethod(stranger, gPda, vPda, stranger.keypair.publicKey).instruction();
+
+      await expectError(
+        () => sendAs(stranger.keypair, [withAccount(ix, getJoinGatePda(gPda)[0], getJoinGatePda(openGroup)[0])]),
+        "ConstraintSeeds",
+      );
+
+      await assertNotJoined(stranger, gPda, vPda);
+    });
+
+    it("lets a member join when the join authority signs", async () => {
+      const { gPda, vPda, authority } = await gatedGroup("gate-approved");
+      const member = await newJoiner(gPda);
+      const authorityBefore = lamportsOf(authority.publicKey);
+
+      await joinMethod(member, gPda, vPda, member.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey)
+        .signers([member.keypair, authority]).rpc();
+
+      const record = await program.account.memberRecord.fetch(member.recordPda);
+      assert.equal(record.member.toBase58(), member.keypair.publicKey.toBase58());
+      assert.equal(record.totalDeposited.toString(), "10000000");
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal(lamportsOf(authority.publicKey), authorityBefore);
+    });
+
+    it("needs the authority for the creator's own join, and create, gate and join succeed in one transaction", async () => {
+      const code = "gate-creator";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+      const sponsor = await fundedKeypair();
+      const authority = Keypair.generate();
+      const { keypair: creator, tokenAccount } = await createFundedMember(10_000_000, 0);
+      const creatorMember = { keypair: creator, tokenAccount, recordPda: getMemberPda(gPda, creator.publicKey)[0] };
+      const createIx = await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.publicKey, sponsor.publicKey).instruction();
+      const gateIx = await setJoinAuthorityMethod(gPda, authority.publicKey, creator.publicKey, sponsor.publicKey).instruction();
+
+      const unapprovedJoin = await joinMethod(creatorMember, gPda, vPda, sponsor.publicKey).instruction();
+      await expectError(() => sendAs(sponsor, [createIx, gateIx, unapprovedJoin], [creator]), "JoinNotApproved");
+      assert.isNull(context.banksClient.getAccount(gPda));
+      assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
+
+      const approvedJoin = await joinMethod(
+        creatorMember, gPda, vPda, sponsor.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey,
+      ).instruction();
+      sendAs(sponsor, [createIx, gateIx, approvedJoin], [creator, authority]);
+
+      const group = await program.account.groupConfig.fetch(gPda);
+      assert.equal(group.creator.toBase58(), creator.publicKey.toBase58());
+      assert.equal(group.currentMembers, 1);
+      const gate = await program.account.joinGate.fetch(getJoinGatePda(gPda)[0]);
+      assert.equal(gate.authority.toBase58(), authority.publicKey.toBase58());
+      const record = await program.account.memberRecord.fetch(creatorMember.recordPda);
+      assert.equal(record.rentPayer.toBase58(), sponsor.publicKey.toBase58());
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal(lamportsOf(creator.publicKey), 0n);
+    });
+
+    it("lets a member leave a gated group with no authority", async () => {
+      const { gPda, vPda, authority } = await gatedGroup("gate-leave");
+      const member = await newJoiner(gPda);
+      await joinMethod(member, gPda, vPda, member.keypair.publicKey, usdcMint, TOKEN_PROGRAM_ID, authority.publicKey)
+        .signers([member.keypair, authority]).rpc();
+
+      await leaveCall(member, gPda, vPda);
+
+      await assertNotJoined(member, gPda, vPda);
+    });
+
+    it("lets anyone join a group with no gate when lamports were sent to the gate address", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("gate-donated", { depositAmount: 10_000_000 });
+      const [gatePda] = getJoinGatePda(gPda);
+      await provider.sendAndConfirm(
+        new Transaction().add(SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: gatePda, lamports: 1_000_000 })),
+        [payer],
+      );
+      assert.equal(context.banksClient.getAccount(gatePda).owner.toBase58(), SystemProgram.programId.toBase58());
+
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+
+      assert.equal((await program.account.memberRecord.fetch(member.recordPda)).totalDeposited.toString(), "10000000");
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+      assert.equal(lamportsOf(gatePda), 1_000_000n);
     });
   });
 
@@ -2084,7 +2240,7 @@ describe("safenudge", () => {
           .accounts({
             member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
             memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([m.keypair])
           .rpc();
@@ -2122,7 +2278,7 @@ describe("safenudge", () => {
           .accounts({
             member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
             memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([m.keypair])
           .rpc();
@@ -2170,7 +2326,7 @@ describe("safenudge", () => {
         .accounts({
           member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
           memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m.keypair])
         .rpc();
@@ -2208,7 +2364,7 @@ describe("safenudge", () => {
           .accounts({
             member: m.keypair.publicKey, rentPayer: m.keypair.publicKey, groupConfig: groupConfigPda, memberRecord: mPda,
             memberTokenAccount: m.tokenAccount, vault: vaultPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([m.keypair])
           .rpc();
@@ -2275,7 +2431,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -2285,7 +2441,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -2342,7 +2498,7 @@ describe("safenudge", () => {
         .accounts({
           member: m.publicKey, rentPayer: m.publicKey, groupConfig: gPda, memberRecord: mPda,
           memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m]).rpc();
 
@@ -2352,7 +2508,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -2394,7 +2550,7 @@ describe("safenudge", () => {
         .accounts({
           member: m.publicKey, rentPayer: m.publicKey, groupConfig: gPda, memberRecord: mPda,
           memberTokenAccount: mAta, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m]).rpc();
 
@@ -2492,7 +2648,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -2502,7 +2658,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -2621,7 +2777,7 @@ describe("safenudge", () => {
           .accounts({
             member: keypair.publicKey, rentPayer: keypair.publicKey, groupConfig: gPda, memberRecord: mPda,
             memberTokenAccount: tokenAccount, vault: vPda, mint: usdcMint,
-            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+            tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
           })
           .signers([keypair]).rpc();
         members.push({ pda: mPda, ata: tokenAccount });
@@ -2707,7 +2863,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -2717,7 +2873,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -2832,7 +2988,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -2842,7 +2998,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -2955,7 +3111,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -2965,7 +3121,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3067,7 +3223,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3077,7 +3233,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3191,7 +3347,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3201,7 +3357,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3252,7 +3408,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3262,7 +3418,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3323,7 +3479,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3333,7 +3489,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3390,7 +3546,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3400,7 +3556,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3460,7 +3616,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3470,7 +3626,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3545,7 +3701,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3555,7 +3711,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3636,7 +3792,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3646,7 +3802,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3717,7 +3873,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3727,7 +3883,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3825,7 +3981,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3835,7 +3991,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3902,7 +4058,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3912,7 +4068,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3975,7 +4131,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPdaA, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPdaA, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -3985,7 +4141,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPdaA, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPdaA, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -3996,7 +4152,7 @@ describe("safenudge", () => {
         .accounts({
           member: mB.publicKey, rentPayer: mB.publicKey, groupConfig: gPdaB, memberRecord: mBPda,
           memberTokenAccount: mBAta, vault: vPdaB, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([mB]).rpc();
 
@@ -4123,7 +4279,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -4133,7 +4289,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -4355,7 +4511,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -4413,7 +4569,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -4423,7 +4579,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -4489,7 +4645,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -4548,7 +4704,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -4615,7 +4771,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -5882,7 +6038,7 @@ describe("safenudge", () => {
         .accounts({
           member: m1.publicKey, rentPayer: m1.publicKey, groupConfig: gPda, memberRecord: m1Pda,
           memberTokenAccount: m1Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m1]).rpc();
 
@@ -5892,7 +6048,7 @@ describe("safenudge", () => {
         .accounts({
           member: m2.publicKey, rentPayer: m2.publicKey, groupConfig: gPda, memberRecord: m2Pda,
           memberTokenAccount: m2Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m2]).rpc();
 
@@ -5902,7 +6058,7 @@ describe("safenudge", () => {
         .accounts({
           member: m3.publicKey, rentPayer: m3.publicKey, groupConfig: gPda, memberRecord: m3Pda,
           memberTokenAccount: m3Ata, vault: vPda, mint: usdcMint,
-          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
+          tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId, joinAuthority: null,
         })
         .signers([m3]).rpc();
 
