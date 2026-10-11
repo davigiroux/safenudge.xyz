@@ -5,7 +5,7 @@ use anchor_spl::token_interface::{
 
 use crate::errors::SafeNudgeError;
 use crate::events::MemberJoined;
-use crate::state::{GroupConfig, MemberRecord, STATUS_OPEN};
+use crate::state::{GroupConfig, JoinGate, MemberRecord, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct JoinGroup<'info> {
@@ -60,10 +60,34 @@ pub struct JoinGroup<'info> {
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
+
+    /// CHECK: the seeds pin the address to `["join", group_config]`, and the handler reads it
+    /// only when this program owns it. Only `set_join_authority` can create a program-owned
+    /// account at that address, so a program-owned account here is this group's JoinGate, and
+    /// `try_deserialize` still checks its discriminator. Any other owner means no gate: a wallet
+    /// can send lamports to the address, but cannot make it program-owned.
+    #[account(
+        seeds = [b"join", group_config.key().as_ref()],
+        bump,
+    )]
+    pub join_gate: UncheckedAccount<'info>,
+
+    /// Must sign when the group has a JoinGate. Ignored when it has none.
+    pub join_authority: Option<Signer<'info>>,
 }
 
 impl<'info> JoinGroup<'info> {
     pub fn handler(&mut self, bumps: &JoinGroupBumps) -> Result<()> {
+        // ── Checks ──────────────────────────────────────────
+        if self.join_gate.owner == &crate::ID {
+            let gate = JoinGate::try_deserialize(&mut &self.join_gate.try_borrow_data()?[..])?;
+            let approved = self
+                .join_authority
+                .as_ref()
+                .is_some_and(|signer| signer.key() == gate.authority);
+            require!(approved, SafeNudgeError::JoinNotApproved);
+        }
+
         // ── Effects ─────────────────────────────────────────
         let member_record = &mut self.member_record;
         member_record.group = self.group_config.key();

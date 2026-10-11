@@ -62,4 +62,6 @@ pub enum SafeNudgeError {
     GroupHasMembers,
     #[msg("The join authority cannot be the default public key")]
     InvalidJoinAuthority,
+    #[msg("This group needs its join authority to approve the join")]
+    JoinNotApproved,
 }
