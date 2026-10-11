@@ -21,7 +21,7 @@ SafeNudge is a Solana program (smart contract) with a React/TypeScript frontend.
 
 The program uses four account types, all derived as PDAs. `GroupConfig` and `MemberRecord` each record a `rent_payer`. See "Rent payer" below. `JoinGate` is optional: a group has one only when its creator gated it.
 
-**Group types.** `GroupConfig` is the account of a simple group, and its layout does not change for new features. A group with other rules, such as a yield group, gets its own account type, its own discriminator and its own instructions, never a mode field in `GroupConfig`. An instruction takes `Account<GroupConfig>` or the other type, so it rejects the wrong kind of group by discriminator. An optional feature of a simple group lives in its own account at a fixed PDA, which the instructions that depend on it always receive. `JoinGate` is the first such account. See [ADR-0003](./docs/adr/0003-join-gate-and-group-types.md).
+**Group types.** A group with other rules than a simple group, such as a yield group, gets its own account type and instructions, never a mode field in `GroupConfig`. An optional feature of a simple group lives in its own account at a fixed PDA; `JoinGate` is the first. See [ADR-0003](./docs/adr/0003-join-gate-and-group-types.md).
 
 #### GroupConfig
 
@@ -84,11 +84,9 @@ Makes every `join_group` of one group need the signature of `authority`. `set_jo
 #[account(discriminator = b"snJoinG1")]
 #[derive(InitSpace)]
 pub struct JoinGate {
-    pub group: Pubkey,      // offset 8. The GroupConfig PDA
-    pub authority: Pubkey,  // offset 40. Must sign every join_group of the group
-    pub bump: u8,           // offset 72
+    pub authority: Pubkey,  // offset 8. Must sign every join_group of the group
 }
-// Space: 8 + 32 * 2 + 1 = 73
+// Space: 8 + 32 = 40. The address names the group, so the account stores nothing else
 ```
 
 #### Rent payer
@@ -99,7 +97,7 @@ pub struct JoinGate {
 |------|---------|-------------|-------------|
 | GroupConfig (179 bytes) | `create_group` | `close_group`, after settlement and once every member record is closed | `group_config.rent_payer` |
 | Vault (165 bytes) | `create_group` | `refund_vault_rent`, after `distribute` or `emergency_cancel` closed the vault into GroupConfig | `group_config.rent_payer` |
-| JoinGate (73 bytes) | `set_join_authority` | `close_group`, in the same instruction as `GroupConfig` | `group_config.rent_payer` |
+| JoinGate (40 bytes) | `set_join_authority` | `close_group`, in the same instruction as `GroupConfig` | `group_config.rent_payer` |
 | MemberRecord (166 bytes) | `join_group` | `leave_group` while the group is Open, or `close_member_record` 30 days after settlement | `member_record.rent_payer` |
 
 `distribute` and `emergency_cancel` name no rent recipient. They close the vault into the GroupConfig PDA, so the instructions that move member tokens credit no lamports to an address outside the program.
@@ -208,7 +206,7 @@ A member joins the group and makes their initial deposit.
 - `group_config.current_members < group_config.max_members`
 - Member doesn't already have a `MemberRecord` for this group (PDA uniqueness handles this)
 - When this program owns `join_gate`, it must deserialize as a `JoinGate`, and `join_authority` must be present, sign, and equal `join_gate.authority` (`JoinNotApproved`). A system-owned address, with or without lamports, means the group has no gate
-- For a gated group, instruction 0 of the transaction is not `AdvanceNonceAccount` (`DurableNonceNotAllowed`). Nothing in a join names the group instance, so an approval held open by a durable nonce could land in a later group at the same code that uses the same authority, or again after a leave. A normal transaction expires in about 150 slots, and the runtime rejects the same signature twice
+- For a gated group, instruction 0 of the transaction is not `AdvanceNonceAccount` (`DurableNonceNotAllowed`). See "Approval replayed in a later group at the same code" under Security
 - Member has sufficient USDC balance
 
 **Effects:**
@@ -563,7 +561,7 @@ Closes the `GroupConfig` of a settled group that has no member record left, and 
 
 **Effects:**
 - Transfers all lamports of `group_config` to `rent_payer` and closes the account. That includes the vault rent that settlement moved into it, when `refund_vault_rent` was not sent first: 4,176,000 lamports in total at today's rent rate
-- When this program owns `join_gate`, closes that `JoinGate` to `rent_payer` too (1,398,960 lamports). A group at a freed code has the same `["join", group_config]` address, so a gate left behind would gate the new group with the old authority
+- When this program owns `join_gate`, closes that `JoinGate` to `rent_payer` too (1,169,280 lamports). See "Gate inherited at a freed code" under Security
 
 `current_members` counts open member records for the whole life of a group: `join_group` adds one, and `leave_group` and `close_member_record` subtract one. No other instruction creates or closes a record. So zero proves that no record of this group exists, and a later `create_group` with the same code, which derives the same `GroupConfig` address and so the same `["member", group_config, member]` addresses, finds nothing to inherit. A new instruction that creates or closes a member record must change `current_members` in the same instruction.
 
@@ -597,13 +595,13 @@ Gates an Open group with no member: from then on every `join_group` needs the si
 - A second call fails because `join_gate` already exists
 
 **Effects:**
-- Creates `JoinGate` with `group`, `authority` and its bump
+- Creates `JoinGate` with `authority`
 
 There is no instruction to change or remove the authority.
 
-Send `set_join_authority` in the same transaction as `create_group`, and put the creator's own `join_group` after it, signed by the authority. In separate transactions a join can land first: `set_join_authority` then fails with `GroupHasMembers`, and the group stays open. The program still guarantees that a gate covers every member of its group. A client that sees that failure cancels the group.
+Send `set_join_authority` in the same transaction as `create_group`, before the creator's `join_group`. See "Gate set after a join" under Security.
 
-The authority signs the whole transaction. A backend that co-signs a join built by a client must check that the message holds exactly one `join_group`, for the approved member, and must sign over a recent blockhash. `join_group` rejects a gated join sent with a durable nonce.
+A backend that holds the authority checks every message it co-signs. See "Co-signed join widened by the client" under Security.
 
 ---
 
@@ -864,7 +862,7 @@ Every write operation follows this pattern:
 
 ## Yield Integration (v2 Architecture)
 
-A yield group is its own group type (ADR-0003): its own account type with its own discriminator, and its own instructions. It adds no field and no branch to `GroupConfig` or to the simple instructions, which reject a yield group by discriminator. The design below is one candidate; the yield shape is not chosen.
+A yield group is its own group type (see "Group types" under Account Structure). The design below is one candidate; the yield shape is not chosen.
 
 ### How It Would Work
 
