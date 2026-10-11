@@ -199,6 +199,7 @@ A member joins the group and makes their initial deposit.
 - `system_program`
 - `join_gate` — the address `["join", group_config]`, enforced by seeds. It may hold nothing
 - `join_authority` (optional signer) — must sign when a `JoinGate` exists at `join_gate`. Ignored otherwise
+- `instructions_sysvar` — address pinned to the instructions sysvar. Read only for a gated group
 
 **Args:** None (deposit amount comes from `group_config.deposit_amount`)
 
@@ -207,6 +208,7 @@ A member joins the group and makes their initial deposit.
 - `group_config.current_members < group_config.max_members`
 - Member doesn't already have a `MemberRecord` for this group (PDA uniqueness handles this)
 - When this program owns `join_gate`, it must deserialize as a `JoinGate`, and `join_authority` must be present, sign, and equal `join_gate.authority` (`JoinNotApproved`). A system-owned address, with or without lamports, means the group has no gate
+- For a gated group, instruction 0 of the transaction is not `AdvanceNonceAccount` (`DurableNonceNotAllowed`). Nothing in a join names the group instance, so an approval held open by a durable nonce could land in a later group at the same code that uses the same authority, or again after a leave. A normal transaction expires in about 150 slots, and the runtime rejects the same signature twice
 - Member has sufficient USDC balance
 
 **Effects:**
@@ -591,7 +593,7 @@ Gates an Open group with no member: from then on every `join_group` needs the si
 - `group_config.current_members == 0` (`GroupHasMembers`)
 - `creator.key() == group_config.creator` (`UnauthorizedCreator`)
 - `rent_payer.key() == group_config.rent_payer` (`InvalidRentPayer`)
-- `authority != Pubkey::default()` (`InvalidJoinAuthority`). The default key is the System Program ID, which never signs, so such a gate would block every join
+- `authority` is neither `Pubkey::default()` nor the program ID (`InvalidJoinAuthority`). The default key is the System Program ID, which never signs, and Anchor reads the program ID in an optional account slot as "no account". Either gate would block every join
 - A second call fails because `join_gate` already exists
 
 **Effects:**
@@ -601,7 +603,7 @@ There is no instruction to change or remove the authority.
 
 Send `set_join_authority` in the same transaction as `create_group`, and put the creator's own `join_group` after it, signed by the authority. In separate transactions a join can land first: `set_join_authority` then fails with `GroupHasMembers`, and the group stays open. The program still guarantees that a gate covers every member of its group. A client that sees that failure cancels the group.
 
-The authority signs the whole transaction. A backend that co-signs a join built by a client must check that the message holds exactly one `join_group`, for the approved member, and must sign over a recent blockhash, not a durable nonce: an approval stays valid while the group is Open.
+The authority signs the whole transaction. A backend that co-signs a join built by a client must check that the message holds exactly one `join_group`, for the approved member, and must sign over a recent blockhash. `join_group` rejects a gated join sent with a durable nonce.
 
 ---
 
@@ -755,10 +757,12 @@ pub enum SafeNudgeError {
     GroupHasOpenRecords,
     #[msg("The join authority can only be set before anyone joins")]
     GroupHasMembers,
-    #[msg("The join authority cannot be the default public key")]
+    #[msg("The join authority cannot be the default public key or the program ID")]
     InvalidJoinAuthority,
     #[msg("This group needs its join authority to approve the join")]
     JoinNotApproved,
+    #[msg("A gated join cannot use a durable nonce")]
+    DurableNonceNotAllowed,
 }
 ```
 
@@ -920,7 +924,7 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 
 `close_group` also changes no layout, so it needs no settlement of live groups. For a client: `close_member_record` now writes `group_config`, so the account must be writable; `close_group` is a new instruction; and `GroupHasOpenRecords` (6027) is a new error code. A group whose records were closed under the previous binary can never be closed (see `close_group`).
 
-The join gate changes no layout of an existing account either. `JoinGate` is a new account. For a client: `join_group` takes two more accounts after `system_program`, `join_gate` and the optional signer `join_authority`, so earlier positions do not move; `close_group` takes `join_gate` after `rent_payer`; `set_join_authority` is new; and `GroupHasMembers` (6028), `InvalidJoinAuthority` (6029) and `JoinNotApproved` (6030) are new error codes. An Anchor client derives `join_gate` from the IDL seeds. It fills an omitted optional signer with the provider wallet, so a client must pass `joinAuthority: null` for an open group, or the authority for a gated one.
+The join gate changes no layout of an existing account either. `JoinGate` is a new account. For a client: `join_group` takes three more accounts after `system_program`, `join_gate`, the optional signer `join_authority` and `instructions_sysvar`, so earlier positions do not move; `close_group` takes `join_gate` after `rent_payer`; `set_join_authority` is new; and `GroupHasMembers` (6028), `InvalidJoinAuthority` (6029), `JoinNotApproved` (6030) and `DurableNonceNotAllowed` (6031) are new error codes. An Anchor client derives `join_gate` from the IDL seeds and fills `instructions_sysvar` from its fixed address. It fills an omitted optional signer with the provider wallet, so a client must pass `joinAuthority: null` for an open group, or the authority for a gated one.
 
 ### Testing Strategy
 
@@ -1031,6 +1035,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Gate inherited at a freed code | `close_group` closes the `JoinGate` in the same instruction as `GroupConfig`, and `set_join_authority` needs an Open group, so no gate exists once its group is closed. |
 | Join authority key stolen or lost (accepted) | The key can only allow joins: with it, a stranger can join a gated group, and no funds move. Without it, the group takes no new member, and members can still leave and the creator can still cancel. |
 | Co-signed join widened by the client | The authority signs the whole message, so a client could add joins for other wallets. The backend that holds the authority checks that a message holds exactly one join for the approved member, and signs over a recent blockhash only. |
+| Approval replayed in a later group at the same code | Nothing in a join names the group instance, so a held approval could join a later group at the same code that uses the same authority. `join_group` rejects a gated join whose transaction starts with `AdvanceNonceAccount` (`DurableNonceNotAllowed`), so an approval lives at most about 150 slots. Within that time a replay needs the creator to cancel an empty group, close it and create the same code again: the creator's own group. Binding the instance in the instruction would need a field in `GroupConfig`, which ADR-0003 avoids. |
 | Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 179 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 

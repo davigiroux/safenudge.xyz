@@ -49,7 +49,10 @@ on it always receives its address.
   remove the authority.
 - `join_group` always receives the `["join", group_config]` address. When a
   `JoinGate` exists there, the join also needs the signature of
-  `authority`. When nothing exists there, the group is open, as today.
+  `authority`, and the transaction must not use a durable nonce. Nothing
+  in a join names the group instance, so an approval held open by a nonce
+  could land in a later group at the same code. When nothing exists
+  there, the group is open, as today.
   Only this program can create a program-owned account at that address,
   and only through `set_join_authority`.
 - `close_group` also closes the `JoinGate`, to the group's `rent_payer`.
