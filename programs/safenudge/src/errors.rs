@@ -58,4 +58,8 @@ pub enum SafeNudgeError {
     MintNotWritable,
     #[msg("Close every member record before closing the group")]
     GroupHasOpenRecords,
+    #[msg("The join authority can only be set before anyone joins")]
+    GroupHasMembers,
+    #[msg("The join authority cannot be the default public key")]
+    InvalidJoinAuthority,
 }

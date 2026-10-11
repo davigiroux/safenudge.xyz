@@ -8,6 +8,7 @@ pub mod init_treasury;
 pub mod join_group;
 pub mod leave_group;
 pub mod refund_vault_rent;
+pub mod set_join_authority;
 pub mod start_cycle;
 pub mod withdraw_fees;
 
@@ -21,5 +22,6 @@ pub use init_treasury::*;
 pub use join_group::*;
 pub use leave_group::*;
 pub use refund_vault_rent::*;
+pub use set_join_authority::*;
 pub use start_cycle::*;
 pub use withdraw_fees::*;
