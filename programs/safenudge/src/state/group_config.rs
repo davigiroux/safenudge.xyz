@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::errors::SafeNudgeError;
 
-/// One savings group. Never closed.
+/// One savings group. `close_group` closes it once settled and every member record is closed.
 ///
 /// Every fixed-size field comes before `group_code`, the only variable-length one, so each field
 /// above it sits at the same byte offset in every group and clients can `memcmp`-filter on it.
