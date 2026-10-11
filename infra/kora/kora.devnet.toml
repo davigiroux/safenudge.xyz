@@ -42,15 +42,17 @@ max = 50
 window_seconds = 3600
 
 [validation]
-# Largest rent one request may take from the relay. SafePool sends `create_group`
-# and the creator's `join_group` in one transaction, with an idempotent token
-# account create that Kora counts even when the account exists:
+# Largest rent one request may take from the relay. SafePool sends `create_group`,
+# `set_join_authority` and the creator's `join_group` in one transaction, with an
+# idempotent token account create that Kora counts even when the account exists:
 #   GroupConfig 179 B + vault 165 B             (128 + 179) * 5080 + (128 + 165) * 5080 = 3,048,000
+#   JoinGate 40 B                               (128 + 40) * 5080                      =   853,440
 #   MemberRecord 166 B                          (128 + 166) * 5080                     = 1,493,520
 #   member token account 165 B                  (128 + 165) * 5080                     = 1,488,440
-# Total 6,029,960 lamports at the current rent rate. Recompute if the rent rate changes.
-max_allowed_lamports = 6029960
+# Total 6,883,400 lamports at the current rent rate. Recompute if the rent rate changes.
+max_allowed_lamports = 6883400
 max_priority_fee_lamports = 50000
+# That transaction has three signers: the creator, the relay and the join authority.
 max_signatures = 4
 price_source = "Mock"
 allow_durable_transactions = false

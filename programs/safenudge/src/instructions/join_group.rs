@@ -1,11 +1,13 @@
 use anchor_lang::prelude::*;
+use anchor_lang::solana_program::{system_instruction, system_program};
 use anchor_spl::token_interface::{
     transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked,
 };
+use solana_instructions_sysvar::load_instruction_at_checked;
 
 use crate::errors::SafeNudgeError;
 use crate::events::MemberJoined;
-use crate::state::{GroupConfig, MemberRecord, STATUS_OPEN};
+use crate::state::{GroupConfig, JoinGate, MemberRecord, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct JoinGroup<'info> {
@@ -60,10 +62,45 @@ pub struct JoinGroup<'info> {
 
     pub token_program: Interface<'info, TokenInterface>,
     pub system_program: Program<'info, System>,
+
+    /// CHECK: the seeds pin the address to `["join", group_config]`, and the handler reads it
+    /// only when this program owns it. Only `set_join_authority` can create a program-owned
+    /// account at that address, so a program-owned account here is this group's JoinGate, and
+    /// `try_deserialize` still checks its discriminator. Any other owner means no gate: a wallet
+    /// can send lamports to the address, but cannot make it program-owned.
+    #[account(
+        seeds = [b"join", group_config.key().as_ref()],
+        bump,
+    )]
+    pub join_gate: UncheckedAccount<'info>,
+
+    /// Must sign when the group has a JoinGate. Ignored when it has none.
+    pub join_authority: Option<Signer<'info>>,
+
+    /// CHECK: the address constraint pins this to the instructions sysvar, which the runtime
+    /// writes. The handler reads it only through `load_instruction_at_checked`.
+    #[account(address = solana_instructions_sysvar::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
 }
 
 impl<'info> JoinGroup<'info> {
     pub fn handler(&mut self, bumps: &JoinGroupBumps) -> Result<()> {
+        // ── Checks ──────────────────────────────────────────
+        if self.join_gate.owner == &crate::ID {
+            let gate = JoinGate::try_deserialize(&mut &self.join_gate.try_borrow_data()?[..])?;
+            let approved = self
+                .join_authority
+                .as_ref()
+                .is_some_and(|signer| signer.key() == gate.authority);
+            require!(approved, SafeNudgeError::JoinNotApproved);
+            // Nothing in a join names the group instance, so an approval held open by a durable
+            // nonce could land in a later group at the same code, or again after a leave.
+            require!(
+                !uses_durable_nonce(&self.instructions_sysvar)?,
+                SafeNudgeError::DurableNonceNotAllowed
+            );
+        }
+
         // ── Effects ─────────────────────────────────────────
         let member_record = &mut self.member_record;
         member_record.group = self.group_config.key();
@@ -105,4 +142,12 @@ impl<'info> JoinGroup<'info> {
 
         Ok(())
     }
+}
+
+/// Whether the transaction's first instruction is AdvanceNonceAccount, the runtime's durable nonce marker.
+fn uses_durable_nonce(instructions_sysvar: &AccountInfo) -> Result<bool> {
+    let first = load_instruction_at_checked(0, instructions_sysvar)?;
+    let marker = system_instruction::advance_nonce_account(&Pubkey::default(), &Pubkey::default());
+    // The runtime matches only this prefix, so trailing bytes still make a durable nonce transaction.
+    Ok(first.program_id == system_program::ID && first.data.starts_with(&marker.data))
 }

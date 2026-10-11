@@ -448,7 +448,11 @@
       "RecordRetentionNotElapsed": "It's too early to close this group's records. They are kept for a while after the group ends. Try again later.",
       "UnsupportedMint": "This currency can't be used for groups yet. Pick another one and try again.",
       "MintNotWritable": "We couldn't end the group this time. Refresh the page and try again.",
-      "GroupHasOpenRecords": "Every member's record must be closed before the group can be closed. Try again later."
+      "GroupHasOpenRecords": "Every member's record must be closed before the group can be closed. Try again later.",
+      "GroupHasMembers": "The join approval can only be turned on before anyone joins the group.",
+      "InvalidJoinAuthority": "We couldn't turn on join approval for this group. Refresh the page and try again.",
+      "JoinNotApproved": "This group takes new members only through the app that manages its approvals. You can't join it here.",
+      "DurableNonceNotAllowed": "This group can't accept this join request."
     }
   }
 }

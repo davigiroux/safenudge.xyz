@@ -56,6 +56,32 @@ export type Safenudge = {
             "wallet that signed and paid at create_group, so the caller cannot redirect the rent."
           ],
           "writable": true
+        },
+        {
+          "name": "joinGate",
+          "docs": [
+            "only when this program owns it. Only `set_join_authority` can create a program-owned",
+            "account at that address, and `Account::try_from` still checks its owner and",
+            "discriminator before the close. Any other owner means the group has no gate."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  106,
+                  111,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              }
+            ]
+          }
         }
       ],
       "args": []
@@ -888,6 +914,47 @@ export type Safenudge = {
         {
           "name": "systemProgram",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "joinGate",
+          "docs": [
+            "only when this program owns it. Only `set_join_authority` can create a program-owned",
+            "account at that address, so a program-owned account here is this group's JoinGate, and",
+            "`try_deserialize` still checks its discriminator. Any other owner means no gate: a wallet",
+            "can send lamports to the address, but cannot make it program-owned."
+          ],
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  106,
+                  111,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "joinAuthority",
+          "docs": [
+            "Must sign when the group has a JoinGate. Ignored when it has none."
+          ],
+          "signer": true,
+          "optional": true
+        },
+        {
+          "name": "instructionsSysvar",
+          "docs": [
+            "writes. The handler reads it only through `load_instruction_at_checked`."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
         }
       ],
       "args": []
@@ -1050,6 +1117,91 @@ export type Safenudge = {
       "args": []
     },
     {
+      "name": "setJoinAuthority",
+      "docs": [
+        "Makes every later join_group of an Open, empty group require the signature of",
+        "`authority`. Once per group; there is no instruction to change or remove it."
+      ],
+      "discriminator": [
+        5,
+        217,
+        163,
+        240,
+        141,
+        254,
+        146,
+        212
+      ],
+      "accounts": [
+        {
+          "name": "creator",
+          "signer": true
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "Pays the join_gate rent. Must be the group's recorded rent payer, so close_group can",
+            "return that rent to the same wallet as the GroupConfig rent."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "groupConfig",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  103,
+                  114,
+                  111,
+                  117,
+                  112
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "group_config.group_code",
+                "account": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "joinGate",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  106,
+                  111,
+                  105,
+                  110
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              }
+            ]
+          }
+        },
+        {
+          "name": "systemProgram",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "authority",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "startCycle",
       "discriminator": [
         203,
@@ -1164,6 +1316,19 @@ export type Safenudge = {
         117,
         112,
         50
+      ]
+    },
+    {
+      "name": "joinGate",
+      "discriminator": [
+        115,
+        110,
+        74,
+        111,
+        105,
+        110,
+        71,
+        49
       ]
     },
     {
@@ -1439,6 +1604,26 @@ export type Safenudge = {
       "code": 6027,
       "name": "groupHasOpenRecords",
       "msg": "Close every member record before closing the group"
+    },
+    {
+      "code": 6028,
+      "name": "groupHasMembers",
+      "msg": "The join authority can only be set before anyone joins"
+    },
+    {
+      "code": 6029,
+      "name": "invalidJoinAuthority",
+      "msg": "The join authority cannot be the default public key or the program ID"
+    },
+    {
+      "code": 6030,
+      "name": "joinNotApproved",
+      "msg": "This group needs its join authority to approve the join"
+    },
+    {
+      "code": 6031,
+      "name": "durableNonceNotAllowed",
+      "msg": "A gated join cannot use a durable nonce"
     }
   ],
   "types": [
@@ -1768,6 +1953,28 @@ export type Safenudge = {
               "settlement."
             ],
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "joinGate",
+      "docs": [
+        "Makes `join_group` of one group require the signature of `authority`.",
+        "",
+        "Lives at PDA `[\"join\", group_config]`. `set_join_authority` creates it and `close_group`",
+        "closes it, so it never outlives its group. The address names the group, so the account",
+        "stores only the authority."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "docs": [
+              "Offset 8. Must sign every join_group of the group."
+            ],
+            "type": "pubkey"
           }
         ]
       }

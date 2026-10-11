@@ -448,7 +448,11 @@
       "RecordRetentionNotElapsed": "Ainda é cedo para fechar os registros deste grupo. Eles ficam guardados por um tempo depois do encerramento. Tente de novo mais tarde.",
       "UnsupportedMint": "Essa moeda ainda não pode ser usada em grupos. Escolha outra e tente de novo.",
       "MintNotWritable": "Não conseguimos encerrar o grupo dessa vez. Atualize a página e tente de novo.",
-      "GroupHasOpenRecords": "O grupo só pode ser fechado depois que o registro de cada membro for fechado. Tente de novo mais tarde."
+      "GroupHasOpenRecords": "O grupo só pode ser fechado depois que o registro de cada membro for fechado. Tente de novo mais tarde.",
+      "GroupHasMembers": "A aprovação de entrada só pode ser ligada antes de alguém entrar no grupo.",
+      "InvalidJoinAuthority": "Não conseguimos ligar a aprovação de entrada deste grupo. Atualize a página e tente de novo.",
+      "JoinNotApproved": "Este grupo só aceita novos membros pelo app que cuida das aprovações dele. Por aqui não dá para entrar.",
+      "DurableNonceNotAllowed": "Este grupo não pode aceitar este pedido de entrada."
     }
   }
 }

@@ -108,7 +108,7 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
 | `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator). Rejects unsupported mints | None | — |
-| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member) | Member → Vault | Open |
+| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member). A gated group also needs its join authority's signature | Member → Vault | Open |
 | `leave_group` | The member only | Vault → that member (the first deposit back). Member record rent (SOL) → the wallet that paid it | Open |
 | `start_cycle` | Creator only | None | Open |
 | `deposit` | Members only | Member → Vault | Active |
@@ -117,7 +117,8 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | `withdraw_fees` | Compile-time `FEE_RECIPIENT` only | Treasury → Recipient | — |
 | `refund_vault_rent` | Anyone (permissionless) | Vault rent (SOL) → the wallet that paid it | Completed or Cancelled |
 | `close_member_record` | Anyone (permissionless) | Member record rent (SOL) → the wallet that paid it | Completed or Cancelled, 30 days after settlement |
-| `close_group` | Anyone (permissionless) | Group account rent (SOL) → the wallet that paid it | Completed or Cancelled, every member record closed |
+| `close_group` | Anyone (permissionless) | Group account and join gate rent (SOL) → the wallet that paid it | Completed or Cancelled, every member record closed |
+| `set_join_authority` | Creator only (the group's `rent_payer` signs and pays rent) | None | Open, no member yet |
 
 Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. A member who leaves an open group gets tokens only; the record rent goes back to its payer. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. Once every member record is closed, `close_group` returns the group account rent to its payer too. The group code is then free for a new group.
 

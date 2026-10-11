@@ -74,6 +74,7 @@ export default function JoinGroup() {
             mint: usdcMint,
             tokenProgram: TOKEN_PROGRAM_ID,
             systemProgram: SystemProgram.programId,
+            joinAuthority: null,
           }),
         program,
       ),

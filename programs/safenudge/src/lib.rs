@@ -160,7 +160,13 @@ pub mod safenudge {
         CloseMemberRecord::handler(ctx)
     }
 
-    pub fn close_group(ctx: Context<CloseGroup>) -> Result<()> {
+    pub fn close_group<'info>(ctx: Context<'info, CloseGroup<'info>>) -> Result<()> {
         CloseGroup::handler(ctx)
+    }
+
+    /// Makes every later join_group of an Open, empty group require the signature of
+    /// `authority`. Once per group; there is no instruction to change or remove it.
+    pub fn set_join_authority(ctx: Context<SetJoinAuthority>, authority: Pubkey) -> Result<()> {
+        ctx.accounts.handler(authority)
     }
 }

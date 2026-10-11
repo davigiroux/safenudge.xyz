@@ -103,4 +103,4 @@ Never pass the relay as `creator` or `member`. It is the fee payer and the rent 
 
 ## When the rent rate or the layouts change
 
-`max_allowed_lamports` is the rent of one `create_group` with the creator's `join_group` and one token account: `solana rent` of 179, 165, 166 and 165 bytes, added together. The comment above it in `kora.devnet.toml` shows the sum.
+`max_allowed_lamports` is the rent of one `create_group` with its `JoinGate`, the creator's `join_group` and one token account: `solana rent` of 179, 165, 40, 166 and 165 bytes, added together. The comment above it in `kora.devnet.toml` shows the sum.
