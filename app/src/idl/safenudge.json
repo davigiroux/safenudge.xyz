@@ -942,6 +942,13 @@
           ],
           "signer": true,
           "optional": true
+        },
+        {
+          "name": "instructions_sysvar",
+          "docs": [
+            "writes. The handler reads it only through `load_instruction_at_checked`."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
         }
       ],
       "args": []
@@ -1600,12 +1607,17 @@
     {
       "code": 6029,
       "name": "InvalidJoinAuthority",
-      "msg": "The join authority cannot be the default public key"
+      "msg": "The join authority cannot be the default public key or the program ID"
     },
     {
       "code": 6030,
       "name": "JoinNotApproved",
       "msg": "This group needs its join authority to approve the join"
+    },
+    {
+      "code": 6031,
+      "name": "DurableNonceNotAllowed",
+      "msg": "A gated join cannot use a durable nonce"
     }
   ],
   "types": [

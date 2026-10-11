@@ -451,7 +451,8 @@
       "GroupHasOpenRecords": "O grupo só pode ser fechado depois que o registro de cada membro for fechado. Tente de novo mais tarde.",
       "GroupHasMembers": "A aprovação de entrada só pode ser ligada antes de alguém entrar no grupo.",
       "InvalidJoinAuthority": "Não conseguimos ligar a aprovação de entrada deste grupo. Atualize a página e tente de novo.",
-      "JoinNotApproved": "Este grupo só aceita quem for aprovado por quem o criou. Peça para essa pessoa aprovar sua entrada e tente de novo."
+      "JoinNotApproved": "Este grupo só aceita quem for aprovado por quem o criou. Peça para essa pessoa aprovar sua entrada e tente de novo.",
+      "DurableNonceNotAllowed": "Este grupo só aceita entradas enviadas na hora. Peça uma nova aprovação e tente de novo."
     }
   }
 }

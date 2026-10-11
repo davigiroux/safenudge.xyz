@@ -948,6 +948,13 @@ export type Safenudge = {
           ],
           "signer": true,
           "optional": true
+        },
+        {
+          "name": "instructionsSysvar",
+          "docs": [
+            "writes. The handler reads it only through `load_instruction_at_checked`."
+          ],
+          "address": "Sysvar1nstructions1111111111111111111111111"
         }
       ],
       "args": []
@@ -1606,12 +1613,17 @@ export type Safenudge = {
     {
       "code": 6029,
       "name": "invalidJoinAuthority",
-      "msg": "The join authority cannot be the default public key"
+      "msg": "The join authority cannot be the default public key or the program ID"
     },
     {
       "code": 6030,
       "name": "joinNotApproved",
       "msg": "This group needs its join authority to approve the join"
+    },
+    {
+      "code": 6031,
+      "name": "durableNonceNotAllowed",
+      "msg": "A gated join cannot use a durable nonce"
     }
   ],
   "types": [
