@@ -43,10 +43,12 @@ pub struct SetJoinAuthority<'info> {
 impl<'info> SetJoinAuthority<'info> {
     pub fn handler(&mut self, authority: Pubkey, bumps: &SetJoinAuthorityBumps) -> Result<()> {
         // ── Checks ──────────────────────────────────────────
-        // The default key is the System Program ID, which never signs: such a gate would
-        // block every join, the creator's own included.
+        // Neither key can ever authorize a join, so either would block every join, the
+        // creator's own included. The default key is the System Program ID, which never signs.
+        // Anchor decodes an optional account slot that holds this program's ID as `None`, so
+        // `join_authority` could never be that key.
         require!(
-            authority != Pubkey::default(),
+            authority != Pubkey::default() && authority != crate::ID,
             SafeNudgeError::InvalidJoinAuthority
         );
 
