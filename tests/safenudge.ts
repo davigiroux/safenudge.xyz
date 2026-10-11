@@ -1729,6 +1729,26 @@ describe("safenudge", () => {
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
     });
 
+    it("fails with DurableNonceNotAllowed when the nonce advance carries a trailing data byte", async () => {
+      const { gPda, vPda, authority } = await gatedGroup("gate-nonce-pad");
+      const member = await newJoiner(gPda);
+      const nonce = await createNonceAccount(member.keypair.publicKey);
+      const advance = SystemProgram.nonceAdvance({ noncePubkey: nonce, authorizedPubkey: member.keypair.publicKey });
+      const tx = new Transaction().add(
+        new TransactionInstruction({ ...advance, data: Buffer.concat([advance.data, Buffer.from([0])]) }),
+        await joinMethod(member, gPda, vPda, member.keypair.publicKey, { joinAuthority: authority.publicKey }).instruction(),
+      );
+      tx.feePayer = member.keypair.publicKey;
+      tx.recentBlockhash = nonceValue(nonce);
+      tx.sign(member.keypair, authority);
+      // With the check on, the stored nonce passes as a blockhash only if LiteSVM takes this as a durable nonce transaction.
+      provider.client.withBlockhashCheck(true);
+
+      await expectError(() => submit(tx), "Error Code: DurableNonceNotAllowed. Error Number: 6031.");
+
+      await assertNotJoined(member, gPda, vPda);
+    });
+
     it("lets anyone join a group with no gate in a durable nonce transaction", async () => {
       const { gPda, vPda } = await createWeeklyGroup("open-nonce", { depositAmount: 10_000_000 });
       const member = await newJoiner(gPda);
