@@ -56,4 +56,6 @@ pub enum SafeNudgeError {
     UnsupportedMint,
     #[msg("Mint must be writable to cancel a group with no members whose vault holds tokens")]
     MintNotWritable,
+    #[msg("Close every member record before closing the group")]
+    GroupHasOpenRecords,
 }

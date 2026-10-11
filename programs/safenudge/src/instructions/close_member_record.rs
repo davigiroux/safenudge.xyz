@@ -10,11 +10,13 @@ use crate::state::{
 /// Permissionless. The caller chooses only which record to close. The destination is
 /// `member_record.rent_payer`. Settlement reads every record, so a record must not close while
 /// the group is Open or Active. Completed and Cancelled never revert and `join_group` needs
-/// Open, so a closed record cannot be created again. After settlement the record stays open
-/// for `RECORD_RETENTION_SECS`.
+/// Open, so a closed record cannot be created again in this group. After settlement the record
+/// stays open for `RECORD_RETENTION_SECS`. Each close lowers `group_config.current_members`,
+/// which `close_group` needs at zero before it frees the group code.
 #[derive(Accounts)]
 pub struct CloseMemberRecord<'info> {
     #[account(
+        mut,
         seeds = [b"group", group_config.group_code.as_bytes()],
         bump = group_config.bump,
         constraint = (group_config.status == STATUS_COMPLETED || group_config.status == STATUS_CANCELLED) @ SafeNudgeError::InvalidGroupStatus,
@@ -39,7 +41,12 @@ pub struct CloseMemberRecord<'info> {
 }
 
 impl<'info> CloseMemberRecord<'info> {
-    pub fn handler(_ctx: Context<CloseMemberRecord>) -> Result<()> {
+    pub fn handler(ctx: Context<CloseMemberRecord>) -> Result<()> {
+        let group_config = &mut ctx.accounts.group_config;
+        group_config.current_members = group_config
+            .current_members
+            .checked_sub(1)
+            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
         Ok(())
     }
 }

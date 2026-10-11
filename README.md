@@ -117,8 +117,9 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | `withdraw_fees` | Compile-time `FEE_RECIPIENT` only | Treasury → Recipient | — |
 | `refund_vault_rent` | Anyone (permissionless) | Vault rent (SOL) → the wallet that paid it | Completed or Cancelled |
 | `close_member_record` | Anyone (permissionless) | Member record rent (SOL) → the wallet that paid it | Completed or Cancelled, 30 days after settlement |
+| `close_group` | Anyone (permissionless) | Group account rent (SOL) → the wallet that paid it | Completed or Cancelled, every member record closed |
 
-Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. A member who leaves an open group gets tokens only; the record rent goes back to its payer. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. The group account itself is never closed, so its rent is not returned and its code is never reused.
+Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. A member who leaves an open group gets tokens only; the record rent goes back to its payer. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. Once every member record is closed, `close_group` returns the group account rent to its payer too. The group code is then free for a new group.
 
 ### Tech stack
 

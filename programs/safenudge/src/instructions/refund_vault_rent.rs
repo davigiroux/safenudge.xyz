@@ -7,7 +7,7 @@ use crate::state::{GroupConfig, STATUS_CANCELLED, STATUS_COMPLETED};
 ///
 /// Permissionless. The caller chooses nothing: the destination is `group_config.rent_payer`
 /// and the amount is whatever GroupConfig holds above its own rent-exempt minimum. GroupConfig
-/// keeps that minimum, so it is never closed and its group code stays taken.
+/// keeps that minimum, so it stays open and its group code stays taken until `close_group`.
 #[derive(Accounts)]
 pub struct RefundVaultRent<'info> {
     #[account(

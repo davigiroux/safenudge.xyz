@@ -159,4 +159,8 @@ pub mod safenudge {
     pub fn close_member_record(ctx: Context<CloseMemberRecord>) -> Result<()> {
         CloseMemberRecord::handler(ctx)
     }
+
+    pub fn close_group(ctx: Context<CloseGroup>) -> Result<()> {
+        CloseGroup::handler(ctx)
+    }
 }
