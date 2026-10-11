@@ -256,7 +256,7 @@ STATE MACHINE:
 [ ] Status transitions are one-directional (Open->Active->Completed/Cancelled)
 [ ] Every instruction checks status as first validation
 [ ] No instruction can revert status to a prior state
-[ ] Completed/Cancelled groups cannot accept any further mutations
+[ ] Completed/Cancelled groups accept no token, status or settlement-input mutation (rent closes: `close_member_record` lowers `current_members`, `close_group` closes the group)
 
 FUND SAFETY:
 [ ] No instruction can send vault funds to an arbitrary address
