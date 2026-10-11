@@ -272,9 +272,9 @@ FRONTRUNNING & TIMING:
 [ ] Cycle end time is computed from on-chain state, not passed as argument
 
 ACCESS CONTROL:
-[ ] Only creator can: start_cycle, emergency_cancel
+[ ] Only creator can: start_cycle, emergency_cancel, set_join_authority
 [ ] Only members with valid MemberRecord can: deposit, leave_group (during open period)
-[ ] Anyone can: distribute (after cycle ends), join_group (during open period)
+[ ] Anyone can: distribute (after cycle ends), join_group (during open period; a gated group also needs its join authority's signature)
 [ ] No instruction has unrestricted admin powers over funds
 ```
 
@@ -496,6 +496,7 @@ Decisions that affect security or architecture. Do not change without explicit d
 | `leave_group` lets a member exit an Open group with no creator action; record rent returns to the recorded rent payer, never to the member. `emergency_cancel` of a group with no members burns any balance in the vault. `leave_group` pays any token account the member owns for the mint, as settlement does. A frozen member token account still blocks settlement through the app in v1 | An abandoned Open group no longer locks first deposits (issue #70 case 1). Burn was chosen over a transfer to the treasury because the treasury account needs `init_treasury` by another party, and over leaving the vault open because the vault rent would stay locked (case 3). The frozen-account case needs a per-member claim path, which is designed with the v2 two-phase settlement in issue #56 (case 2) | Oct 2026 |
 | `create_group` rejects the native mints and any Token-2022 mint with an extension outside `MetadataPointer`, `TokenMetadata`, `InterestBearingConfig` (`UnsupportedMint`). A freeze authority stays allowed | The program pays back the recorded deposit, which is only correct when a transfer delivers what it sends. A transfer-fee mint left the last leaver unpaid, and a native vault could not be burned. An allowlist fails closed for extensions added to Token-2022 later. The three allowed types are the shape of the BRL treasury token the product may use; USDC needs the freeze authority | Oct 2026 |
 | `close_group` closes a settled `GroupConfig` to its recorded `rent_payer` once `current_members` is zero; `close_member_record` now decrements `current_members`, so the field counts open member records for the whole life of a group. Supersedes the "`GroupConfig` stays open" part of the Oct 2026 rent-payer row | `GroupConfig` rent was lost on every group, and SafePool pays it every cycle. The count proves no record is left, so a new group at the same code inherits none. Reusing `current_members` avoids a layout change and the settle-every-group upgrade. Records closed under the previous binary leave the count too high, so those groups stay open (fails closed). Accepted: a freed code can be created again by anyone, and the new group has the same addresses. See [ADR-0002](./docs/adr/0002-close-groupconfig-after-settlement.md) | Oct 2026 |
+| Optional join gate: `JoinGate` at `["join", group_config]`, created once by `set_join_authority` (creator and recorded rent payer, Open, no member), required by `join_group` when it exists, closed by `close_group`. One account type per group type: a yield group gets its own account and instructions, never a mode field in `GroupConfig` | A code alone let anyone join, and a backend co-sign alone did not stop a wallet that pays its own rent. A separate account adds the gate with no layout change, so no live group has to settle. Group data, such as emails or approvals, stays off chain; the program only checks a signature. Per-type accounts keep the simple instructions and the "vault funds go only to members" rule unchanged when yield arrives. Accepted: a gate sent apart from `create_group` can lose a race to a join, and no instruction revokes an authority. See [ADR-0003](./docs/adr/0003-join-gate-and-group-types.md) | Oct 2026 |
 
 ---
 
