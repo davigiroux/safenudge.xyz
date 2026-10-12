@@ -5698,6 +5698,62 @@ describe("safenudge", () => {
 
       assert.deepEqual(events, [{ name: "feesWithdrawn", data: { recipient: FEE_RECIPIENT.toBase58(), mint: usdcMint.toBase58(), amount: 100_000n } }]);
     });
+
+    it("test_set_join_authority_open_group_emits_join_authority_set", async () => {
+      const sponsor = await fundedKeypair();
+      const authority = Keypair.generate().publicKey;
+      const { gPda } = await createWeeklyGroup("ev-gate", { depositAmount: DEPOSIT }, sponsor);
+
+      const events = await eventsOf(setJoinAuthorityMethod(gPda, authority, payer.publicKey, sponsor.publicKey), [sponsor]);
+
+      assert.deepEqual(events, [{
+        name: "joinAuthoritySet",
+        data: { group: gPda.toBase58(), creator: payer.publicKey.toBase58(), authority: authority.toBase58() },
+      }]);
+    });
+
+    it("test_close_group_ungated_unrefunded_emits_group_closed_with_vault_rent_and_no_gate", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, vPda } = await createWeeklyGroup("ev-close", { depositAmount: DEPOSIT }, sponsor);
+      await cancelCall(gPda, vPda, []);
+
+      const events = await eventsOf(closeGroupMethod(gPda, sponsor.publicKey));
+
+      assert.deepEqual(events, [{
+        name: "groupClosed",
+        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 4_176_000n, joinGateLamports: 0n },
+      }]);
+    });
+
+    it("test_close_group_gated_emits_group_closed_with_gate_rent_apart", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, vPda } = await createWeeklyGroup("ev-close-gated", { depositAmount: DEPOSIT }, sponsor);
+      await setJoinAuthorityCall(gPda, Keypair.generate().publicKey, sponsor);
+      await cancelCall(gPda, vPda, []);
+      await refundVaultRentMethod(gPda, sponsor.publicKey).rpc();
+
+      const events = await eventsOf(closeGroupMethod(gPda, sponsor.publicKey));
+
+      assert.deepEqual(events, [{
+        name: "groupClosed",
+        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 2_136_720n, joinGateLamports: 1_169_280n },
+      }]);
+    });
+
+    it("test_close_group_with_open_record_fails_and_emits_no_group_closed", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda } = await settledGroup("ev-close-open", "distribute", sponsor);
+      let logs: string[] = [];
+
+      try {
+        sendAs(payer, [await closeGroupMethod(gPda, sponsor.publicKey).instruction()]);
+      } catch (e: any) {
+        logs = e.logs;
+      }
+
+      assert.include(logs.join("\n"), "GroupHasOpenRecords");
+      assert.deepEqual(decodeEvents(logs), []);
+    });
   });
 
   describe("integration", () => {
