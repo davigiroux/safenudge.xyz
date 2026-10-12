@@ -21,7 +21,7 @@ This directory holds the relay config only. The web app calls the relay when `VI
 | More than 50 transactions for one `user_id` in an hour | rejected (read from source, not run) |
 | No API key, when `KORA_API_KEY` is set | HTTP 401 |
 
-Relay cost per action at the current rent rate: `join_group` 1,493,520 lamports (returned by `close_member_record` 30 days after settlement, or at once by `leave_group`), `create_group` 3,048,000 (the vault half returns through `refund_vault_rent`, the GroupConfig half never does), everything else is the transaction fee.
+Relay cost per action at the current rent rate: `join_group` 1,493,520 lamports (returned by `close_member_record` 30 days after settlement, or at once by `leave_group`), `create_group` 3,048,000 (the vault half returns through `refund_vault_rent`, the GroupConfig half through `close_group` once every member record is closed), everything else is the transaction fee.
 
 ## Not for mainnet
 

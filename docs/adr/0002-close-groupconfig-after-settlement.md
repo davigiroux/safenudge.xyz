@@ -14,6 +14,12 @@ accept any record the old group left behind. The cost was the rent of
 second consumer of this program, starts a new group every cycle, so it
 pays that rent again each cycle.
 
+> Correction, 2026-10-11: 2,136,720 used 6,960 lamports per byte. The
+> live rate is 5,080 per byte, so 179 bytes cost 1,559,560 lamports
+> (`getMinimumBalanceForRentExemption(179)` on devnet and mainnet). The
+> program reads rent from the `Rent` sysvar, and the decision does not
+> depend on the figure.
+
 ## Decision
 
 - `current_members` counts the open member records of a group for its

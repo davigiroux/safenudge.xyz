@@ -560,8 +560,10 @@ Closes the `GroupConfig` of a settled group that has no member record left, and 
 - `rent_payer.key() == group_config.rent_payer` (`InvalidRentPayer`), a raw `constraint` for the same reason as in `refund_vault_rent`
 
 **Effects:**
-- Transfers all lamports of `group_config` to `rent_payer` and closes the account. That includes the vault rent that settlement moved into it, when `refund_vault_rent` was not sent first: 4,176,000 lamports in total at today's rent rate
-- When this program owns `join_gate`, closes that `JoinGate` to `rent_payer` too (1,169,280 lamports). See "Gate inherited at a freed code" under Security
+- Transfers all lamports of `group_config` to `rent_payer` and closes the account. That includes the vault rent that settlement moved into it, when `refund_vault_rent` was not sent first: 3,048,000 lamports in total (1,559,560 for 179 bytes plus 1,488,440 for the 165-byte vault)
+- When this program owns `join_gate`, closes that `JoinGate` to `rent_payer` too (853,440 lamports for 40 bytes). See "Gate inherited at a freed code" under Security
+
+The lamport figures above come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-11. The program reads rent from the `Rent` sysvar at runtime, so the figures are examples only.
 
 `current_members` counts open member records for the whole life of a group: `join_group` adds one, and `leave_group` and `close_member_record` subtract one. No other instruction creates or closes a record. So zero proves that no record of this group exists, and a later `create_group` with the same code, which derives the same `GroupConfig` address and so the same `["member", group_config, member]` addresses, finds nothing to inherit. A new instruction that creates or closes a member record must change `current_members` in the same instruction.
 
@@ -923,6 +925,13 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 `close_group` also changes no layout, so it needs no settlement of live groups. For a client: `close_member_record` now writes `group_config`, so the account must be writable; `close_group` is a new instruction; and `GroupHasOpenRecords` (6027) is a new error code. A group whose records were closed under the previous binary can never be closed (see `close_group`).
 
 The join gate changes no layout of an existing account either. `JoinGate` is a new account. For a client: `join_group` takes three more accounts after `system_program`, `join_gate`, the optional signer `join_authority` and `instructions_sysvar`, so earlier positions do not move; `close_group` takes `join_gate` after `rent_payer`; `set_join_authority` is new; and `GroupHasMembers` (6028), `InvalidJoinAuthority` (6029), `JoinNotApproved` (6030) and `DurableNonceNotAllowed` (6031) are new error codes. An Anchor client derives `join_gate` from the IDL seeds and fills `instructions_sysvar` from its fixed address. It fills an omitted optional signer with the provider wallet, so a client must pass `joinAuthority: null` for an open group, or the authority for a gated one.
+
+Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
+
+1. Copy the new `target/idl/safenudge.json` into the Microscope deployment.
+2. Run `just generate`, rebuild the image, and run `just up`. The indexer does not start against a mismatched IDL hash, so a skipped step stops the indexer.
+3. Do not backfill again across a layout change. A backfill decodes old records with the new IDL.
+4. Expect a Squads alert for every step of the upgrade. An upgrade with no alert means that monitoring is broken.
 
 ### Testing Strategy
 
