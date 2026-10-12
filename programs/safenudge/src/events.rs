@@ -105,3 +105,22 @@ pub struct FeesWithdrawn {
     pub mint: Pubkey,
     pub amount: u64,
 }
+
+/// The creator required a join authority signature on every later join.
+#[event]
+pub struct JoinAuthoritySet {
+    pub group: Pubkey,
+    pub creator: Pubkey,
+    pub authority: Pubkey,
+}
+
+/// `close_group` closed a settled group and paid its rent to the rent payer.
+#[event]
+pub struct GroupClosed {
+    pub group: Pubkey,
+    pub rent_payer: Pubkey,
+    /// GroupConfig lamports, the vault rent included when `refund_vault_rent` never ran.
+    pub lamports: u64,
+    /// JoinGate lamports. Zero when the group has no gate.
+    pub join_gate_lamports: u64,
+}
