@@ -7,7 +7,7 @@
 
 [kora]
 rate_limit = 100
-cors_allow_origins = ["https://safenudge.xyz", "http://localhost:5173"]
+cors_allow_origins = ["https://safenudge.xyz", "http://localhost:5173", "https://app.safepool.io", "http://localhost:8081"]
 
 # Authentication is on when KORA_API_KEY is set in the environment. Do not put
 # a key in this file.
