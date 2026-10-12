@@ -4,6 +4,9 @@ import { PublicKey } from "@solana/web3.js";
 import { Cluster, DEFAULT_FAILURES_BEFORE_ALERT, escapeHtml } from "./core";
 
 export const DEVNET_PROGRAM_ID = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc";
+// Upper bounds: a larger value would let a long RPC outage, or a long-unsettled group, pass with no alert.
+const MAX_FAILURES_BEFORE_ALERT = 6;
+const MAX_GRACE_HOURS = 168;
 export const DEFAULT_STATE_PATH = "/var/lib/safenudge-watchdog/state.json";
 
 export interface Config {
@@ -40,11 +43,13 @@ export function parseConfig(argv: string[], env: NodeJS.ProcessEnv): ConfigResul
   if (cluster !== "devnet" && cluster !== "mainnet") errors.push("CLUSTER must be devnet or mainnet");
 
   const graceHours = Number(env.GRACE_HOURS ?? "24");
-  if (!Number.isInteger(graceHours) || graceHours < 0) errors.push("GRACE_HOURS must be a whole number");
+  if (!Number.isInteger(graceHours) || graceHours < 0 || graceHours > MAX_GRACE_HOURS) {
+    errors.push(`GRACE_HOURS must be a whole number from 0 to ${MAX_GRACE_HOURS}`);
+  }
 
   const failuresBeforeAlert = Number(env.RPC_FAILURES_BEFORE_ALERT ?? String(DEFAULT_FAILURES_BEFORE_ALERT));
-  if (!Number.isInteger(failuresBeforeAlert) || failuresBeforeAlert < 1) {
-    errors.push("RPC_FAILURES_BEFORE_ALERT must be a whole number of at least 1");
+  if (!Number.isInteger(failuresBeforeAlert) || failuresBeforeAlert < 1 || failuresBeforeAlert > MAX_FAILURES_BEFORE_ALERT) {
+    errors.push(`RPC_FAILURES_BEFORE_ALERT must be a whole number from 1 to ${MAX_FAILURES_BEFORE_ALERT}`);
   }
 
   const token = env.TELEGRAM_BOT_TOKEN;
