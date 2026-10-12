@@ -38,6 +38,16 @@ RPC polling ──────┘   decoder built from  └─> stdout JSON ─>
   | `multisig_activity` | `action` (for example `proposal_created`), `squads_version`, `data`, `failed` |
   | `event_decode_failure` | `rejected` (count), `source`, `instruction`, `signature` |
 
+  The instruction and event paths were checked against real devnet records on 2026-10-11. A `create_group` produced both records below (addresses shortened). An instruction with no arguments, such as `emergency_cancel`, has `data.data = {}`.
+
+  ```json
+  {"kind":"program_instruction","name":"create_group","failed":false,
+   "data":{"accounts":{"creator":"…","group_config":"…","mint":"…","rent_payer":"…","vault":"…"},
+           "data":{"group_code":"…","deposit_amount":1000000,"frequency":0,"total_periods":4,"max_members":3,"penalty_type":0,"penalty_value":100000}}}
+  {"kind":"program_event","name":"group_created","instruction":"create_group","source":"log","failed":false,
+   "data":{"group":"…","creator":"…","rent_payer":"…","mint":"…","deposit_amount":1000000,"total_periods":4,"max_members":3}}
+  ```
+
 - **Alerts** are generated from `[[alerts]]` in `microscope.toml` into Grafana rules (LogQL over Loki). A rule fires when at least one matching record exists in the lookback window. Conditions use JSON paths and the operators `exists`, `contains`, `eq`, `ne`, `gt`, `gte`, `lt`, `lte`. Numbers compare as float64, so integer values above 2^53 are rejected; USDC amounts are far below that.
 - **Failed transactions** are recorded with `failed: true` for instructions and events. Multisig alerts never fire on failed Squads instructions.
 - **CPI calls** are decoded too (`stack_height` > 1), so a SafeNudge instruction invoked from another program still shows up.
@@ -196,17 +206,44 @@ Alert names are checked against the IDL at startup: an event alert for an event 
 
 | Phase | Where | Datasource | Notes |
 | --- | --- | --- | --- |
-| Trial | Local Docker Compose | RPC polling, devnet | Instruction alerts only. Confirm field paths (`data.data.<arg>`, `data.accounts.<name>`) against real records before writing more conditions. |
+| Trial (done, 2026-10-11) | Local Docker Compose | RPC polling, devnet | Field paths confirmed (§2). A `create_group` and an `emergency_cancel` each reached Telegram within about a minute. A `group_cancelled` with `burned = 0` did not fire, as configured. |
+| Grafana Cloud trial | Indexer and Alloy local, Grafana Cloud for storage, dashboards and alerts | Same | Same alerts, now readable from a phone. See §5.1. |
 | Squad rehearsal | Same | Same | Add `[multisig]` for the devnet Squad when ADR-0001's devnet rehearsal starts; every step of the rehearsal must produce the expected alert. |
-| Mainnet | AWS or GCP via Microscope's Terraform | Yellowstone + `RPC_URL` gap recovery | About $50/month for the VM (2 vCPU, 4 GiB, 40 GiB); the gRPC endpoint usually costs more. Must be running and proven before upgrade authority moves to the mainnet Squad. |
+| Mainnet | Small VM (AWS or GCP) running the indexer and Alloy, pushing to Grafana Cloud | Yellowstone + `RPC_URL` gap recovery | The VM runs no Grafana, Loki or Prometheus, so it can be smaller than the 2 vCPU / 4 GiB the full stack needs. Must be running and proven before upgrade authority moves to the mainnet Squad. |
 
 Operational notes:
 
-- Grafana, Prometheus and the indexer bind to `127.0.0.1`; reach them through an SSH or SSM tunnel. Do not publish ports.
-- `just up` regenerates alert rules and recreates Grafana. Plain `docker compose up` on a running stack keeps the old rules.
+- In local mode, Grafana, Prometheus and the indexer bind to `127.0.0.1`; reach them through an SSH or SSM tunnel. Do not publish ports. Alert links point at `localhost` and do not open on a phone.
+- `just up` regenerates alert rules and recreates Grafana. Plain `docker compose up` on a running stack keeps the old rules. In local mode it can also drop a notification template copied into the alerting volume.
 - Activity alerts use `noDataState = OK`: if Loki is down, activity alerts do not fire. The stack provisions its own health alerts (stale datasource, poll failures, Alloy delivery); keep those routed to the same channel.
 - Secrets are in `.env` and, for Terraform deployments, in Terraform state. Treat the state bucket as secret.
 - Backfill (`just backfill 7d`) writes history into Loki with original timestamps and does not fire alerts.
+
+### 5.1 Grafana Cloud
+
+Microscope's cloud overlay (`docker-compose.cloud.yml`) runs only the indexer and Alloy. Alloy pushes records and metrics to a Grafana Cloud stack, and dashboards, alert rules and the Telegram contact point live there.
+
+- **Separate stack for SafeNudge.** Grafana Cloud does not bind a write token to a deployment label, so any write token for a stack can write under any deployment name. A separate stack keeps another project's leaked token away from our alerts.
+- **Two tokens.** The VM holds an access policy token with only `logs:write` and `metrics:write`. Rules, contact points and templates are pushed from a workstation with a service account token, which never goes on the VM.
+- **Provisioning.** `scripts/export-grafana-cloud.sh <deployment> <folder-uid>` writes the dashboard, rules, contact points and routes. Push contact points before rules. Rule UIDs are derived from content, so an edited alert gets a new UID; run the `DELETE` calls the script prints, or the old rule keeps firing.
+
+### 5.2 Alert messages
+
+Microscope's Telegram contact point sets no message, so Grafana sends its default text: every label, a silence link and dashboard links. We add a notification template that redefines `default.message`:
+
+```
+{{ define "sn.icon" }}{{ if eq .Labels.severity "critical" }}🚨{{ else if eq .Labels.severity "error" }}🔴{{ else if eq .Labels.severity "warning" }}🟠{{ else }}🔵{{ end }}{{ end }}
+{{ define "default.message" }}{{ range .Alerts.Firing }}{{ template "sn.icon" . }} <b>{{ or .Labels.signal_name .Labels.alertname }}</b> · {{ .Labels.severity }}
+{{ .Annotations.description }}{{ with .Labels.signature }}
+<a href="{{ reReplaceAll "^\\S+ " "" $.CommonAnnotations.transaction }}">Open transaction</a>{{ end }}
+{{ end }}{{ range .Alerts.Resolved }}✓ cleared: {{ or .Labels.signal_name .Labels.alertname }}
+{{ end }}{{ end }}
+```
+
+Known limits, all in Microscope's generator:
+
+- **Resolved messages.** Every activity alert sends a second message when its lookback window ends, because the contact point has `disableResolveMessage: false`. A one-time event has nothing to resolve; health alerts do. The template shortens the second message but cannot stop it.
+- **No business fields.** Alert labels carry the rule name and the signature, not record fields such as `data.group` or `data.refunded_total`. The message links to the transaction; the amounts are in Loki.
 
 ## 6. When the program changes
 
@@ -234,3 +271,4 @@ The script also sends one message per day saying all checks passed. A missing da
 
 - Alert channel: Telegram only. PagerDuty can be added per rule later without changing anything else.
 - Recipients: the maintainer's Telegram. Chat IDs and bot tokens live only in `.env` on the deployment host.
+- Dashboards and alert evaluation: Grafana Cloud, in a stack used only by SafeNudge (§5.1). It gives dashboards and working alert links on a phone without publishing a port, and no Grafana to patch on the VM.
