@@ -3,14 +3,17 @@ import {
   CheckResult,
   EMPTY_STATE,
   Group,
+  STATE_RESET_RESULT,
   State,
   decodeGroup,
   evaluateAuthority,
   evaluateGroups,
   parseProgramAccount,
   parseProgramDataAuthority,
+  parseState,
   step,
 } from "../ops/watchdog/core";
+import { configAlert, parseConfig } from "../ops/watchdog/config";
 
 const SQUAD = "So11111111111111111111111111111111111111112";
 const OTHER = "11111111111111111111111111111111";
@@ -135,11 +138,11 @@ describe("watchdog", () => {
     it("test_first_run_all_clear_sends_only_heartbeat", () => {
       const { messages, next } = step(EMPTY_STATE, ok, t0);
       expect(messages).to.deep.equal(["💚 SafeNudge watchdog 2026-10-12: all checks passed."]);
-      expect(next).to.deep.equal({ open: {}, lastHeartbeatDay: "2026-10-12" });
+      expect(next).to.deep.equal({ open: {}, lastHeartbeatDay: "2026-10-12", failures: {} });
     });
 
     it("test_new_finding_sent_once_then_silent", () => {
-      const prev: State = { open: {}, lastHeartbeatDay: "2026-10-12" };
+      const prev: State = { open: {}, lastHeartbeatDay: "2026-10-12", failures: {} };
       const first = step(prev, bad, t0);
       expect(first.messages).to.deep.equal(["🚨 <b>upgrade-authority</b> · critical\nchanged"]);
       const second = step(first.next, bad, t1);
@@ -148,26 +151,156 @@ describe("watchdog", () => {
     });
 
     it("test_cleared_finding_sends_resolved", () => {
-      const open = step({ open: {}, lastHeartbeatDay: "2026-10-12" }, bad, t0).next;
+      const open = step({ open: {}, lastHeartbeatDay: "2026-10-12", failures: {} }, bad, t0).next;
       const { messages, next } = step(open, ok, t1);
       expect(messages).to.deep.equal(["✓ resolved: <b>upgrade-authority</b>"]);
       expect(next.open).to.deep.equal({});
     });
 
     it("test_heartbeat_once_per_utc_day_lists_open_findings", () => {
-      const open = step({ open: {}, lastHeartbeatDay: "2026-10-12" }, bad, t0).next;
+      const open = step({ open: {}, lastHeartbeatDay: "2026-10-12", failures: {} }, bad, t0).next;
       const { messages, next } = step(open, bad, nextDay);
       expect(messages).to.deep.equal(["🟠 SafeNudge watchdog 2026-10-13: 1 open finding(s):\n• upgrade-authority"]);
       expect(step(next, bad, new Date("2026-10-13T00:15:00Z")).messages).to.deep.equal([]);
     });
 
-    it("test_failed_check_keeps_its_findings_open_and_reports_rpc_error", () => {
-      const open = step({ open: {}, lastHeartbeatDay: "2026-10-12" }, bad, t0).next;
-      const { messages, next } = step(open, [{ check: "upgrade-authority", error: "fetch failed" }], t1);
-      expect(messages).to.deep.equal(["🔴 <b>rpc:upgrade-authority</b> · error\nCheck upgrade-authority failed: fetch failed"]);
-      expect(Object.keys(next.open).sort()).to.deep.equal(["rpc:upgrade-authority", "upgrade-authority"]);
-      const recovered = step(next, bad, new Date("2026-10-12T10:20:00Z"));
+    const failedRun: CheckResult[] = [{ check: "upgrade-authority", error: "fetch failed" }];
+    const rpcOpened = "🔴 <b>rpc:upgrade-authority</b> · error\nCheck upgrade-authority failed: fetch failed";
+
+    it("test_one_failed_run_sends_nothing_and_keeps_prior_findings", () => {
+      const open = step({ open: {}, lastHeartbeatDay: "2026-10-12", failures: {} }, bad, t0).next;
+      const { messages, next } = step(open, failedRun, t1);
+      expect(messages).to.deep.equal([]);
+      expect(next.open).to.deep.equal(open.open);
+      expect(next.failures).to.deep.equal({ "upgrade-authority": 1 });
+    });
+
+    it("test_second_consecutive_failure_opens_rpc_finding_then_resolves", () => {
+      const open = step({ open: {}, lastHeartbeatDay: "2026-10-12", failures: {} }, bad, t0).next;
+      const once = step(open, failedRun, t1).next;
+      const twice = step(once, failedRun, new Date("2026-10-12T10:20:00Z"));
+      expect(twice.messages).to.deep.equal([rpcOpened]);
+      expect(Object.keys(twice.next.open).sort()).to.deep.equal(["rpc:upgrade-authority", "upgrade-authority"]);
+      expect(twice.next.failures).to.deep.equal({ "upgrade-authority": 2 });
+      const recovered = step(twice.next, bad, new Date("2026-10-12T10:30:00Z"));
       expect(recovered.messages).to.deep.equal(["✓ resolved: <b>rpc:upgrade-authority</b>"]);
+      expect(recovered.next.failures).to.deep.equal({});
+    });
+
+    it("test_success_between_failures_resets_the_count", () => {
+      const prev: State = { open: {}, lastHeartbeatDay: "2026-10-12", failures: {} };
+      const failedOnce = step(prev, failedRun, t0).next;
+      const passed = step(failedOnce, ok, t1).next;
+      expect(passed.failures).to.deep.equal({});
+      const failedAgain = step(passed, failedRun, new Date("2026-10-12T10:20:00Z"));
+      expect(failedAgain.messages).to.deep.equal([]);
+      expect(failedAgain.next.failures).to.deep.equal({ "upgrade-authority": 1 });
+    });
+
+    it("test_threshold_of_one_opens_rpc_finding_on_first_failure", () => {
+      const prev: State = { open: {}, lastHeartbeatDay: "2026-10-12", failures: {} };
+      expect(step(prev, failedRun, t0, 1).messages).to.deep.equal([rpcOpened]);
+    });
+
+    it("test_real_finding_opens_on_first_run_despite_threshold", () => {
+      const prev: State = { open: {}, lastHeartbeatDay: "2026-10-12", failures: {} };
+      expect(step(prev, bad, t0, 5).messages).to.deep.equal(["🚨 <b>upgrade-authority</b> · critical\nchanged"]);
+    });
+
+    it("test_state_reset_finding_opens_then_resolves", () => {
+      const prev: State = { open: {}, lastHeartbeatDay: "2026-10-12", failures: {} };
+      const resetRun = step(prev, [...ok, STATE_RESET_RESULT], t0);
+      expect(resetRun.messages).to.deep.equal([
+        "🔴 <b>state-reset</b> · error\nThe state file was unreadable and was reset. Open findings and failure counts from earlier runs are lost.",
+      ]);
+      expect(step(resetRun.next, ok, t1).messages).to.deep.equal(["✓ resolved: <b>state-reset</b>"]);
+    });
+  });
+
+  describe("state file", () => {
+    const openFinding = { key: "upgrade-authority", severity: "critical", text: "changed", check: "upgrade-authority", since: "2026-10-12T10:00:00.000Z" };
+
+    it("test_state_without_failures_field_loads", () => {
+      const text = JSON.stringify({ open: { "upgrade-authority": openFinding }, lastHeartbeatDay: "2026-10-12" });
+      expect(parseState(text)).to.deep.equal({
+        state: { open: { "upgrade-authority": openFinding }, lastHeartbeatDay: "2026-10-12", failures: {} },
+        reset: false,
+      });
+    });
+
+    it("test_state_with_failures_round_trips", () => {
+      const state = { open: {}, lastHeartbeatDay: null, failures: { "unsettled-groups": 1 } };
+      expect(parseState(JSON.stringify(state))).to.deep.equal({ state, reset: false });
+    });
+
+    it("test_corrupt_or_wrong_shape_state_resets", () => {
+      const reset = { state: { open: {}, lastHeartbeatDay: null, failures: {} }, reset: true };
+      expect(parseState("{\"open\": {")).to.deep.equal(reset);
+      expect(parseState("[]")).to.deep.equal(reset);
+      expect(parseState(JSON.stringify({ open: { k: { key: "k" } }, lastHeartbeatDay: null }))).to.deep.equal(reset);
+      expect(parseState(JSON.stringify({ open: {}, lastHeartbeatDay: 5 }))).to.deep.equal(reset);
+      expect(parseState(JSON.stringify({ open: {}, lastHeartbeatDay: null, failures: { a: -1 } }))).to.deep.equal(reset);
+    });
+  });
+
+  describe("config", () => {
+    const valid = {
+      RPC_URL: "https://rpc.example/?api-key=secret",
+      EXPECTED_UPGRADE_AUTHORITY: SQUAD,
+      TELEGRAM_BOT_TOKEN: "token",
+      TELEGRAM_CHAT_ID: "42",
+    };
+
+    it("test_valid_config_uses_defaults", () => {
+      const result = parseConfig([], valid);
+      if (!("config" in result)) throw new Error(`unexpected errors: ${result.errors.join("; ")}`);
+      expect(result.config.programId.toBase58()).to.equal("GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc");
+      expect(result.config.failuresBeforeAlert).to.equal(2);
+      expect(result.config.graceSecs).to.equal(86_400n);
+      expect(result.config.cluster).to.equal("devnet");
+    });
+
+    it("test_invalid_config_lists_every_variable_without_values", () => {
+      const result = parseConfig([], {
+        RPC_URL: "not a url secret",
+        PROGRAM_ID: "bad-id",
+        EXPECTED_UPGRADE_AUTHORITY: "bad-authority",
+        CLUSTER: "testnet",
+        GRACE_HOURS: "1.5",
+        RPC_FAILURES_BEFORE_ALERT: "0",
+      });
+      expect(result).to.deep.equal({
+        errors: [
+          "RPC_URL is not an http(s) URL",
+          "PROGRAM_ID is not a valid address",
+          "EXPECTED_UPGRADE_AUTHORITY is not a valid address",
+          "CLUSTER must be devnet or mainnet",
+          "GRACE_HOURS must be a whole number",
+          "RPC_FAILURES_BEFORE_ALERT must be a whole number of at least 1",
+          "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run",
+        ],
+      });
+    });
+
+    it("test_missing_required_variables_in_dry_run", () => {
+      expect(parseConfig(["--dry-run"], {})).to.deep.equal({
+        errors: ["RPC_URL is not set", "EXPECTED_UPGRADE_AUTHORITY is not set"],
+      });
+    });
+
+    it("test_config_alert_sent_once_per_day_per_text", () => {
+      const first = configAlert(["PROGRAM_ID is not a valid address"], null, new Date("2026-10-12T10:00:00Z"));
+      expect(first).to.deep.equal({
+        text: "🔴 watchdog config invalid: PROGRAM_ID is not a valid address",
+        marker: "2026-10-12 🔴 watchdog config invalid: PROGRAM_ID is not a valid address",
+      });
+      expect(configAlert(["PROGRAM_ID is not a valid address"], first.marker, new Date("2026-10-12T23:50:00Z"))).to.equal(null);
+      expect(configAlert(["PROGRAM_ID is not a valid address"], first.marker, new Date("2026-10-13T00:00:00Z"))?.marker).to.equal(
+        "2026-10-13 🔴 watchdog config invalid: PROGRAM_ID is not a valid address",
+      );
+      expect(configAlert(["CLUSTER must be devnet or mainnet"], first.marker, new Date("2026-10-12T11:00:00Z"))?.text).to.equal(
+        "🔴 watchdog config invalid: CLUSTER must be devnet or mainnet",
+      );
     });
   });
 });
