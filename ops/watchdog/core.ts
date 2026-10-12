@@ -20,9 +20,62 @@ export interface OpenFinding extends Finding {
 export interface State {
   open: Record<string, OpenFinding>;
   lastHeartbeatDay: string | null;
+  /** Consecutive failed runs per check; a check with no entry passed its last run. */
+  failures: Record<string, number>;
 }
 
-export const EMPTY_STATE: State = { open: {}, lastHeartbeatDay: null };
+export const EMPTY_STATE: State = { open: {}, lastHeartbeatDay: null, failures: {} };
+
+export const DEFAULT_FAILURES_BEFORE_ALERT = 2;
+
+/** Result that opens `state-reset` for the run that replaced an unreadable state file. */
+export const STATE_RESET_RESULT: CheckResult = {
+  check: "state",
+  findings: [
+    {
+      key: "state-reset",
+      severity: "error",
+      text: "The state file was unreadable and was reset. Open findings and failure counts from earlier runs are lost.",
+    },
+  ],
+};
+
+/** Parses the state file; an unreadable or wrongly shaped file gives an empty state and `reset`. */
+export function parseState(text: string): { state: State; reset: boolean } {
+  const resetResult = { state: EMPTY_STATE, reset: true };
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return resetResult;
+  }
+  if (!isRecord(raw) || !isRecord(raw.open) || !Object.values(raw.open).every(isOpenFinding)) return resetResult;
+  if (raw.lastHeartbeatDay !== null && typeof raw.lastHeartbeatDay !== "string") return resetResult;
+  const failures = raw.failures ?? {};
+  if (!isRecord(failures) || !Object.values(failures).every((n) => Number.isInteger(n) && (n as number) > 0)) {
+    return resetResult;
+  }
+  return {
+    state: {
+      open: raw.open as Record<string, OpenFinding>,
+      lastHeartbeatDay: raw.lastHeartbeatDay as string | null,
+      failures: failures as Record<string, number>,
+    },
+    reset: false,
+  };
+}
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isOpenFinding(v: unknown): boolean {
+  return (
+    isRecord(v) &&
+    (v.severity === "critical" || v.severity === "error") &&
+    [v.key, v.text, v.check, v.since].every((s) => typeof s === "string")
+  );
+}
 
 export type Cluster = "devnet" | "mainnet";
 
@@ -139,12 +192,19 @@ const ICON: Record<Severity, string> = { critical: "🚨", error: "🔴" };
 
 /**
  * Next state and the messages to send for one run. A check that errored keeps its previous
- * findings open, because its result is unknown, and opens an `rpc:<check>` finding.
+ * findings open, because its result is unknown, and opens an `rpc:<check>` finding once it
+ * failed `failuresBeforeAlert` runs in a row.
  */
-export function step(prev: State, results: CheckResult[], now: Date): { messages: string[]; next: State } {
+export function step(
+  prev: State,
+  results: CheckResult[],
+  now: Date,
+  failuresBeforeAlert = DEFAULT_FAILURES_BEFORE_ALERT,
+): { messages: string[]; next: State } {
   const nowIso = now.toISOString();
   const today = nowIso.slice(0, 10);
   const open: Record<string, OpenFinding> = {};
+  const failures: Record<string, number> = {};
 
   for (const result of results) {
     let findings: Finding[];
@@ -152,7 +212,11 @@ export function step(prev: State, results: CheckResult[], now: Date): { messages
       for (const [key, f] of Object.entries(prev.open)) {
         if (f.check === result.check) open[key] = f;
       }
-      findings = [{ key: rpcKey(result.check), severity: "error", text: `Check ${result.check} failed: ${escapeHtml(result.error)}` }];
+      failures[result.check] = (prev.failures[result.check] ?? 0) + 1;
+      findings =
+        failures[result.check] < failuresBeforeAlert
+          ? []
+          : [{ key: rpcKey(result.check), severity: "error", text: `Check ${result.check} failed: ${escapeHtml(result.error)}` }];
     } else {
       findings = result.findings;
     }
@@ -180,7 +244,7 @@ export function step(prev: State, results: CheckResult[], now: Date): { messages
     );
   }
 
-  return { messages, next: { open, lastHeartbeatDay } };
+  return { messages, next: { open, lastHeartbeatDay, failures } };
 }
 
 function rpcKey(check: string): string {
