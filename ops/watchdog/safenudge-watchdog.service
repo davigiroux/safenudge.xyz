@@ -1,0 +1,17 @@
+[Unit]
+Description=SafeNudge watchdog (upgrade authority, unsettled groups)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/safenudge
+EnvironmentFile=/etc/safenudge/watchdog.env
+ExecStart=/usr/bin/node node_modules/.bin/ts-node -P tsconfig.json ops/watchdog/watchdog.ts
+TimeoutStartSec=5min
+DynamicUser=yes
+StateDirectory=safenudge-watchdog
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+NoNewPrivileges=yes
