@@ -13,7 +13,8 @@ Each run sends a Telegram message only when a finding appears or clears, plus on
 | `PROGRAM_ID` | no | devnet program `GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` | Program to watch. |
 | `CLUSTER` | no | `devnet` | `devnet` or `mainnet`. Selects the period table: `devnet` adds the five-minute frequency 3 of `--features devnet` builds. |
 | `GRACE_HOURS` | no | `24` | Hours after `cycle_end` before an Active group is a finding. |
-| `STATE_PATH` | no | `/var/lib/safenudge-watchdog/state.json` | Open findings and the last heartbeat day. |
+| `RPC_FAILURES_BEFORE_ALERT` | no | `2` | Consecutive failed runs of one check before its `rpc:<check>` finding opens. |
+| `STATE_PATH` | no | `/var/lib/safenudge-watchdog/state.json` | Open findings, failure counts and the last heartbeat day. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | yes, except with `--dry-run` | | Bot API destination. |
 
 ## Dry run
@@ -25,7 +26,11 @@ npm ci
 RPC_URL=... EXPECTED_UPGRADE_AUTHORITY=... npm run watchdog -- --dry-run
 ```
 
-Exit code 1 means a check could not read the chain (it is also reported as an `rpc:<check>` finding). Exit code 2 means the run itself failed, for example bad configuration or a Telegram error; nothing was sent and the state file is unchanged, so the next run retries.
+Exit code 1 means a check could not read the chain. After `RPC_FAILURES_BEFORE_ALERT` failed runs in a row, the check is reported as an `rpc:<check>` finding; before that, the run sends nothing and the check's earlier findings stay open. Exit code 2 means the run itself failed, for example a Telegram error; nothing was sent and the state file is unchanged, so the next run retries.
+
+Invalid configuration also exits 2. When `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are set, the run sends `🔴 watchdog config invalid: <reason>`, at most once per UTC day for the same reason, and records that in `<STATE_PATH>.config-alert`. The reason names the variable, never its value.
+
+A state file that is not valid JSON, or has the wrong shape, does not stop the run. The run continues with an empty state and opens a `state-reset` finding, which resolves on the next run. The daily heartbeat can be sent a second time that day.
 
 ## Install
 
