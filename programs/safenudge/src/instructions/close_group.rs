@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::SafeNudgeError;
+use crate::events::GroupClosed;
 use crate::state::{GroupConfig, JoinGate, STATUS_CANCELLED, STATUS_COMPLETED};
 
 /// Closes a settled GroupConfig, and its JoinGate when it has one, and pays all their lamports to
@@ -46,10 +47,20 @@ pub struct CloseGroup<'info> {
 impl<'info> CloseGroup<'info> {
     pub fn handler(ctx: Context<'info, CloseGroup<'info>>) -> Result<()> {
         let accounts: &'info CloseGroup<'info> = ctx.accounts;
+        let mut join_gate_lamports = 0;
         if accounts.join_gate.owner == &crate::ID {
-            Account::<JoinGate>::try_from(accounts.join_gate.as_ref())?
-                .close(accounts.rent_payer.to_account_info())?;
+            let join_gate = Account::<JoinGate>::try_from(accounts.join_gate.as_ref())?;
+            join_gate_lamports = join_gate.get_lamports();
+            join_gate.close(accounts.rent_payer.to_account_info())?;
         }
+
+        // Anchor closes `group_config` after this handler returns, so its lamports are still here.
+        emit!(GroupClosed {
+            group: accounts.group_config.key(),
+            rent_payer: accounts.rent_payer.key(),
+            lamports: accounts.group_config.get_lamports(),
+            join_gate_lamports,
+        });
         Ok(())
     }
 }

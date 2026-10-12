@@ -1,6 +1,7 @@
 use anchor_lang::prelude::*;
 
 use crate::errors::SafeNudgeError;
+use crate::events::JoinAuthoritySet;
 use crate::state::{GroupConfig, JoinGate, STATUS_OPEN};
 
 /// Creates the JoinGate of an Open group with no members, so every later join needs `authority`.
@@ -54,6 +55,12 @@ impl<'info> SetJoinAuthority<'info> {
 
         // ── Effects ─────────────────────────────────────────
         self.join_gate.authority = authority;
+
+        emit!(JoinAuthoritySet {
+            group: self.group_config.key(),
+            creator: self.creator.key(),
+            authority,
+        });
 
         Ok(())
     }
