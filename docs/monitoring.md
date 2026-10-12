@@ -207,7 +207,7 @@ Alert names are checked against the IDL at startup: an event alert for an event 
 | Phase | Where | Datasource | Notes |
 | --- | --- | --- | --- |
 | Trial (done, 2026-10-11) | Local Docker Compose | RPC polling, devnet | Field paths confirmed (§2). A `create_group` and an `emergency_cancel` each reached Telegram within about a minute. A `group_cancelled` with `burned = 0` did not fire, as configured. |
-| Grafana Cloud trial | Indexer and Alloy local, Grafana Cloud for storage, dashboards and alerts | Same | Same alerts, now readable from a phone. See §5.1. |
+| Grafana Cloud trial (done, 2026-10-12) | Indexer and Alloy local, Grafana Cloud for storage, dashboards and alerts | Same | Records and metrics reached the stack, a `group_created` alert fired from Cloud, and `RPC polling stale` fired while the host slept. See §5.1. |
 | Squad rehearsal | Same | Same | Add `[multisig]` for the devnet Squad when ADR-0001's devnet rehearsal starts; every step of the rehearsal must produce the expected alert. |
 | Mainnet | Small VM (AWS or GCP) running the indexer and Alloy, pushing to Grafana Cloud | Yellowstone + `RPC_URL` gap recovery | The VM runs no Grafana, Loki or Prometheus, so it can be smaller than the 2 vCPU / 4 GiB the full stack needs. Must be running and proven before upgrade authority moves to the mainnet Squad. |
 
@@ -229,21 +229,27 @@ Microscope's cloud overlay (`docker-compose.cloud.yml`) runs only the indexer an
 
 ### 5.2 Alert messages
 
-Microscope's Telegram contact point sets no message, so Grafana sends its default text: every label, a silence link and dashboard links. We add a notification template that redefines `default.message`:
+Microscope's Telegram contact point sets no message, so Grafana sends its default text: every label, a silence link and dashboard links. After the export, the push step changes three things:
 
-```
-{{ define "sn.icon" }}{{ if eq .Labels.severity "critical" }}🚨{{ else if eq .Labels.severity "error" }}🔴{{ else if eq .Labels.severity "warning" }}🟠{{ else }}🔵{{ end }}{{ end }}
-{{ define "default.message" }}{{ range .Alerts.Firing }}{{ template "sn.icon" . }} <b>{{ or .Labels.signal_name .Labels.alertname }}</b> · {{ .Labels.severity }}
-{{ .Annotations.description }}{{ with .Labels.signature }}
-<a href="{{ reReplaceAll "^\\S+ " "" $.CommonAnnotations.transaction }}">Open transaction</a>{{ end }}
-{{ end }}{{ range .Alerts.Resolved }}✓ cleared: {{ or .Labels.signal_name .Labels.alertname }}
-{{ end }}{{ end }}
-```
+- **Template.** A notification template `sn.message`, used by the Telegram contact points with `parse_mode = HTML`:
 
-Known limits, all in Microscope's generator:
+  ```
+  {{ define "sn.icon" }}{{ if eq .Labels.severity "critical" }}🚨{{ else if eq .Labels.severity "error" }}🔴{{ else if eq .Labels.severity "warning" }}🟠{{ else }}🔵{{ end }}{{ end }}
+  {{ define "sn.message" }}{{ range .Alerts.Firing }}{{ template "sn.icon" . }} <b>{{ or .Labels.signal_name .Labels.alertname }}</b> · {{ .Labels.severity }}
+  {{ .Annotations.description }}
+  {{ if .Labels.signature }}<a href="{{ reReplaceAll "^\\S+ " "" .Annotations.transaction }}">Transaction</a> · {{ end }}{{ if .PanelURL }}<a href="{{ .PanelURL }}">Dashboard</a>{{ else if .DashboardURL }}<a href="{{ .DashboardURL }}">Dashboard</a>{{ else }}<a href="{{ .GeneratorURL }}">Rule</a>{{ end }}
+  {{ end }}{{ range .Alerts.Resolved }}✅ resolved: {{ or .Labels.signal_name .Labels.alertname }}
+  {{ end }}{{ end }}
+  ```
 
-- **Resolved messages.** Every activity alert sends a second message when its lookback window ends, because the contact point has `disableResolveMessage: false`. A one-time event has nothing to resolve; health alerts do. The template shortens the second message but cannot stop it.
-- **No business fields.** Alert labels carry the rule name and the signature, not record fields such as `data.group` or `data.refunded_total`. The message links to the transaction; the amounts are in Loki.
+- **No resolved message for activity alerts.** A one-time event has nothing to resolve. Rules with `signal_kind` `instruction`, `event` or `multisig` go to a second contact point with `disableResolveMessage = true`. Health rules keep the resolved message, because "polling recovered" is useful.
+- **Links.** In Grafana Cloud the Dashboard link opens on a phone. In local mode it points at `localhost`.
+
+The exported rules name their receiver in `notification_settings`, so changing that field is enough; the policy tree is not used.
+
+Still a limit in Microscope: alert labels carry the rule name and the signature, not record fields such as `data.group` or `data.refunded_total`. The message links to the transaction; the amounts are in Loki.
+
+Health alerts fire when the indexer host stops: on the devnet trial, a sleeping laptop fired `RPC polling stale` within minutes.
 
 ## 6. When the program changes
 
