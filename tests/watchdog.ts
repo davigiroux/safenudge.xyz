@@ -275,9 +275,24 @@ describe("watchdog", () => {
           "PROGRAM_ID is not a valid address",
           "EXPECTED_UPGRADE_AUTHORITY is not a valid address",
           "CLUSTER must be devnet or mainnet",
-          "GRACE_HOURS must be a whole number",
-          "RPC_FAILURES_BEFORE_ALERT must be a whole number of at least 1",
+          "GRACE_HOURS must be a whole number from 0 to 168",
+          "RPC_FAILURES_BEFORE_ALERT must be a whole number from 1 to 6",
           "TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run",
+        ],
+      });
+    });
+
+    it("test_thresholds_above_their_bounds_are_rejected", () => {
+      const result = parseConfig(["--dry-run"], {
+        RPC_URL: "https://rpc.example",
+        EXPECTED_UPGRADE_AUTHORITY: "none",
+        GRACE_HOURS: "169",
+        RPC_FAILURES_BEFORE_ALERT: "7",
+      });
+      expect(result).to.deep.equal({
+        errors: [
+          "GRACE_HOURS must be a whole number from 0 to 168",
+          "RPC_FAILURES_BEFORE_ALERT must be a whole number from 1 to 6",
         ],
       });
     });

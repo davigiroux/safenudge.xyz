@@ -12,8 +12,8 @@ Each run sends a Telegram message only when a finding appears or clears, plus on
 | `EXPECTED_UPGRADE_AUTHORITY` | yes | | Address that must hold upgrade authority, or `none` after `--final`. |
 | `PROGRAM_ID` | no | devnet program `GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` | Program to watch. |
 | `CLUSTER` | no | `devnet` | `devnet` or `mainnet`. Selects the period table: `devnet` adds the five-minute frequency 3 of `--features devnet` builds. |
-| `GRACE_HOURS` | no | `24` | Hours after `cycle_end` before an Active group is a finding. |
-| `RPC_FAILURES_BEFORE_ALERT` | no | `2` | Consecutive failed runs of one check before its `rpc:<check>` finding opens. |
+| `GRACE_HOURS` | no | `24` | Hours after `cycle_end` before an Active group is a finding. 0 to 168. |
+| `RPC_FAILURES_BEFORE_ALERT` | no | `2` | Consecutive failed runs of one check before its `rpc:<check>` finding opens. 1 to 6, so an outage cannot go unreported for more than an hour. |
 | `STATE_PATH` | no | `/var/lib/safenudge-watchdog/state.json` | Open findings, failure counts and the last heartbeat day. |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` | yes, except with `--dry-run` | | Bot API destination. |
 

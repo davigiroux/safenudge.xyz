@@ -279,7 +279,7 @@ The script is [`ops/watchdog`](../ops/watchdog/README.md); install steps and the
 - `RPC_URL` (secret: contains an API key), `PROGRAM_ID` (default: the devnet program).
 - `EXPECTED_UPGRADE_AUTHORITY`: the Squad vault, or `none` after `--final`.
 - `CLUSTER`: `devnet` or `mainnet`. Must match the build's cargo feature, because `--features devnet` adds the five-minute frequency 3.
-- `GRACE_HOURS` (default 24), `RPC_FAILURES_BEFORE_ALERT` (default 2), `STATE_PATH` (default `/var/lib/safenudge-watchdog/state.json`).
+- `GRACE_HOURS` (default 24, at most 168), `RPC_FAILURES_BEFORE_ALERT` (default 2, at most 6), `STATE_PATH` (default `/var/lib/safenudge-watchdog/state.json`).
 - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
 
 `npm run watchdog -- --dry-run` prints the messages instead of sending them.
