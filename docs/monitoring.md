@@ -1,10 +1,10 @@
 # Monitoring and Events
 
-How we watch the SafeNudge program on-chain before and after the mainnet launch, and which Anchor events the program needs so that watching is useful.
+How we watch the SafeNudge program on-chain before and after the mainnet launch, and which Anchor events the program emits so that watching is useful.
 
 The tool is [Solana Microscope](https://github.com/solana-foundation/solana-microscope) (Solana Foundation, MIT, first published September 2026). This doc records what it does, what it cannot do, and the configuration we plan to run. Facts about Microscope were read from its source at commit `fb22551`; re-check them when upgrading.
 
-Status: **proposal.** The program emits no events yet, and no Microscope deployment exists.
+Status: **events shipped, monitoring proposed.** The program emits nine events since PR #82 (§3). No Microscope deployment exists yet.
 
 ---
 
@@ -42,9 +42,9 @@ RPC polling ──────┘   decoder built from  └─> stdout JSON ─>
 - **Failed transactions** are recorded with `failed: true` for instructions and events. Multisig alerts never fire on failed Squads instructions.
 - **CPI calls** are decoded too (`stack_height` > 1), so a SafeNudge instruction invoked from another program still shows up.
 
-## 3. The gap: the program emits no events
+## 3. Program events
 
-Today the IDL has `events: []`, and only `create_group` takes arguments. Every other instruction takes no arguments; the amounts move inside token CPIs that Microscope does not decode. So an instruction record tells us *that* `deposit` or `distribute` ran, by whom, and for which group, but never *how much*. We cannot alert on a large payout, chart fees, or see penalties without events.
+Few instructions take arguments, and the amounts move inside token CPIs that Microscope does not decode. So an instruction record tells us *that* `deposit` or `distribute` ran, by whom, and for which group, but never *how much*. Events close that gap. Before PR #82 the IDL had `events: []`. PR #82 added nine events in `programs/safenudge/src/events.rs`, and the IDL declares them.
 
 ### 3.1 `emit!`, not `emit_cpi!`
 
@@ -59,7 +59,7 @@ Microscope decodes both styles into the same record shape (`source: log` vs `sou
 
 Truncation is the only argument for `emit_cpi!`. Our worst case is `distribute` with 10 members: the program writes no `msg!` lines, so the log is the runtime's invoke/success lines for about 11 `transfer_checked` CPIs and one `close_account`, plus the event payloads. That is well under 10 KB. If a future instruction gets close, re-evaluate there.
 
-### 3.2 Proposed events
+### 3.2 Events the program emits
 
 Amounts are raw token units (`u64`); the client formats them. One event per state change; no event duplicates an instruction argument that the instruction record already carries.
 
@@ -75,14 +75,18 @@ Amounts are raw token units (`u64`); the client formats them. One event per stat
 | `emergency_cancel` | `GroupCancelled` | `group`, `creator`, `members`, `refunded_total`, `burned` | `burned > 0` is rare and must be visible |
 | `withdraw_fees` | `FeesWithdrawn` | `recipient`, `mint`, `amount` | Treasury outflow |
 | `init_treasury` | none | — | Instruction record is enough (one-shot) |
-| `refund_vault_rent`, `close_member_record` | none | — | Lamport-only, no token movement |
+| `refund_vault_rent`, `close_member_record`, `close_group` | none | — | Lamport-only, no token movement |
+| `set_join_authority` | none | — | Instruction record is enough (one-shot, before the first join) |
 
-Rules for the implementation PR (program PR format from `CLAUDE.md`):
+Five instructions emit nothing: `init_treasury`, `refund_vault_rent`, `close_member_record`, `close_group` and `set_join_authority`.
 
-- Emit **after** all state mutation and CPIs succeed (last step of the handler), so an event never describes a state the transaction did not reach. A failed transaction then carries no event, and the `failed: true` instruction record is the signal.
-- Events add no accounts and no arguments, so the change is additive for SafePool: the IDL gains `events` and `types`, but call sites do not change. SafePool still repins the IDL to decode events.
-- Field names stay snake_case and flat. Microscope field paths only accept segments that start with a letter or `_`, so array elements (for example `periods_deposited[3]`) cannot be addressed. Do not put arrays in events.
-- Tests assert each event's fields from the transaction logs, including `GroupSettled` conservation in the 10-member test.
+How the events are emitted:
+
+- Each handler calls `emit!` as its last step, after all state mutation and CPIs succeed. An event never describes a state the transaction did not reach. A failed transaction carries no event, and the `failed: true` instruction record is the signal.
+- `distribute` emits one `MemberSettled` per member and then `GroupSettled`, after the vault closes.
+- Events add no accounts and no arguments, so the change was additive for SafePool: the IDL gained `events` and `types`, and call sites did not change. SafePool repins the IDL to decode events.
+- Field names are snake_case and flat. Microscope field paths only accept segments that start with a letter or `_`, so array elements (for example `periods_deposited[3]`) cannot be addressed. Events carry no arrays.
+- The `events` tests in `tests/safenudge.ts` decode each event from the transaction logs and assert its fields. The 10-member settlement test checks that `GroupSettled.total_paid` plus `protocol_fee` equals the vault balance before settlement.
 
 ## 4. Configuration
 
@@ -166,7 +170,7 @@ severity = "warning"
 channels = ["telegram"]
 ```
 
-After events ship, add:
+Once the deployed binary includes PR #82 and `idl_path` points at its IDL, add:
 
 ```toml
 [[alerts]]
@@ -206,7 +210,7 @@ Operational notes:
 
 ## 6. When the program changes
 
-Add these to the upgrade checklist in `ARCHITECTURE.md` ("Upgrades that change an account layout"):
+These steps are part of the upgrade checklist in `ARCHITECTURE.md` ("Upgrades that change an account layout"):
 
 1. Copy the new `target/idl/safenudge.json` into the Microscope deployment.
 2. `just generate`, rebuild the image, `just up`. The indexer will not start against a mismatched IDL hash, so a skipped step is visible, not silent.

@@ -209,11 +209,40 @@ UNIT TESTS (program logic):
 │   ├── penalty capped at total deposited -> no negative balances
 │   ├── distribute before cycle ends -> CycleNotEnded error
 │   └── vault empty after distribution -> 0 balance remaining
-└── emergency_cancel
-    ├── creator cancels during open -> full refund
-    ├── creator cancels during active -> full refund
-    ├── non-creator cancels -> UnauthorizedCreator error
-    └── cancel after completed -> InvalidGroupStatus error
+├── emergency_cancel
+│   ├── creator cancels during open -> full refund
+│   ├── creator cancels during active -> full refund
+│   ├── non-creator cancels -> UnauthorizedCreator error
+│   └── cancel after completed -> InvalidGroupStatus error
+├── set_join_authority
+│   ├── creator sets authority -> gate stored, rent charged to group rent payer
+│   ├── lamports sent to gate address first -> gate still created
+│   ├── group Active -> InvalidGroupStatus error (before creator check)
+│   ├── member already joined -> GroupHasMembers error
+│   ├── non-creator signs -> UnauthorizedCreator error
+│   ├── another wallet pays rent -> InvalidRentPayer error
+│   ├── second call -> fails, first authority kept
+│   └── default pubkey or program ID as authority -> InvalidJoinAuthority error
+├── join_group with a join gate
+│   ├── authority signs -> member joins
+│   ├── authority missing, wrong signer, or signs only as rent payer -> JoinNotApproved error
+│   ├── empty gate address of another group -> ConstraintSeeds error
+│   ├── creator's own join needs the authority; create, gate, join in one tx
+│   ├── approved join advancing a durable nonce -> DurableNonceNotAllowed error
+│   ├── approval held over a durable nonce reaching a new group at the same code -> DurableNonceNotAllowed error
+│   ├── ungated group in a durable nonce tx -> join succeeds
+│   └── member leaves a gated group -> no authority needed
+└── close_group
+    ├── a record still open -> GroupHasOpenRecords error
+    ├── group Open or Active -> InvalidGroupStatus error
+    ├── destination not the recorded rent payer -> InvalidRentPayer error
+    ├── every record closed -> GroupConfig closed, rent to rent payer
+    ├── refund_vault_rent never called -> vault rent paid too
+    ├── Cancelled group with no members -> closes at once
+    ├── any wallet sends it -> recorded rent payer still paid
+    ├── new group at the same code -> no old member record inherited
+    ├── gated group -> GroupConfig and JoinGate closed, both rents to rent payer
+    └── wrong join gate address -> ConstraintSeeds error, gate stays
 
 INTEGRATION TESTS (full lifecycle):
 ├── full cycle: create -> 3 members join -> start -> 4 weekly deposits -> distribute
