@@ -2,7 +2,9 @@
   "name": "safenudge",
   "version": "0.1.0",
   "scripts": {
-    "test": "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
+    "test": "npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts",
+    "test:watchdog": "npx ts-mocha -p ./tsconfig.json tests/watchdog.ts",
+    "watchdog": "ts-node -P ./tsconfig.json ops/watchdog/watchdog.ts"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1",
