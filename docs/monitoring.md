@@ -4,7 +4,7 @@ How we watch the SafeNudge program on-chain before and after the mainnet launch,
 
 The tool is [Solana Microscope](https://github.com/solana-foundation/solana-microscope) (Solana Foundation, MIT, first published September 2026). This doc records what it does, what it cannot do, and the configuration we plan to run. Facts about Microscope were read from its source at commit `fb22551`; re-check them when upgrading.
 
-Status: **events shipped, monitoring proposed.** The program emits nine events since PR #82 (§3). No Microscope deployment exists yet.
+Status: **events shipped, monitoring proposed.** The program emits eleven events (§3). PR #82 added nine, and `GroupClosed` and `JoinAuthoritySet` came later. No Microscope deployment exists yet.
 
 ---
 
