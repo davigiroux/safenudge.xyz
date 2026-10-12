@@ -7,10 +7,10 @@ import { Connection, PublicKey } from "@solana/web3.js";
 import { utils } from "@coral-xyz/anchor";
 import {
   CheckResult,
-  Cluster,
   EMPTY_STATE,
   Finding,
   GROUP_DISCRIMINATOR,
+  STATE_RESET_RESULT,
   STATUS_ACTIVE,
   STATUS_OFFSET,
   State,
@@ -19,23 +19,13 @@ import {
   evaluateGroups,
   parseProgramAccount,
   parseProgramDataAuthority,
+  parseState,
   step,
 } from "./core";
+import { Config, DEFAULT_STATE_PATH, configAlert, parseConfig } from "./config";
 
-const DEVNET_PROGRAM_ID = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc";
 const UPGRADEABLE_LOADER = "BPFLoaderUpgradeab1e11111111111111111111111";
 const TELEGRAM_MAX_CHARS = 4000;
-
-interface Config {
-  rpcUrl: string;
-  programId: PublicKey;
-  expectedAuthority: string | null;
-  cluster: Cluster;
-  graceSecs: bigint;
-  statePath: string;
-  telegram: { token: string; chatId: string } | null;
-  dryRun: boolean;
-}
 
 interface Ctx {
   connection: Connection;
@@ -75,38 +65,11 @@ const CHECKS: Record<string, Check> = {
   },
 };
 
-function readConfig(argv: string[], env: NodeJS.ProcessEnv): Config {
-  const required = (name: string) => {
-    const v = env[name];
-    if (!v) throw new Error(`${name} is not set`);
-    return v;
-  };
-  const dryRun = argv.includes("--dry-run");
-  const expected = required("EXPECTED_UPGRADE_AUTHORITY");
-  const cluster = env.CLUSTER ?? "devnet";
-  if (cluster !== "devnet" && cluster !== "mainnet") throw new Error("CLUSTER must be devnet or mainnet");
-  const graceHours = Number(env.GRACE_HOURS ?? "24");
-  if (!Number.isInteger(graceHours) || graceHours < 0) throw new Error("GRACE_HOURS must be a whole number");
-  const token = env.TELEGRAM_BOT_TOKEN;
-  const chatId = env.TELEGRAM_CHAT_ID;
-  if (!dryRun && (!token || !chatId)) throw new Error("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required unless --dry-run");
-  return {
-    rpcUrl: required("RPC_URL"),
-    programId: new PublicKey(env.PROGRAM_ID ?? DEVNET_PROGRAM_ID),
-    expectedAuthority: expected === "none" ? null : new PublicKey(expected).toBase58(),
-    cluster,
-    graceSecs: BigInt(graceHours) * 3600n,
-    statePath: env.STATE_PATH ?? "/var/lib/safenudge-watchdog/state.json",
-    telegram: token && chatId ? { token, chatId } : null,
-    dryRun,
-  };
-}
-
-async function readState(file: string): Promise<State> {
+async function readState(file: string): Promise<{ state: State; reset: boolean }> {
   try {
-    return JSON.parse(await fs.readFile(file, "utf8")) as State;
+    return parseState(await fs.readFile(file, "utf8"));
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return EMPTY_STATE;
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return { state: EMPTY_STATE, reset: false };
     throw e;
   }
 }
@@ -148,8 +111,27 @@ function redact(text: string, secrets: string[]): string {
   return out;
 }
 
+/** Prints the config errors and sends them to Telegram at most once per UTC day; returns exit code 2. */
+async function reportInvalidConfig(errors: string[], argv: string[], env: NodeJS.ProcessEnv): Promise<number> {
+  for (const error of errors) console.error(`config: ${error}`);
+  const token = env.TELEGRAM_BOT_TOKEN;
+  const chatId = env.TELEGRAM_CHAT_ID;
+  if (!token || !chatId || argv.includes("--dry-run")) return 2;
+
+  const markerPath = `${env.STATE_PATH ?? DEFAULT_STATE_PATH}.config-alert`;
+  const lastMarker = await fs.readFile(markerPath, "utf8").catch(() => null);
+  const alert = configAlert(errors, lastMarker, new Date());
+  if (alert === null) return 2;
+  await sendTelegram({ token, chatId }, alert.text);
+  await fs.writeFile(markerPath, alert.marker, { mode: 0o600 }).catch(() => console.error("config: could not write the alert marker"));
+  return 2;
+}
+
 async function main(): Promise<number> {
-  const config = readConfig(process.argv.slice(2), process.env);
+  const argv = process.argv.slice(2);
+  const parsed = parseConfig(argv, process.env);
+  if ("errors" in parsed) return reportInvalidConfig(parsed.errors, argv, process.env);
+  const { config } = parsed;
   const secrets = [config.rpcUrl, config.telegram?.token ?? ""];
   const ctx: Ctx = {
     connection: new Connection(config.rpcUrl, "confirmed"),
@@ -169,8 +151,12 @@ async function main(): Promise<number> {
   }
   const failed = results.some((r) => "error" in r);
 
-  const prev = await readState(config.statePath);
-  const { messages, next } = step(prev, results, new Date(Number(ctx.nowSecs) * 1000));
+  const { state: prev, reset } = await readState(config.statePath);
+  if (reset) {
+    console.error("state: file was unreadable; continuing with an empty state");
+    results.push(STATE_RESET_RESULT);
+  }
+  const { messages, next } = step(prev, results, new Date(Number(ctx.nowSecs) * 1000), config.failuresBeforeAlert);
 
   if (config.dryRun) {
     for (const text of chunk(messages)) console.log(`--- message ---\n${text}`);
