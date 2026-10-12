@@ -680,8 +680,10 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | `GroupSettled` | `distribute`, after every `MemberSettled` | `group`, `members`, `compliant_count`, `total_penalties`, `protocol_fee`, `total_paid`. `total_paid + protocol_fee` equals the vault balance before settlement |
 | `GroupCancelled` | `emergency_cancel` | `group`, `creator`, `members`, `refunded_total`, `burned` (non-zero only for a group with no members) |
 | `FeesWithdrawn` | `withdraw_fees` | `recipient`, `mint`, `amount` |
+| `JoinAuthoritySet` | `set_join_authority` | `group`, `creator`, `authority` |
+| `GroupClosed` | `close_group` | `group`, `rent_payer`, `lamports` (`GroupConfig` balance, the vault rent included when `refund_vault_rent` never ran), `join_gate_lamports` (0 without a gate) |
 
-`init_treasury`, `refund_vault_rent`, `close_member_record`, `close_group` and `set_join_authority` emit nothing.
+`init_treasury`, `refund_vault_rent` and `close_member_record` emit nothing. `close_group` emits before Anchor closes `GroupConfig` at the end of the instruction, so `lamports` is the amount that close pays.
 
 ### PDA Derivation Summary
 

@@ -84,11 +84,12 @@ Amounts are raw token units (`u64`); the client formats them. One event per stat
 | `distribute` | `GroupSettled` | `group`, `members`, `compliant_count`, `total_penalties`, `protocol_fee`, `total_paid` | Fee revenue; conservation check off-chain (`total_paid + protocol_fee` equals the vault balance before settlement) |
 | `emergency_cancel` | `GroupCancelled` | `group`, `creator`, `members`, `refunded_total`, `burned` | `burned > 0` is rare and must be visible |
 | `withdraw_fees` | `FeesWithdrawn` | `recipient`, `mint`, `amount` | Treasury outflow |
+| `set_join_authority` | `JoinAuthoritySet` | `group`, `creator`, `authority` | Which groups are gated and by which key; a key change between groups at one code is visible |
+| `close_group` | `GroupClosed` | `group`, `rent_payer`, `lamports`, `join_gate_lamports` | End of a group's life; rent returned. `lamports` is the `GroupConfig` balance (vault rent included when `refund_vault_rent` never ran), `join_gate_lamports` the gate's (0 without one) |
 | `init_treasury` | none | — | Instruction record is enough (one-shot) |
-| `refund_vault_rent`, `close_member_record`, `close_group` | none | — | Lamport-only, no token movement |
-| `set_join_authority` | none | — | Instruction record is enough (one-shot, before the first join) |
+| `refund_vault_rent`, `close_member_record` | none | — | Lamport-only, no token movement |
 
-Five instructions emit nothing: `init_treasury`, `refund_vault_rent`, `close_member_record`, `close_group` and `set_join_authority`.
+Three instructions emit nothing: `init_treasury`, `refund_vault_rent` and `close_member_record`.
 
 How the events are emitted:
 
