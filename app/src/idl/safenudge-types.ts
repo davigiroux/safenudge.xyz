@@ -1399,6 +1399,19 @@ export type Safenudge = {
       ]
     },
     {
+      "name": "groupClosed",
+      "discriminator": [
+        131,
+        184,
+        184,
+        15,
+        45,
+        220,
+        241,
+        73
+      ]
+    },
+    {
       "name": "groupCreated",
       "discriminator": [
         132,
@@ -1422,6 +1435,19 @@ export type Safenudge = {
         210,
         168,
         67
+      ]
+    },
+    {
+      "name": "joinAuthoritySet",
+      "discriminator": [
+        33,
+        138,
+        165,
+        55,
+        55,
+        34,
+        248,
+        220
       ]
     },
     {
@@ -1755,6 +1781,39 @@ export type Safenudge = {
       }
     },
     {
+      "name": "groupClosed",
+      "docs": [
+        "`close_group` closed a settled group and paid its rent to the rent payer."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "rentPayer",
+            "type": "pubkey"
+          },
+          {
+            "name": "lamports",
+            "docs": [
+              "GroupConfig lamports, the vault rent included when `refund_vault_rent` never ran."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "joinGateLamports",
+            "docs": [
+              "JoinGate lamports. Zero when the group has no gate."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
       "name": "groupConfig",
       "docs": [
         "One savings group. `close_group` closes it once settled and every member record is closed.",
@@ -1953,6 +2012,29 @@ export type Safenudge = {
               "settlement."
             ],
             "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "joinAuthoritySet",
+      "docs": [
+        "The creator required a join authority signature on every later join."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "group",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
+            "name": "authority",
+            "type": "pubkey"
           }
         ]
       }
