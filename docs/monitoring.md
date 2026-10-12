@@ -267,6 +267,16 @@ They run as a systemd timer (every 10 minutes) on the same VM as Microscope, as 
 
 The script also sends one message per day saying all checks passed. A missing daily message means the VM, the bot, or the script is down. Microscope's own alerts cannot report that, because they run on the same machine.
 
+The script is [`ops/watchdog`](../ops/watchdog/README.md); install steps and the systemd units are there. It sends a message only when a finding appears or clears, plus the daily one, and keeps open findings in a state file. A check that cannot read the chain becomes an `rpc:<check>` finding and the run exits nonzero. Configuration, all from `/etc/safenudge/watchdog.env`:
+
+- `RPC_URL` (secret: contains an API key), `PROGRAM_ID` (default: the devnet program).
+- `EXPECTED_UPGRADE_AUTHORITY`: the Squad vault, or `none` after `--final`.
+- `CLUSTER`: `devnet` or `mainnet`. Must match the build's cargo feature, because `--features devnet` adds the five-minute frequency 3.
+- `GRACE_HOURS` (default 24), `STATE_PATH` (default `/var/lib/safenudge-watchdog/state.json`).
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`.
+
+`npm run watchdog -- --dry-run` prints the messages instead of sending them.
+
 ## 8. Decisions
 
 - Alert channel: Telegram only. PagerDuty can be added per rule later without changing anything else.
