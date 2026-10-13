@@ -1,0 +1,59 @@
+// SafeNudge: indexer logs from journald, metrics from the local indexer and Alloy, all to Grafana Cloud.
+loki.relabel "indexer" {
+  forward_to = [loki.write.grafana_cloud.receiver]
+  rule {
+    replacement  = "microscope-indexer"
+    target_label = "service_name"
+  }
+}
+
+loki.source.journal "indexer" {
+  matches       = "_SYSTEMD_UNIT=safenudge-indexer.service"
+  format_as_json = false
+  forward_to    = [loki.relabel.indexer.receiver]
+  labels        = {}
+}
+
+loki.write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_LOKI_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_LOKI_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+  external_labels = {
+    service    = "microscope",
+    deployment = sys.env("MICROSCOPE_DEPLOYMENT"),
+    env        = sys.env("MICROSCOPE_ENV"),
+  }
+}
+
+prometheus.scrape "indexer" {
+  targets         = [{ "__address__" = "127.0.0.1:9090" }]
+  job_name        = "microscope-indexer"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.scrape "alloy" {
+  targets         = [{ "__address__" = "127.0.0.1:12345" }]
+  job_name        = "alloy"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USER")
+      password = sys.env("GRAFANA_CLOUD_TOKEN")
+    }
+  }
+  external_labels = {
+    service    = "microscope",
+    deployment = sys.env("MICROSCOPE_DEPLOYMENT"),
+    env        = sys.env("MICROSCOPE_ENV"),
+  }
+}

@@ -34,15 +34,4 @@ A state file that is not valid JSON, or has the wrong shape, does not stop the r
 
 ## Install
 
-On the Microscope VM, as root:
-
-```sh
-git clone https://github.com/davigiroux/safenudge.xyz /opt/safenudge
-cd /opt/safenudge && npm ci
-install -d -m 700 /etc/safenudge
-install -m 600 /dev/null /etc/safenudge/watchdog.env   # then fill in the variables above
-cp ops/watchdog/safenudge-watchdog.{service,timer} /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now safenudge-watchdog.timer
-journalctl -u safenudge-watchdog.service
-```
+The watchdog runs on the monitoring host as `safenudge-watchdog.timer`, every 10 minutes. [`ops/monitoring`](../monitoring/README.md) bundles it with esbuild and installs it with the units, a pinned Node and `/etc/safenudge/watchdog.env`.
