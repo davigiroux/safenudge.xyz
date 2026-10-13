@@ -209,11 +209,13 @@ Alert names are checked against the IDL at startup: an event alert for an event 
 | --- | --- | --- | --- |
 | Trial (done, 2026-10-11) | Local Docker Compose | RPC polling, devnet | Field paths confirmed (§2). A `create_group` and an `emergency_cancel` each reached Telegram within about a minute. A `group_cancelled` with `burned = 0` did not fire, as configured. |
 | Grafana Cloud trial (done, 2026-10-12) | Indexer and Alloy local, Grafana Cloud for storage, dashboards and alerts | Same | Records and metrics reached the stack, a `group_created` alert fired from Cloud, and `RPC polling stale` fired while the host slept. See §5.1. |
-| Squad rehearsal | Same | Same | Add `[multisig]` for the devnet Squad when ADR-0001's devnet rehearsal starts; every step of the rehearsal must produce the expected alert. |
-| Mainnet | Small VM (AWS or GCP) running the indexer and Alloy, pushing to Grafana Cloud | Yellowstone + `RPC_URL` gap recovery | The VM runs no Grafana, Loki or Prometheus, so it can be smaller than the 2 vCPU / 4 GiB the full stack needs. Must be running and proven before upgrade authority moves to the mainnet Squad. |
+| Devnet host (running since 2026-10-12) | Small Linux VPS: indexer, Alloy and watchdog as systemd services, no Docker ([`ops/monitoring`](../ops/monitoring/README.md)). Grafana Cloud as above | Same | Indexer about 13 MB of memory, Alloy about 240 MB. Moved off the laptop because sleep fired the health alerts. |
+| Squad rehearsal | Devnet host | Same | Add `[multisig]` for the devnet Squad when ADR-0001's devnet rehearsal starts; every step of the rehearsal must produce the expected alert. |
+| Mainnet | A second host, not the devnet one, with the same `ops/monitoring` bundle and a `microscope.mainnet.toml` | Yellowstone + `RPC_URL` gap recovery | The host runs no Grafana, Loki or Prometheus, so it can be smaller than the 2 vCPU / 4 GiB the full stack needs. Must be running and proven before upgrade authority moves to the mainnet Squad. |
 
 Operational notes:
 
+- On the host, the indexer binds its metrics (9090) and probe (9091) ports to `0.0.0.0` with no option to change it. `safenudge-firewall` drops them, and Alloy's 12345, on every interface except loopback.
 - In local mode, Grafana, Prometheus and the indexer bind to `127.0.0.1`; reach them through an SSH or SSM tunnel. Do not publish ports. Alert links point at `localhost` and do not open on a phone.
 - `just up` regenerates alert rules and recreates Grafana. Plain `docker compose up` on a running stack keeps the old rules. In local mode it can also drop a notification template copied into the alerting volume.
 - Activity alerts use `noDataState = OK`: if Loki is down, activity alerts do not fire. The stack provisions its own health alerts (stale datasource, poll failures, Alloy delivery); keep those routed to the same channel.
@@ -230,7 +232,7 @@ Microscope's cloud overlay (`docker-compose.cloud.yml`) runs only the indexer an
 
 ### 5.2 Alert messages
 
-Microscope's Telegram contact point sets no message, so Grafana sends its default text: every label, a silence link and dashboard links. After the export, the push step changes three things:
+Microscope's Telegram contact point sets no message, so Grafana sends its default text: every label, a silence link and dashboard links. After the export, [`ops/monitoring/push-cloud.py`](../ops/monitoring/push-cloud.py) changes these things:
 
 - **Template.** A notification template `sn.message`, used by the Telegram contact points with `parse_mode = HTML`:
 
@@ -243,21 +245,31 @@ Microscope's Telegram contact point sets no message, so Grafana sends its defaul
   {{ end }}{{ end }}
   ```
 
-- **No resolved message for activity alerts.** A one-time event has nothing to resolve. Rules with `signal_kind` `instruction`, `event` or `multisig` go to a second contact point with `disableResolveMessage = true`. Health rules keep the resolved message, because "polling recovered" is useful.
+- **Four contact points**, `<deployment>-telegram-<kind>-<tone>`, all to the same chat:
+
+  | | Resolved message | Sound |
+  | --- | --- | --- |
+  | `activity` (`signal_kind` `instruction`, `event`, `multisig`) | no: a one-time event has nothing to resolve | only `critical` |
+  | `health` (everything else) | yes: "polling recovered" is useful | only `critical` |
+
+  `quiet` contact points set `disable_notification`, so the message arrives with no sound.
+- **Grouping for health.** Health rules group by `deployment` and `signal_kind`, with `group_wait` 1m, `group_interval` 10m and `repeat_interval` 12h. One outage sends one message, not one per rule. Activity is not grouped: each transaction is its own message.
+- **No `info` on Telegram.** `info` rules are deleted from Cloud, not pushed. Their records stay in Loki and on the dashboard.
+- **`PAUSE_HEALTH=1`** pushes health rules paused, for a host that sleeps.
 - **Links.** In Grafana Cloud the Dashboard link opens on a phone. In local mode it points at `localhost`.
 
 The exported rules name their receiver in `notification_settings`, so changing that field is enough; the policy tree is not used.
 
 Still a limit in Microscope: alert labels carry the rule name and the signature, not record fields such as `data.group` or `data.refunded_total`. The message links to the transaction; the amounts are in Loki.
 
-Health alerts fire when the indexer host stops: on the devnet trial, a sleeping laptop fired `RPC polling stale` within minutes.
+Health alerts fire when the indexer host stops: on the devnet trial, a sleeping laptop fired `RPC polling stale` and its resolve every 15 minutes (macOS Power Nap wakes). That is why the indexer runs on a host that does not sleep.
 
 ## 6. When the program changes
 
 These steps are part of the upgrade checklist in `ARCHITECTURE.md` ("Upgrades that change an account layout"):
 
-1. Copy the new `target/idl/safenudge.json` into the Microscope deployment.
-2. `just generate`, rebuild the image, `just up`. The indexer will not start against a mismatched IDL hash, so a skipped step is visible, not silent.
+1. Copy the new `target/idl/safenudge.json` to `app/src/idl/safenudge.json`. `build.sh` reads it from there. In Docker mode, copy it into the Microscope checkout.
+2. Rebuild and reinstall: `ops/monitoring/build.sh <cluster> <dir>`, then `install.sh` on the host (`just generate`, rebuild, `just up` in Docker mode). The indexer will not start against a mismatched IDL hash, so a skipped step is visible: the service restarts in a loop and the health alerts fire.
 3. Records before the upgrade are decoded with the new IDL if backfilled again; do not re-backfill across a layout change.
 4. Expect a Squads alert for every step of the upgrade itself. An upgrade that produced no alert means monitoring is broken.
 
@@ -274,7 +286,7 @@ They run as a systemd timer (every 10 minutes) on the same VM as Microscope, as 
 
 The script also sends one message per day saying all checks passed. A missing daily message means the VM, the bot, or the script is down. Microscope's own alerts cannot report that, because they run on the same machine.
 
-The script is [`ops/watchdog`](../ops/watchdog/README.md); install steps and the systemd units are there. It sends a message only when a finding appears or clears, plus the daily one, and keeps open findings in a state file. A check that cannot read the chain makes the run exit nonzero, and becomes an `rpc:<check>` finding after `RPC_FAILURES_BEFORE_ALERT` failed runs in a row (default 2), so one RPC timeout sends nothing. An unreadable state file is reset and reported as a `state-reset` finding. Invalid configuration exits 2 and, when the Telegram variables are set, sends one message per UTC day naming the variable. Configuration, all from `/etc/safenudge/watchdog.env`:
+The script is [`ops/watchdog`](../ops/watchdog/README.md); [`ops/monitoring`](../ops/monitoring/README.md) installs it with the systemd units. It sends a message only when a finding appears or clears, plus the daily one, and keeps open findings in a state file. A check that cannot read the chain makes the run exit nonzero, and becomes an `rpc:<check>` finding after `RPC_FAILURES_BEFORE_ALERT` failed runs in a row (default 2), so one RPC timeout sends nothing. An unreadable state file is reset and reported as a `state-reset` finding. Invalid configuration exits 2 and, when the Telegram variables are set, sends one message per UTC day naming the variable. Configuration, all from `/etc/safenudge/watchdog.env`:
 
 - `RPC_URL` (secret: contains an API key), `PROGRAM_ID` (default: the devnet program).
 - `EXPECTED_UPGRADE_AUTHORITY`: the Squad vault, or `none` after `--final`.
