@@ -12,11 +12,13 @@ command -v unzip >/dev/null || apt-get install -y --no-install-recommends unzip
 id safenudge-mon >/dev/null 2>&1 || useradd --system --no-create-home --shell /usr/sbin/nologin safenudge-mon
 
 install -d -m 755 /opt/safenudge /opt/safenudge/microscope /opt/safenudge/microscope/idl /opt/safenudge/alloy /opt/safenudge/watchdog
-install -d -m 750 -g safenudge-mon /etc/safenudge
+install -d -m 700 /etc/safenudge
 
+# systemd reads EnvironmentFile as root, so no service user can read another service's secrets.
+chmod 700 /etc/safenudge; chown root:root /etc/safenudge/*.env /etc/safenudge/nft.conf 2>/dev/null || true; chmod 600 /etc/safenudge/*.env /etc/safenudge/nft.conf 2>/dev/null || true
 for f in indexer alloy watchdog; do
   if [[ -f env/$f.env ]]; then
-    install -m 640 -g safenudge-mon "env/$f.env" "/etc/safenudge/$f.env"
+    install -m 600 "env/$f.env" "/etc/safenudge/$f.env"
   elif [[ ! -f /etc/safenudge/$f.env ]]; then
     echo "missing env/$f.env (first install)" >&2; exit 1
   fi
@@ -39,7 +41,7 @@ mv /opt/safenudge/node.new /opt/safenudge/node
 install -m 644 watchdog.js /opt/safenudge/watchdog/watchdog.js
 install -m 644 SOURCE_COMMIT /opt/safenudge/SOURCE_COMMIT
 
-install -m 640 -g safenudge-mon nft.conf /etc/safenudge/nft.conf
+install -m 600 nft.conf /etc/safenudge/nft.conf
 
 install -m 644 units/* /etc/systemd/system/
 systemctl daemon-reload

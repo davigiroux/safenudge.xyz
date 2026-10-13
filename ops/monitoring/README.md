@@ -19,7 +19,7 @@ host (systemd, user safenudge-mon)                   Grafana Cloud
 | `alloy.alloy` | `/opt/safenudge/alloy/config.alloy` |
 | `nft.conf` | `/etc/safenudge/nft.conf` |
 | `units/*` | `/etc/systemd/system/` |
-| `env/*.env.example` | template for `/etc/safenudge/*.env` (mode 640, root:safenudge-mon) |
+| `env/*.env.example` | template for `/etc/safenudge/*.env` (mode 600, root; systemd reads them before it drops to `safenudge-mon`) |
 | `push-cloud.py` | not installed; runs on a workstation, see below |
 
 The indexer binds its metrics and probe ports to `0.0.0.0` with no option to change it, so `safenudge-firewall` drops them on every interface except loopback. Alloy listens on `127.0.0.1:12345`.
