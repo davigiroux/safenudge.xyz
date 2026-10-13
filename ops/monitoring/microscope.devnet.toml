@@ -1,0 +1,51 @@
+# SafeNudge devnet. Source: docs/monitoring.md §4. Built into the indexer by ops/monitoring/build.sh.
+# The IDL is app/src/idl/safenudge.json at the commit the bundle is built from.
+program_id = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
+idl_path = "idl/safenudge.json"
+
+[datasource]
+mode = "rpc"
+poll_interval_seconds = 5
+replay_window_slots = 300
+
+[dashboard]
+event_fields = ["name", "instruction", "signature", "slot", "failed", "data.group", "data.member", "data.amount", "data.payout", "data.protocol_fee"]
+
+[alerting]
+lookback_window_seconds = 60
+evaluation_interval_seconds = 10
+explorer_transaction_url = "https://explorer.solana.com/tx/{signature}?cluster=devnet"
+
+[[alerts]]
+kind = "instruction"
+name = "distribute"
+conditions = [{ field = "failed", operator = "eq", value = true }]
+severity = "error"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "instruction"
+name = "emergency_cancel"
+conditions = [{ field = "failed", operator = "eq", value = false }]
+severity = "warning"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "instruction"
+name = "withdraw_fees"
+conditions = [{ field = "failed", operator = "eq", value = false }]
+severity = "warning"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "instruction"
+name = "init_treasury"
+severity = "warning"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "event"
+name = "group_cancelled"
+conditions = [{ field = "data.burned", operator = "gt", value = 0 }]
+severity = "error"
+channels = ["telegram"]

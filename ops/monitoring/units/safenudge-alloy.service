@@ -1,0 +1,22 @@
+[Unit]
+Description=SafeNudge Alloy (logs and metrics to Grafana Cloud)
+Wants=network-online.target
+After=network-online.target safenudge-indexer.service
+
+[Service]
+User=safenudge-mon
+Group=safenudge-mon
+SupplementaryGroups=systemd-journal
+EnvironmentFile=/etc/safenudge/alloy.env
+StateDirectory=safenudge-alloy
+ExecStart=/opt/safenudge/alloy/alloy run --server.http.listen-addr=127.0.0.1:12345 --storage.path=/var/lib/safenudge-alloy /opt/safenudge/alloy/config.alloy
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

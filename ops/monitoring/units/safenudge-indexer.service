@@ -1,0 +1,24 @@
+[Unit]
+Description=SafeNudge Microscope indexer
+Wants=network-online.target
+After=network-online.target safenudge-firewall.service
+Requires=safenudge-firewall.service
+
+[Service]
+User=safenudge-mon
+Group=safenudge-mon
+EnvironmentFile=/etc/safenudge/indexer.env
+Environment=MICROSCOPE_STATE_DIR=/var/lib/safenudge-indexer RUST_LOG=info
+StateDirectory=safenudge-indexer
+WorkingDirectory=/opt/safenudge/microscope
+ExecStart=/opt/safenudge/microscope/microscope-indexer run /opt/safenudge/microscope/microscope.toml
+Restart=always
+RestartSec=10
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target

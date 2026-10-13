@@ -1,0 +1,12 @@
+[Unit]
+Description=SafeNudge monitor: keep indexer and Alloy ports off non-loopback interfaces
+Before=safenudge-indexer.service safenudge-alloy.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/safenudge/nft.conf
+ExecStop=/usr/sbin/nft delete table inet safenudge
+
+[Install]
+WantedBy=multi-user.target
