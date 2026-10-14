@@ -2063,7 +2063,6 @@ describe("safenudge", () => {
       assert.equal(before - afterFirst, rentFor(MEMBER_RECORD_SIZE) + rentFor(JOIN_TALLY_SIZE) + 2n * SIGNATURE_FEE);
       assert.equal(afterLeave - lamportsOf(sponsor.publicKey), rentFor(MEMBER_RECORD_SIZE) + 2n * SIGNATURE_FEE);
       assert.isBelow(Number(first.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
-      // Both joins derive the same addresses, so the difference is the tally creation alone.
       assert.equal(first.computeUnits - rejoin.computeUnits, 2_601n);
       assert.equal((await fetchTally(gPda, member)).joins, 2);
     });

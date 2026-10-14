@@ -130,8 +130,6 @@ impl<'info> JoinGroup<'info> {
             .checked_add(1)
             .ok_or(SafeNudgeError::ArithmeticOverflow)?;
 
-        // Creation and the first increment are one atomic instruction, so a stored tally is never
-        // 0: `joins == 0` means init_if_needed created it just now. A rejoin keeps the first payer.
         if self.join_tally.joins == 0 {
             self.join_tally.rent_payer = self.rent_payer.key();
         }
