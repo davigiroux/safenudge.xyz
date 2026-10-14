@@ -3,15 +3,6 @@ use anchor_lang::prelude::*;
 use crate::errors::SafeNudgeError;
 use crate::state::JoinTally;
 
-/// Closes one JoinTally once no group lives at its group address, and pays its rent to the
-/// recorded rent payer.
-///
-/// Permissionless. The caller chooses only which tally to close; `member` is a seed only. The
-/// tally's seeds pin `group_config` to the group address the tally counts joins at. A program-owned
-/// account there is a live group, of any status, and blocks the close, so a tally only goes away
-/// after `close_group`, and a new group at the freed code blocks it again until that group closes
-/// too. The destination is `join_tally.rent_payer`. Every check is a constraint and Anchor's
-/// `close` moves the lamports after the handler returns.
 #[derive(Accounts)]
 #[instruction(member: Pubkey)]
 pub struct CloseJoinTally<'info> {

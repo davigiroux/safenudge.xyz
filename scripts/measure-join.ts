@@ -1,11 +1,3 @@
-// Measures join_group on LiteSVM for one or more program builds: compute units, the gated create
-// transaction size, and the SOL a sponsor pays per join. Runs alternate between the builds, and
-// run i uses the same seeded keys on every build, so PDA bump searches match. Prints one JSON
-// object per build.
-//
-//   npx ts-node -P tsconfig.json scripts/measure-join.ts [--build <so>:<idl>]... [--runs 5]
-//
-// Without --build it measures target/deploy/safenudge.so with target/idl/safenudge.json.
 import { Program } from "@coral-xyz/anchor";
 import BN from "bn.js";
 import { LiteSVMProvider } from "anchor-litesvm";
@@ -30,7 +22,7 @@ function parseArgs(argv: string[]): Args {
       const [so, idl] = value.split(":");
       args.builds.push({ so, idl });
     } else if (argv[i] === "--runs") args.runs = Number(value);
-    else throw new Error(`unknown argument ${argv[i]}`);
+    else throw new Error(`unknown argument ${argv[i]}. Usage: measure-join.ts [--build <so>:<idl>]... [--runs <n>]`);
   }
   if (args.builds.length === 0) args.builds.push({ so: "target/deploy/safenudge.so", idl: "target/idl/safenudge.json" });
   return args;
@@ -142,7 +134,6 @@ async function gateIx(env: Env, groupConfig: PublicKey, authority: PublicKey, cr
     .instruction();
 }
 
-// One sponsored, ungated join on a fresh VM: its compute units and what the sponsor paid.
 async function measureJoin(build: Build, run: number): Promise<{ computeUnits: bigint; sponsorPaid: bigint }> {
   const env = freshEnv(build, `join-${run}`);
   const sponsor = fundedMember(env, seeded(`join-${run}:sponsor`), 2 * LAMPORTS_PER_SOL).keypair;
@@ -157,7 +148,6 @@ async function measureJoin(build: Build, run: number): Promise<{ computeUnits: b
   return { computeUnits, sponsorPaid: before - after - 2n * SIGNATURE_FEE };
 }
 
-// create_group, set_join_authority and the creator's approved join in one sponsored transaction.
 async function measureGatedCreate(build: Build): Promise<{ bytes: number; computeUnits: bigint }> {
   const env = freshEnv(build, "gated");
   const sponsor = fundedMember(env, seeded("gated:sponsor"), 2 * LAMPORTS_PER_SOL).keypair;
