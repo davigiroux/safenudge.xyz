@@ -113,7 +113,10 @@ async function createGroupIx(env: Env, code: string, creator: PublicKey, rentPay
     .instruction();
 }
 
-async function joinIx(env: Env, groupConfig: PublicKey, member: Member, rentPayer: PublicKey, joinAuthority: PublicKey | null) {
+async function joinIx(
+  env: Env, groupConfig: PublicKey, member: Member, rentPayer: PublicKey, joinAuthority: PublicKey | null,
+  expectedJoins: number | null,
+) {
   const accounts: Record<string, PublicKey | null> = {
     member: member.keypair.publicKey, rentPayer, groupConfig,
     memberRecord: pda(env.program, [Buffer.from("member"), groupConfig.toBuffer(), member.keypair.publicKey.toBuffer()]),
@@ -125,7 +128,7 @@ async function joinIx(env: Env, groupConfig: PublicKey, member: Member, rentPaye
     accounts.joinTally = pda(env.program, [Buffer.from("tally"), groupConfig.toBuffer(), member.keypair.publicKey.toBuffer()]);
   }
   const method = env.hasExpectedJoins
-    ? env.program.methods.joinGroup(joinAuthority ? 0 : null)
+    ? env.program.methods.joinGroup(expectedJoins)
     : env.program.methods.joinGroup();
   return method.accounts(accounts).instruction();
 }
@@ -147,7 +150,7 @@ async function measureJoin(build: Build, run: number): Promise<{ computeUnits: b
   const member = fundedMember(env, seeded(`join-${run}:member`), 0);
   const before = env.client.getBalance(sponsor.publicKey) ?? 0n;
   const { computeUnits } = send(
-    env.client, sponsor, [await joinIx(env, groupConfig, member, sponsor.publicKey, null)], [member.keypair],
+    env.client, sponsor, [await joinIx(env, groupConfig, member, sponsor.publicKey, null, null)], [member.keypair],
   );
   const after = env.client.getBalance(sponsor.publicKey) ?? 0n;
   return { computeUnits, sponsorPaid: before - after - 2n * SIGNATURE_FEE };
@@ -162,7 +165,7 @@ async function measureGatedCreate(build: Build): Promise<{ bytes: number; comput
   return send(env.client, sponsor, [
     await createGroupIx(env, "gated-measure", creator.keypair.publicKey, sponsor.publicKey),
     await gateIx(env, groupConfig, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey),
-    await joinIx(env, groupConfig, creator, sponsor.publicKey, authority.publicKey),
+    await joinIx(env, groupConfig, creator, sponsor.publicKey, authority.publicKey, 0),
   ], [creator.keypair, authority]);
 }
 
