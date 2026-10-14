@@ -47,6 +47,13 @@ The authority reads `joins` at offset 40, and an absent tally means 0.
 It stores the value when it approves a join. When it co-signs, a
 different value means the approval is spent.
 
+The count alone does not make an approval single-use. The authority
+must also co-sign each approval at most once and mark it spent in that
+step, because two co-sign requests sent before either join lands read
+the same count. It must bind each approval to the group instance it was
+made for, and never let it outlive that `GroupConfig` account, because
+a stored count means nothing in a later group at the same code.
+
 ## Considered options
 
 - **Store the group, the member and the bump in the tally.** 109 bytes
@@ -77,10 +84,13 @@ different value means the approval is spent.
 - A sponsor pays 873,760 lamports more at a member's first join at a
   group address (devnet and mainnet rent, 2026-10-13). A rejoin pays the
   record rent only. `close_join_tally` returns the tally rent.
-- A join costs 7,736 to 10,736 more compute units. Most of it is the
-  tally's PDA bump search, because the tally stores no bump, and the
-  account creation. A gated create transaction with a
-  32-character code is 824 bytes of the 1,232-byte limit.
+- A join costs 7,736 more compute units when the tally's canonical bump
+  is found at the first try, and 1,500 more for each further try. Over
+  256 member keys, 6 joins cost more than 15,000 extra, at most 16,736.
+  A bump passed by the client would skip the search, but a non-canonical
+  bump gives the member a second tally at 0, so the program searches. A
+  gated create transaction with a 32-character code is 824 bytes of the
+  1,232-byte limit.
 - `anchor-lang` now enables `init-if-needed`, for the first time in this
   program. The usual risk is a second initialization that rewrites
   state. Here the payer is the `rent_payer` signer of the join, Anchor
@@ -90,6 +100,13 @@ different value means the approval is spent.
 - A tally that nobody closes carries its count into a later group at the
   same code. The count is then too high, which makes an authority refuse
   more, not approve more.
+- Before this change a join and a leave cost the sponsor no rent, since
+  the record rent returns at the leave. Now the tally rent stays locked
+  until the group closes and someone sends `close_join_tally`. It is
+  paid once per member and group address, not once per join. To close a
+  tally, a caller needs the group and the member, which the tally does
+  not store. The rent payer has both from the joins it paid for, and
+  `MemberJoined` carries both with `rent_payer`.
 - After `close_group` anyone can close a tally. A later group at the code
   then starts that member from 0, so the count can return to a value that
   an authority stored for the old group. An authority must not compare

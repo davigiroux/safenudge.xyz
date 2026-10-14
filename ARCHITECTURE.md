@@ -108,6 +108,11 @@ The size is pinned at compile time, and a unit test in `state/join_tally.rs` che
 
 A join authority reads the tally to tell a wallet that joined and left from one that never joined. It derives the address from the group and the member, and reads `joins` as a little-endian `u32` at offset 40. An address that this program does not own means 0. To spend each approval once, the authority stores `joins` when it approves a join. When it co-signs, it reads `joins` again. A value other than the stored one means that the approval is spent, or that a new group took the code, and the authority refuses. Within one group instance the count only grows, so the check is exact there. Across instances at one code it is not. See "Tally inherited at a freed code" and "Tally closed then count restarts" under Security.
 
+The count alone does not make an approval single-use. An authority that uses it must also follow these rules:
+
+- Co-sign each approval at most once, and mark it spent in the same step. Two co-sign requests sent before either join lands both read the same `joins`, and the program checks only the signature. A member could then join, leave and join again within the life of the blockhash.
+- Bind each approval to the group instance it was made for, and never let it outlive that `GroupConfig` account. A stored `joins` value means nothing in a later group at the same code: an absent or closed tally reads 0 again, and a reset count can grow back to the stored value.
+
 #### Rent payer
 
 `rent_payer` is the wallet that signed and paid the account rent at `create_group` or `join_group`. It equals the creator or the member when they pay for themselves. The program writes it once and never changes it. Every rent refund goes to that wallet and to no other:
@@ -238,7 +243,7 @@ A member joins the group and makes their initial deposit.
 - Creates `JoinTally` at the first join, with `rent_payer` = the `rent_payer` signer. The handler sets `rent_payer` only when `joins == 0`, which holds only for a tally created in this instruction, so a rejoin keeps the first payer
 - Increments `join_tally.joins`
 
-The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,493,520 lamports of the record. A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,046,240. The tally adds 7,736 to 10,736 compute units to a join, most of it in the tally's PDA bump search and its creation. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 824 bytes, under the 1,232-byte limit.
+The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,493,520 lamports of the record. A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,046,240. The tally adds 7,736 compute units to a join when its canonical bump is found at the first try, and 1,500 more for each further try. Over 256 member keys, 223 joins added at most 10,767, 250 added at most 13,736, and 6 added more than 15,000, at most 16,736. The search cannot be skipped with a bump passed by the client: a non-canonical bump gives a second tally address at 0. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 824 bytes, under the 1,232-byte limit.
 
 ---
 
