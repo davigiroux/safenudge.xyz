@@ -7,14 +7,14 @@ use solana_instructions_sysvar::load_instruction_at_checked;
 
 use crate::errors::SafeNudgeError;
 use crate::events::MemberJoined;
-use crate::state::{GroupConfig, JoinGate, MemberRecord, STATUS_OPEN};
+use crate::state::{GroupConfig, JoinGate, JoinTally, MemberRecord, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct JoinGroup<'info> {
     pub member: Signer<'info>,
 
-    /// Pays the member_record rent and is recorded as the destination of that rent when the
-    /// record is closed. May be the same key as `member`.
+    /// Pays the member_record rent, and the join_tally rent at the first join, and is recorded as
+    /// the destination of each rent when that account is closed. May be the same key as `member`.
     #[account(mut)]
     pub rent_payer: Signer<'info>,
 
@@ -81,6 +81,18 @@ pub struct JoinGroup<'info> {
     /// writes. The handler reads it only through `load_instruction_at_checked`.
     #[account(address = solana_instructions_sysvar::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
+
+    /// Created at the first join and paid by `rent_payer`; every later join adds one. Last in the
+    /// list so an older client fails with `AccountNotEnoughKeys` instead of shifting the accounts
+    /// before it.
+    #[account(
+        init_if_needed,
+        payer = rent_payer,
+        space = 8 + JoinTally::INIT_SPACE,
+        seeds = [b"tally", group_config.key().as_ref(), member.key().as_ref()],
+        bump,
+    )]
+    pub join_tally: Account<'info, JoinTally>,
 }
 
 impl<'info> JoinGroup<'info> {
@@ -118,6 +130,17 @@ impl<'info> JoinGroup<'info> {
             .checked_add(1)
             .ok_or(SafeNudgeError::ArithmeticOverflow)?;
 
+        // Creation and the first increment are one atomic instruction, so a stored tally is never
+        // 0: `joins == 0` means init_if_needed created it just now. A rejoin keeps the first payer.
+        if self.join_tally.joins == 0 {
+            self.join_tally.rent_payer = self.rent_payer.key();
+        }
+        self.join_tally.joins = self
+            .join_tally
+            .joins
+            .checked_add(1)
+            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
+
         // ── Interactions ────────────────────────────────────
         let cpi_accounts = TransferChecked {
             from: self.member_token_account.to_account_info(),
@@ -138,6 +161,7 @@ impl<'info> JoinGroup<'info> {
             rent_payer: self.rent_payer.key(),
             amount: self.group_config.deposit_amount,
             current_members: self.group_config.current_members,
+            joins: self.join_tally.joins,
         });
 
         Ok(())
