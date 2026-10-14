@@ -94,21 +94,25 @@ flowchart TB
     V[Vault SPL token account<br/>seeds: 'vault', group<br/>token::authority = self]
     TA[TreasuryAuthority<br/>seeds: 'treasury']
     TT[Treasury ATA<br/>ATA of mint × TreasuryAuthority]
+    JG[JoinGate, optional<br/>seeds: 'join', group]
+    JT[JoinTally<br/>seeds: 'tally', group, member]
 
     GC -->|1 : N| MR
+    GC -->|0 or 1| JG
+    GC -.->|1 : N, outlives close_group| JT
     GC -->|1 : 1| V
     TA -->|owns| TT
     V -.->|5% on distribute| TT
 ```
 
-GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The vault is a single SPL token account whose **address and authority are the same PDA** — no human key is ever the authority on the vault. The Treasury is a singleton, shared across every group on the cluster, drained only by the compile-time `FEE_RECIPIENT`.
+GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. A JoinGate makes every join need a join authority's signature. A JoinTally counts one member's joins at a group address, across leaves and rejoins, and stays open after `close_group` until `close_join_tally` closes it. The vault is a single SPL token account whose **address and authority are the same PDA** — no human key is ever the authority on the vault. The Treasury is a singleton, shared across every group on the cluster, drained only by the compile-time `FEE_RECIPIENT`.
 
 ### Instruction set
 
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
 | `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator). Rejects unsupported mints | None | — |
-| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member). A gated group also needs its join authority's signature | Member → Vault | Open |
+| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member). A gated group also needs its join authority's signature. Creates the member's join tally at the first join and adds one at every join | Member → Vault | Open |
 | `leave_group` | The member only | Vault → that member (the first deposit back). Member record rent (SOL) → the wallet that paid it | Open |
 | `start_cycle` | Creator only | None | Open |
 | `deposit` | Members only | Member → Vault | Active |
@@ -119,8 +123,9 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. The 
 | `close_member_record` | Anyone (permissionless) | Member record rent (SOL) → the wallet that paid it | Completed or Cancelled, 30 days after settlement |
 | `close_group` | Anyone (permissionless) | Group account and join gate rent (SOL) → the wallet that paid it | Completed or Cancelled, every member record closed |
 | `set_join_authority` | Creator only (the group's `rent_payer` signs and pays rent) | None | Open, no member yet |
+| `close_join_tally` | Anyone (permissionless) | Join tally rent (SOL) → the wallet that paid it | No live group at the tally's group address (after `close_group`) |
 
-Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. A member who leaves an open group gets tokens only; the record rent goes back to its payer. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. Once every member record is closed, `close_group` returns the group account rent to its payer too. The group code is then free for a new group.
+Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. A member who leaves an open group gets tokens only; the record rent goes back to its payer. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. Once every member record is closed, `close_group` returns the group account rent to its payer too. The group code is then free for a new group. Join tallies stay open, and `close_join_tally` returns each tally's rent to its payer.
 
 ### Tech stack
 
