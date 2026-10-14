@@ -112,7 +112,7 @@ GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. A Jo
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
 | `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator). Rejects unsupported mints | None | — |
-| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member). A gated group also needs its join authority's signature. Creates the member's join tally at the first join and adds one at every join | Member → Vault | Open |
+| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member). A gated group also needs its join authority's signature and the member's expected join count. Creates the member's join tally at the first join and adds one at every join | Member → Vault | Open |
 | `leave_group` | The member only | Vault → that member (the first deposit back). Member record rent (SOL) → the wallet that paid it | Open |
 | `start_cycle` | Creator only | None | Open |
 | `deposit` | Members only | Member → Vault | Active |

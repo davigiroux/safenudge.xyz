@@ -106,12 +106,9 @@ pub struct JoinTally {
 
 The size is pinned at compile time, and a unit test in `state/join_tally.rs` checks each offset.
 
-A join authority reads the tally to tell a wallet that joined and left from one that never joined. It derives the address from the group and the member, and reads `joins` as a little-endian `u32` at offset 40. An address that this program does not own means 0. To spend each approval once, the authority stores `joins` when it approves a join. When it co-signs, it reads `joins` again. A value other than the stored one means that the approval is spent, or that a new group took the code, and the authority refuses. Within one group instance the count only grows, so the check is exact there. Across instances at one code it is not. See "Tally inherited at a freed code" and "Tally closed then count restarts" under Security.
+A join authority reads the tally to tell a wallet that joined and left from one that never joined. It derives the address from the group and the member, and reads `joins` as a little-endian `u32` at offset 40. An address that this program does not own means 0. To spend each approval once, the authority stores `joins` when it approves a join, and co-signs only a `join_group` whose `expected_joins` is that stored value. The program refuses the join when the tally holds any other count (`JoinCountMismatch`), so a co-signed approval lands at most once, however many messages the authority signed for it. Within one group instance the count only grows, so the check is exact there. Across instances at one code it is not. See "Tally inherited at a freed code" and "Tally closed then count restarts" under Security.
 
-The count alone does not make an approval single-use. An authority that uses it must also follow these rules:
-
-- Co-sign each approval at most once, and mark it spent in the same step. Two co-sign requests sent before either join lands both read the same `joins`, and the program checks only the signature. A member could then join, leave and join again within the life of the blockhash.
-- Bind each approval to the group instance it was made for, and never let it outlive that `GroupConfig` account. A stored `joins` value means nothing in a later group at the same code: an absent or closed tally reads 0 again, and a reset count can grow back to the stored value.
+An authority must also bind each approval to the group instance it was made for, and never let it outlive that `GroupConfig` account. A stored `joins` value means nothing in a later group at the same code: an absent or closed tally reads 0 again, and a reset count can grow back to the stored value.
 
 #### Rent payer
 
@@ -223,9 +220,9 @@ A member joins the group and makes their initial deposit.
 - `join_gate` — the address `["join", group_config]`, enforced by seeds. It may hold nothing
 - `join_authority` (optional signer) — must sign when a `JoinGate` exists at `join_gate`. Ignored otherwise
 - `instructions_sysvar` — address pinned to the instructions sysvar. Read only for a gated group
-- `join_tally` (mut, `init_if_needed`, payer = `rent_payer`). Seeds `["tally", group_config, member]`. The last account, so a client that omits it fails with `AccountNotEnoughKeys`
+- `join_tally` (mut, `init_if_needed`, payer = `rent_payer`). Seeds `["tally", group_config, member]`. The last account, so earlier positions do not move
 
-**Args:** None (deposit amount comes from `group_config.deposit_amount`)
+**Args:** `expected_joins: Option<u32>`. When given, the member's tally count before this join, 0 for a first join. The deposit amount comes from `group_config.deposit_amount`
 
 **Validation:**
 - `group_config.status == Open (0)`
@@ -233,6 +230,8 @@ A member joins the group and makes their initial deposit.
 - Member doesn't already have a `MemberRecord` for this group (PDA uniqueness handles this)
 - When this program owns `join_gate`, it must deserialize as a `JoinGate`, and `join_authority` must be present, sign, and equal `join_gate.authority` (`JoinNotApproved`). A system-owned address, with or without lamports, means the group has no gate
 - For a gated group, instruction 0 of the transaction is not `AdvanceNonceAccount` (`DurableNonceNotAllowed`). See "Approval replayed in a later group at the same code" under Security
+- For a gated group, `expected_joins` is given (`ExpectedJoinsRequired`)
+- When `expected_joins` is given, it equals `join_tally.joins` before the increment (`JoinCountMismatch`). An open group may omit it
 - An existing `join_tally` must be owned by this program and carry the `JoinTally` discriminator (Anchor's `init_if_needed` checks). A system-owned address, with or without lamports, gets a new tally
 - Member has sufficient USDC balance
 
@@ -243,7 +242,7 @@ A member joins the group and makes their initial deposit.
 - Creates `JoinTally` at the first join, with `rent_payer` = the `rent_payer` signer. The handler sets `rent_payer` only when `joins == 0`, which holds only for a tally created in this instruction, so a rejoin keeps the first payer
 - Increments `join_tally.joins`
 
-The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,493,520 lamports of the record. A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,046,240. The tally adds 7,736 compute units to a join when its canonical bump is found at the first try, and 1,500 more for each further try. Over 256 member keys, 223 joins added at most 10,767, 250 added at most 13,736, and 6 added more than 15,000, at most 16,736. The search cannot be skipped with a bump passed by the client: a non-canonical bump gives a second tally address at 0. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 824 bytes, under the 1,232-byte limit.
+The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,493,520 lamports of the record. A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,046,240. The tally adds 7,745 compute units to a join when its canonical bump is found at the first try, and 1,500 more for each further try. Over 256 member keys, 223 joins added at most 10,776, 250 added at most 13,745, and 6 added more than 15,000, at most 16,745. The search cannot be skipped with a bump passed by the client: a non-canonical bump gives a second tally address at 0. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 829 bytes, under the 1,232-byte limit.
 
 ---
 
@@ -825,6 +824,10 @@ pub enum SafeNudgeError {
     DurableNonceNotAllowed,
     #[msg("Close the group before closing a join tally")]
     GroupNotClosed,
+    #[msg("The member's join count no longer matches the approved join")]
+    JoinCountMismatch,
+    #[msg("A gated join must name the member's expected join count")]
+    ExpectedJoinsRequired,
 }
 ```
 
@@ -988,7 +991,7 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 
 The join gate changes no layout of an existing account either. `JoinGate` is a new account. For a client: `join_group` takes three more accounts after `system_program`, `join_gate`, the optional signer `join_authority` and `instructions_sysvar`, so earlier positions do not move; `close_group` takes `join_gate` after `rent_payer`; `set_join_authority` is new; and `GroupHasMembers` (6028), `InvalidJoinAuthority` (6029), `JoinNotApproved` (6030) and `DurableNonceNotAllowed` (6031) are new error codes. An Anchor client derives `join_gate` from the IDL seeds and fills `instructions_sysvar` from its fixed address. It fills an omitted optional signer with the provider wallet, so a client must pass `joinAuthority: null` for an open group, or the authority for a gated one.
 
-The join tally changes no layout of an existing account. `JoinTally` is a new account. For a client: `join_group` takes `join_tally` as its last account, after `instructions_sysvar`, so earlier positions do not move, and a client on the previous IDL fails with `AccountNotEnoughKeys`; `close_join_tally` is new; `MemberJoined` gains `joins`; and `GroupNotClosed` (6032) is a new error code. An Anchor client derives `join_tally` from the IDL seeds. Clients repin the IDL in the same release window as the upgrade.
+The join tally changes no layout of an existing account. `JoinTally` is a new account. For a client: `join_group` takes the argument `expected_joins: Option<u32>`, which a gated join must set, and `join_tally` as its last account, after `instructions_sysvar`, so earlier positions do not move. A client on the previous IDL sends no argument and fails with `InstructionDidNotDeserialize`. `close_join_tally` is new, `MemberJoined` gains `joins`, and `GroupNotClosed` (6032), `JoinCountMismatch` (6033) and `ExpectedJoinsRequired` (6034) are new error codes. An Anchor client derives `join_tally` from the IDL seeds. Clients repin the IDL in the same release window as the upgrade.
 
 Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
 
@@ -1109,6 +1112,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Join tally closed while the group lives | `close_join_tally` fails with `GroupNotClosed` whenever this program owns the group address, in every status, so a member cannot reset the count of a live group. The tally seeds pin `group_config`, so the caller cannot pass another address. |
 | Join authority key stolen or lost (accepted) | The key can only allow joins: with it, a stranger can join a gated group, and no funds move. Without it, the group takes no new member, and members can still leave and the creator can still cancel. |
 | Co-signed join widened by the client | The authority signs the whole message, so a client could add joins for other wallets. The backend that holds the authority checks that a message holds exactly one join for the approved member, and signs over a recent blockhash only. |
+| One approval co-signed twice | Two co-signed messages for one approval could both land, with a leave between them. A gated join must name `expected_joins`, and the program refuses it unless the tally holds that count (`ExpectedJoinsRequired`, `JoinCountMismatch`). The first join raises the count, so a second message signed for the same count fails. |
 | Approval replayed in a later group at the same code | Nothing in a join names the group instance, so a held approval could join a later group at the same code that uses the same authority. `join_group` rejects a gated join whose transaction starts with `AdvanceNonceAccount` (`DurableNonceNotAllowed`), so an approval lives at most about 150 slots. Within that time a replay needs the creator to cancel an empty group, close it and create the same code again: the creator's own group. Binding the instance in the instruction would need a field in `GroupConfig`, which ADR-0003 avoids. |
 | Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 179 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |

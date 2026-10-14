@@ -41,18 +41,22 @@ each join gives an answer in one account read.
   `GroupNotClosed` while this program owns the group address, so a tally
   closes only after `close_group`, and only until a new group takes the
   code.
+- `join_group` takes `expected_joins: Option<u32>`. When it is given,
+  the tally must hold that count before the join, or the join fails with
+  `JoinCountMismatch`. A gated join must give it
+  (`ExpectedJoinsRequired`). An open group may pass `None`.
 - `MemberJoined` gains `joins`, the count after this join.
 
 The authority reads `joins` at offset 40, and an absent tally means 0.
-It stores the value when it approves a join. When it co-signs, a
-different value means the approval is spent.
+It stores the value when it approves a join, and co-signs only a join
+whose `expected_joins` is that value. The first join that lands raises
+the count, so every other message signed for the same approval fails on
+chain. An off-chain compare at co-sign time could not stop this: two
+co-sign requests sent before either join lands read the same count.
 
-The count alone does not make an approval single-use. The authority
-must also co-sign each approval at most once and mark it spent in that
-step, because two co-sign requests sent before either join lands read
-the same count. It must bind each approval to the group instance it was
-made for, and never let it outlive that `GroupConfig` account, because
-a stored count means nothing in a later group at the same code.
+The authority must still bind each approval to the group instance it
+was made for, and never let it outlive that `GroupConfig` account,
+because a stored count means nothing in a later group at the same code.
 
 ## Considered options
 
@@ -84,12 +88,12 @@ a stored count means nothing in a later group at the same code.
 - A sponsor pays 873,760 lamports more at a member's first join at a
   group address (devnet and mainnet rent, 2026-10-13). A rejoin pays the
   record rent only. `close_join_tally` returns the tally rent.
-- A join costs 7,736 more compute units when the tally's canonical bump
+- A join costs 7,745 more compute units when the tally's canonical bump
   is found at the first try, and 1,500 more for each further try. Over
-  256 member keys, 6 joins cost more than 15,000 extra, at most 16,736.
+  256 member keys, 6 joins cost more than 15,000 extra, at most 16,745.
   A bump passed by the client would skip the search, but a non-canonical
   bump gives the member a second tally at 0, so the program searches. A
-  gated create transaction with a 32-character code is 824 bytes of the
+  gated create transaction with a 32-character code is 829 bytes of the
   1,232-byte limit.
 - `anchor-lang` now enables `init-if-needed`, for the first time in this
   program. The usual risk is a second initialization that rewrites
@@ -111,7 +115,9 @@ a stored count means nothing in a later group at the same code.
   then starts that member from 0, so the count can return to a value that
   an authority stored for the old group. An authority must not compare
   counts across group instances.
-- `join_group` takes one more account at the end. A client on the
-  previous IDL fails with `AccountNotEnoughKeys` and must repin the IDL.
-  An Anchor client derives the tally from the IDL seeds.
-  `GroupNotClosed` (6032) is a new error code.
+- `join_group` takes one more argument and one more account at the
+  end. A client on the previous IDL sends no argument, fails with
+  `InstructionDidNotDeserialize`, and must repin the IDL. An Anchor
+  client derives the tally from the IDL seeds. `GroupNotClosed` (6032),
+  `JoinCountMismatch` (6033) and `ExpectedJoinsRequired` (6034) are new
+  error codes.
