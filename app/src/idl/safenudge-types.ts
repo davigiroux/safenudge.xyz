@@ -87,6 +87,73 @@ export type Safenudge = {
       "args": []
     },
     {
+      "name": "closeJoinTally",
+      "docs": [
+        "Closes one member's JoinTally after the group at its address is closed. `member` is only",
+        "a seed of `join_tally`, read through `#[instruction(member: Pubkey)]`."
+      ],
+      "discriminator": [
+        10,
+        78,
+        107,
+        65,
+        30,
+        119,
+        152,
+        70
+      ],
+      "accounts": [
+        {
+          "name": "groupConfig",
+          "docs": [
+            "program-owned account at a group address, and `close_group` hands it back to the system",
+            "program, so an owner other than this program means no group lives there now. A new group",
+            "at the freed code is program-owned again, and the close fails until that group closes."
+          ]
+        },
+        {
+          "name": "joinTally",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  108,
+                  108,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              },
+              {
+                "kind": "arg",
+                "path": "member"
+              }
+            ]
+          }
+        },
+        {
+          "name": "rentPayer",
+          "docs": [
+            "not a signer or an authority. The constraint on `join_tally` pins its key to the wallet",
+            "that paid at the first join_group, so the caller cannot redirect the rent."
+          ],
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "member",
+          "type": "pubkey"
+        }
+      ]
+    },
+    {
       "name": "closeMemberRecord",
       "discriminator": [
         187,
@@ -764,8 +831,8 @@ export type Safenudge = {
         {
           "name": "rentPayer",
           "docs": [
-            "Pays the member_record rent and is recorded as the destination of that rent when the",
-            "record is closed. May be the same key as `member`."
+            "Pays the member_record rent, and the join_tally rent at the first join, and is recorded as",
+            "the destination of each rent when that account is closed. May be the same key as `member`."
           ],
           "writable": true,
           "signer": true
@@ -955,6 +1022,37 @@ export type Safenudge = {
             "writes. The handler reads it only through `load_instruction_at_checked`."
           ],
           "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "joinTally",
+          "docs": [
+            "Created at the first join and paid by `rent_payer`; every later join adds one. Last in the",
+            "list so an older client fails with `AccountNotEnoughKeys` instead of shifting the accounts",
+            "before it."
+          ],
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  116,
+                  97,
+                  108,
+                  108,
+                  121
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "groupConfig"
+              },
+              {
+                "kind": "account",
+                "path": "member"
+              }
+            ]
+          }
         }
       ],
       "args": []
@@ -1332,6 +1430,19 @@ export type Safenudge = {
       ]
     },
     {
+      "name": "joinTally",
+      "discriminator": [
+        115,
+        110,
+        84,
+        97,
+        108,
+        108,
+        121,
+        49
+      ]
+    },
+    {
       "name": "memberRecord",
       "discriminator": [
         115,
@@ -1650,6 +1761,11 @@ export type Safenudge = {
       "code": 6031,
       "name": "durableNonceNotAllowed",
       "msg": "A gated join cannot use a durable nonce"
+    },
+    {
+      "code": 6032,
+      "name": "groupNotClosed",
+      "msg": "Close the group before closing a join tally"
     }
   ],
   "types": [
@@ -2062,6 +2178,38 @@ export type Safenudge = {
       }
     },
     {
+      "name": "joinTally",
+      "docs": [
+        "Counts the joins of one member at one group address, across `leave_group`.",
+        "",
+        "Lives at PDA `[\"tally\", group_config, member]`. `join_group` creates it at the first join and",
+        "adds one at every join. `leave_group` and `close_member_record` never touch it, and it outlives",
+        "`close_group`. Only `close_join_tally` closes it, once no group lives at its group address.",
+        "The address names the group and the member, so the account stores neither."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "rentPayer",
+            "docs": [
+              "Offset 8. Paid this account's rent at the first join_group. The only destination of that",
+              "rent when the tally is closed. A later join never rewrites it."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "joins",
+            "docs": [
+              "Offset 40. Successful join_group calls of this member at this group address. Never zero",
+              "on a stored tally: the join that creates the account also counts itself."
+            ],
+            "type": "u32"
+          }
+        ]
+      }
+    },
+    {
       "name": "memberJoined",
       "docs": [
         "A member joined with the first deposit."
@@ -2094,6 +2242,13 @@ export type Safenudge = {
               "Members after this join."
             ],
             "type": "u8"
+          },
+          {
+            "name": "joins",
+            "docs": [
+              "This member's joins at this group address, this one included."
+            ],
+            "type": "u32"
           }
         ]
       }
