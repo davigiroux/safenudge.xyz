@@ -26,6 +26,8 @@ pub struct MemberJoined {
     pub amount: u64,
     /// Members after this join.
     pub current_members: u8,
+    /// This member's joins at this group address, this one included.
+    pub joins: u32,
 }
 
 /// A member left an Open group and got the recorded deposit back.

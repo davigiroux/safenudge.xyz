@@ -356,6 +356,7 @@ describe("safenudge", () => {
   const GROUP_CONFIG_SIZE = 179;
   const MEMBER_RECORD_SIZE = 166;
   const JOIN_GATE_SIZE = 40;
+  const JOIN_TALLY_SIZE = 44;
   const CURRENT_MEMBERS_OFFSET = 139;
 
   function rentFor(bytes: number): bigint {
@@ -508,6 +509,13 @@ describe("safenudge", () => {
     );
   }
 
+  function getJoinTallyPda(groupConfig: PublicKey, member: PublicKey): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+      [Buffer.from("tally"), groupConfig.toBuffer(), member.toBuffer()],
+      program.programId
+    );
+  }
+
   type JoinOpts = { mint?: PublicKey; tokenProgram?: PublicKey; joinAuthority?: PublicKey | null };
 
   function joinMethod(
@@ -519,6 +527,7 @@ describe("safenudge", () => {
         member: member.keypair.publicKey, rentPayer, groupConfig: gPda, memberRecord: member.recordPda,
         memberTokenAccount: member.tokenAccount, vault: vPda, mint,
         tokenProgram, systemProgram: SystemProgram.programId, joinGate: getJoinGatePda(gPda)[0], joinAuthority,
+        joinTally: getJoinTallyPda(gPda, member.keypair.publicKey)[0],
       });
   }
 
@@ -1368,7 +1377,9 @@ describe("safenudge", () => {
 
       const record = await program.account.memberRecord.fetch(recordPda);
       assert.equal(record.rentPayer.toBase58(), keypair.publicKey.toBase58());
-      assert.equal(before - lamportsOf(keypair.publicKey), rentFor(MEMBER_RECORD_SIZE));
+      assert.equal(
+        before - lamportsOf(keypair.publicKey), rentFor(MEMBER_RECORD_SIZE) + rentFor(JOIN_TALLY_SIZE),
+      );
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
     });
 
@@ -1390,7 +1401,7 @@ describe("safenudge", () => {
       assert.equal(lamportsOf(keypair.publicKey), 0n);
       assert.equal(
         sponsorBefore - lamportsOf(sponsor.publicKey),
-        rentFor(MEMBER_RECORD_SIZE) + 2n * SIGNATURE_FEE,
+        rentFor(MEMBER_RECORD_SIZE) + rentFor(JOIN_TALLY_SIZE) + 2n * SIGNATURE_FEE,
       );
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
       assert.equal(await getTokenBalanceOrZero(tokenAccount), 0n);
@@ -1818,6 +1829,241 @@ describe("safenudge", () => {
     });
   });
 
+  describe("join tally", () => {
+    function tallyPdaOf(gPda: PublicKey, member: Member): PublicKey {
+      return getJoinTallyPda(gPda, member.keypair.publicKey)[0];
+    }
+
+    function fetchTally(gPda: PublicKey, member: Member) {
+      return program.account.joinTally.fetch(tallyPdaOf(gPda, member));
+    }
+
+    async function zeroSolJoiner(gPda: PublicKey): Promise<Member> {
+      const { keypair, tokenAccount } = await createFundedMember(10_000_000, 0);
+      return { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+    }
+
+    it("creates the tally at the first join with joins 1 and the join's rent payer", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-first", { depositAmount: 10_000_000 });
+      const sponsor = await fundedKeypair();
+      const member = await newJoiner(gPda);
+
+      await joinCall(member, gPda, vPda, { rentPayer: sponsor });
+
+      const account = context.banksClient.getAccount(tallyPdaOf(gPda, member));
+      assert.equal(account.owner.toBase58(), program.programId.toBase58());
+      assert.equal(account.data.length, 44);
+      assert.equal(Buffer.from(account.data).subarray(0, 8).toString(), "snTally1");
+      const tally = await fetchTally(gPda, member);
+      assert.equal(tally.joins, 1);
+      assert.equal(tally.rentPayer.toBase58(), sponsor.publicKey.toBase58());
+      assert.equal(lamportsOf(tallyPdaOf(gPda, member)), rentFor(JOIN_TALLY_SIZE));
+    });
+
+    it("counts 2 after a join, a leave and a rejoin", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-rejoin", { depositAmount: 10_000_000 });
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      await leaveCall(member, gPda, vPda);
+
+      await joinCall(member, gPda, vPda);
+
+      assert.equal((await fetchTally(gPda, member)).joins, 2);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+    });
+
+    it("keeps the tally through leave_group", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-leave", { depositAmount: 10_000_000 });
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+
+      await leaveCall(member, gPda, vPda);
+
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.equal((await fetchTally(gPda, member)).joins, 1);
+      assert.equal(lamportsOf(tallyPdaOf(gPda, member)), rentFor(JOIN_TALLY_SIZE));
+    });
+
+    it("keeps the tally through close_member_record", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await settledGroup("tally-close-record", "cancel", sponsor);
+      passRecordRetention();
+
+      await closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).rpc();
+
+      assert.isNull(context.banksClient.getAccount(members[0].recordPda));
+      const tally = await fetchTally(gPda, members[0]);
+      assert.equal(tally.joins, 1);
+      assert.equal(tally.rentPayer.toBase58(), sponsor.publicKey.toBase58());
+      assert.equal(lamportsOf(tallyPdaOf(gPda, members[0])), rentFor(JOIN_TALLY_SIZE));
+    });
+
+    it("keeps the first rent payer when a rejoin uses another payer, who pays only the record rent", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-two-payers", { depositAmount: 10_000_000 });
+      const member = await zeroSolJoiner(gPda);
+      const first = await fundedKeypair();
+      const second = await fundedKeypair();
+      sendAs(first, [await joinMethod(member, gPda, vPda, first.publicKey).instruction()], [member.keypair]);
+      sendAs(first, [await leaveMethod(member, gPda, vPda, first.publicKey).instruction()], [member.keypair]);
+      const secondBefore = lamportsOf(second.publicKey);
+
+      sendAs(second, [await joinMethod(member, gPda, vPda, second.publicKey).instruction()], [member.keypair]);
+
+      assert.equal(secondBefore - lamportsOf(second.publicKey), rentFor(MEMBER_RECORD_SIZE) + 2n * SIGNATURE_FEE);
+      const tally = await fetchTally(gPda, member);
+      assert.equal(tally.joins, 2);
+      assert.equal(tally.rentPayer.toBase58(), first.publicKey.toBase58());
+      assert.equal(lamportsOf(tallyPdaOf(gPda, member)), rentFor(JOIN_TALLY_SIZE));
+      const record = await program.account.memberRecord.fetch(member.recordPda);
+      assert.equal(record.rentPayer.toBase58(), second.publicKey.toBase58());
+    });
+
+    it("counts the joins of a gated group, from the create transaction on", async () => {
+      const code = "tally-gated";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+      const sponsor = await fundedKeypair();
+      const authority = Keypair.generate();
+      const creator = await zeroSolJoiner(gPda);
+      const approvedJoin = () => joinMethod(
+        creator, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey },
+      ).instruction();
+      sendAs(sponsor, [
+        await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.keypair.publicKey, sponsor.publicKey).instruction(),
+        await setJoinAuthorityMethod(gPda, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey).instruction(),
+        await approvedJoin(),
+      ], [creator.keypair, authority]);
+      assert.equal((await fetchTally(gPda, creator)).joins, 1);
+      sendAs(sponsor, [await leaveMethod(creator, gPda, vPda, sponsor.publicKey).instruction()], [creator.keypair]);
+
+      sendAs(sponsor, [await approvedJoin()], [creator.keypair, authority]);
+
+      const tally = await fetchTally(gPda, creator);
+      assert.equal(tally.joins, 2);
+      assert.equal(tally.rentPayer.toBase58(), sponsor.publicKey.toBase58());
+    });
+
+    it("leaves no tally when a gated join fails with JoinNotApproved", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-refused", { depositAmount: 10_000_000 });
+      await setJoinAuthorityCall(gPda, Keypair.generate().publicKey);
+      const stranger = await newJoiner(gPda);
+
+      await expectError(joinCall(stranger, gPda, vPda), "JoinNotApproved");
+
+      assert.isNull(context.banksClient.getAccount(tallyPdaOf(gPda, stranger)));
+      assert.isNull(context.banksClient.getAccount(stranger.recordPda));
+    });
+
+    it("keeps a separate tally for each member", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-two-members", { depositAmount: 10_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+      await leaveCall(m1, gPda, vPda);
+
+      await joinCall(m1, gPda, vPda);
+
+      assert.equal((await fetchTally(gPda, m1)).joins, 2);
+      assert.equal((await fetchTally(gPda, m2)).joins, 1);
+      assert.equal((await fetchTally(gPda, m2)).rentPayer.toBase58(), m2.keypair.publicKey.toBase58());
+    });
+
+    for (const donation of [1_000_000n, 5_000_000n]) {
+      it(`joins at a tally address pre-funded with ${donation} lamports`, async () => {
+        const { gPda, vPda } = await createWeeklyGroup(`tally-prefund-${donation}`, { depositAmount: 10_000_000 });
+        const member = await zeroSolJoiner(gPda);
+        const sponsor = await fundedKeypair();
+        await provider.sendAndConfirm(
+          new Transaction().add(
+            SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: tallyPdaOf(gPda, member), lamports: donation }),
+          ),
+          [payer],
+        );
+        const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+        sendAs(sponsor, [await joinMethod(member, gPda, vPda, sponsor.publicKey).instruction()], [member.keypair]);
+
+        const tally = await fetchTally(gPda, member);
+        assert.equal(tally.joins, 1);
+        assert.equal(tally.rentPayer.toBase58(), sponsor.publicKey.toBase58());
+        const tallyRent = rentFor(JOIN_TALLY_SIZE);
+        const topUp = donation < tallyRent ? tallyRent - donation : 0n;
+        assert.equal(lamportsOf(tallyPdaOf(gPda, member)), donation + topUp);
+        assert.equal(
+          sponsorBefore - lamportsOf(sponsor.publicKey),
+          rentFor(MEMBER_RECORD_SIZE) + topUp + 2n * SIGNATURE_FEE,
+        );
+      });
+    }
+
+    it("fails with AccountNotEnoughKeys when an old client omits the tally", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-old-client", { depositAmount: 10_000_000 });
+      const member = await newJoiner(gPda);
+      const ix = await joinMethod(member, gPda, vPda, member.keypair.publicKey).instruction();
+      assert.isTrue(ix.keys[ix.keys.length - 1].pubkey.equals(tallyPdaOf(gPda, member)));
+      const oldIx = new TransactionInstruction({ programId: ix.programId, keys: ix.keys.slice(0, -1), data: ix.data });
+
+      await expectError(() => sendAs(member.keypair, [oldIx]), "AccountNotEnoughKeys");
+
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
+    });
+
+    it("fails with ConstraintSeeds when another member's tally is passed, and that tally stays at 1", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-swap", { depositAmount: 10_000_000 });
+      const other = await joinNewMember(gPda, vPda, 10_000_000);
+      const member = await newJoiner(gPda);
+      const ix = await joinMethod(member, gPda, vPda, member.keypair.publicKey).instruction();
+
+      await expectError(
+        () => sendAs(member.keypair, [patchKey(ix, tallyPdaOf(gPda, member), { pubkey: tallyPdaOf(gPda, other) })]),
+        "ConstraintSeeds",
+      );
+
+      assert.equal((await fetchTally(gPda, other)).joins, 1);
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.isNull(context.banksClient.getAccount(tallyPdaOf(gPda, member)));
+    });
+
+    it("keeps the gated create transaction with a 32-character code within the transaction size limit", async () => {
+      const code = "tally-gated-size-with-a-max-code";
+      const [gPda] = getGroupPda(code);
+      const [vPda] = getVaultPda(gPda);
+      const sponsor = await fundedKeypair();
+      const authority = Keypair.generate();
+      const creator = await zeroSolJoiner(gPda);
+
+      const cost = sendAs(sponsor, [
+        await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.keypair.publicKey, sponsor.publicKey).instruction(),
+        await setJoinAuthorityMethod(gPda, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey).instruction(),
+        await joinMethod(creator, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey }).instruction(),
+      ], [creator.keypair, authority]);
+
+      assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
+      assert.equal(cost.bytes, 824);
+      assert.equal((await fetchTally(gPda, creator)).joins, 1);
+    });
+
+    it("charges a sponsor the record and tally rent at the first join and only the record rent at a rejoin", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("tally-cost", { depositAmount: 10_000_000 });
+      const member = await zeroSolJoiner(gPda);
+      const sponsor = await fundedKeypair();
+      const join = async () => joinMethod(member, gPda, vPda, sponsor.publicKey).instruction();
+      const before = lamportsOf(sponsor.publicKey);
+
+      const first = sendAs(sponsor, [await join()], [member.keypair]);
+      const afterFirst = lamportsOf(sponsor.publicKey);
+      sendAs(sponsor, [await leaveMethod(member, gPda, vPda, sponsor.publicKey).instruction()], [member.keypair]);
+      const afterLeave = lamportsOf(sponsor.publicKey);
+      const rejoin = sendAs(sponsor, [await join()], [member.keypair]);
+
+      assert.equal(rentFor(JOIN_TALLY_SIZE), 1_197_120n);
+      assert.equal(before - afterFirst, rentFor(MEMBER_RECORD_SIZE) + rentFor(JOIN_TALLY_SIZE) + 2n * SIGNATURE_FEE);
+      assert.equal(afterLeave - lamportsOf(sponsor.publicKey), rentFor(MEMBER_RECORD_SIZE) + 2n * SIGNATURE_FEE);
+      assert.isBelow(Number(first.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
+      // Both joins derive the same addresses, so the difference is the tally creation alone.
+      assert.equal(first.computeUnits - rejoin.computeUnits, 2_601n);
+      assert.equal((await fetchTally(gPda, member)).joins, 2);
+    });
+  });
+
   describe("leave_group", () => {
     const OPEN = { depositAmount: 10_000_000 };
 
@@ -1899,7 +2145,12 @@ describe("safenudge", () => {
         assert.equal(lamportsOf(keypair.publicKey), 0n, `member gained lamports in round ${round}`);
       }
 
-      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), 3n * 2n * SIGNATURE_FEE);
+      assert.equal(
+        sponsorBefore - lamportsOf(sponsor.publicKey), 3n * 2n * SIGNATURE_FEE + rentFor(JOIN_TALLY_SIZE),
+      );
+      const [tallyPda] = getJoinTallyPda(gPda, keypair.publicKey);
+      assert.equal(lamportsOf(tallyPda), rentFor(JOIN_TALLY_SIZE));
+      assert.equal((await program.account.joinTally.fetch(tallyPda)).joins, 3);
       assert.equal(strangerBefore - lamportsOf(stranger.publicKey), 3n * 2n * SIGNATURE_FEE);
       assert.equal(lamportsOf(creator.publicKey), creatorBefore);
       assert.equal(lamportsOf(gPda), groupBefore);
@@ -5031,7 +5282,8 @@ describe("safenudge", () => {
         await closeRecordMethod(gPda, recordPda, sponsor.publicKey).rpc();
 
         assert.isNull(context.banksClient.getAccount(recordPda));
-        assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, donation);
+        assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, donation - rentFor(JOIN_TALLY_SIZE));
+        assert.equal(lamportsOf(getJoinTallyPda(gPda, keypair.publicKey)[0]), rentFor(JOIN_TALLY_SIZE));
         assert.equal(await getTokenBalanceOrZero(tokenAccount), 10_000_000n);
       });
     }
@@ -5439,7 +5691,7 @@ describe("safenudge", () => {
       assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
     });
 
-    it("returns every lamport a sponsor paid for a 10-member group except GroupConfig rent and fees", async () => {
+    it("returns every lamport a sponsor paid for a 10-member group except GroupConfig rent, join tally rent and fees", async () => {
       const sponsor = await fundedKeypair(5 * LAMPORTS_PER_SOL);
       const creator = Keypair.generate();
       const sponsorBefore = lamportsOf(sponsor.publicKey);
@@ -5479,7 +5731,7 @@ describe("safenudge", () => {
       const teardownFee = SIGNATURE_FEE;
       assert.equal(
         sponsorBefore - lamportsOf(sponsor.publicKey),
-        rentFor(GROUP_CONFIG_SIZE) + createFee + joinFees + teardownFee,
+        rentFor(GROUP_CONFIG_SIZE) + 10n * rentFor(JOIN_TALLY_SIZE) + createFee + joinFees + teardownFee,
       );
       assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
       assert.equal(lamportsOf(creator.publicKey), 0n);
@@ -5570,7 +5822,7 @@ describe("safenudge", () => {
         name: "memberJoined",
         data: {
           group: gPda.toBase58(), member: keypair.publicKey.toBase58(), rentPayer: sponsor.publicKey.toBase58(),
-          amount: 10_000_000n, currentMembers: 3,
+          amount: 10_000_000n, currentMembers: 3, joins: 1,
         },
       }]);
     });
