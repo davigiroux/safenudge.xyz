@@ -19,7 +19,7 @@ SafeNudge is a Solana program (smart contract) with a React/TypeScript frontend.
 
 ### Account Structure
 
-The program uses four account types, all derived as PDAs. `GroupConfig` and `MemberRecord` each record a `rent_payer`. See "Rent payer" below. `JoinGate` is optional: a group has one only when its creator gated it.
+The program uses five account types, all derived as PDAs. `GroupConfig`, `MemberRecord` and `JoinTally` each record a `rent_payer`. See "Rent payer" below. `JoinGate` is optional: a group has one only when its creator gated it. `JoinTally` belongs to a member at a group address, not to one group, and outlives `close_group`.
 
 **Group types.** A group with other rules than a simple group, such as a yield group, gets its own account type and instructions, never a mode field in `GroupConfig`. An optional feature of a simple group lives in its own account at a fixed PDA; `JoinGate` is the first. See [ADR-0003](./docs/adr/0003-join-gate-and-group-types.md).
 
@@ -89,6 +89,25 @@ pub struct JoinGate {
 // Space: 8 + 32 = 40. The address names the group, so the account stores nothing else
 ```
 
+#### JoinTally
+
+Counts the joins of one member at one group address. `join_group` creates it at the member's first join and adds one at every join. `leave_group` and `close_member_record` never touch it, so it keeps the count across a leave and a rejoin, and it outlives `close_group`. Only `close_join_tally` closes it, once no group lives at its group address. See [ADR-0004](./docs/adr/0004-join-tally.md).
+
+```rust
+#[account(discriminator = b"snTally1")]
+#[derive(InitSpace)]
+pub struct JoinTally {
+    pub rent_payer: Pubkey,  // offset 8,  32 bytes. Paid this account's rent at the first join_group. A later join never rewrites it
+    pub joins: u32,          // offset 40, 4 bytes.  Successful join_group calls of this member at this group address. Never 0 on a stored tally
+}
+// Seeds: [b"tally", group_config.key().as_ref(), member.key().as_ref()]
+// Space: 8 + 32 + 4 = 44. The address names the group and the member, so the account stores neither, and no bump
+```
+
+The size is pinned at compile time, and a unit test in `state/join_tally.rs` checks each offset.
+
+A join authority reads the tally to tell a wallet that joined and left from one that never joined. It derives the address from the group and the member, and reads `joins` as a little-endian `u32` at offset 40. An address that this program does not own means 0. To spend each approval once, the authority stores `joins` when it approves a join. When it co-signs, it reads `joins` again. A value other than the stored one means that the approval is spent, or that a new group took the code, and the authority refuses. Within one group instance the count only grows, so the check is exact there. Across instances at one code it is not. See "Tally inherited at a freed code" and "Tally closed then count restarts" under Security.
+
 #### Rent payer
 
 `rent_payer` is the wallet that signed and paid the account rent at `create_group` or `join_group`. It equals the creator or the member when they pay for themselves. The program writes it once and never changes it. Every rent refund goes to that wallet and to no other:
@@ -98,6 +117,7 @@ pub struct JoinGate {
 | GroupConfig (179 bytes) | `create_group` | `close_group`, after settlement and once every member record is closed | `group_config.rent_payer` |
 | Vault (165 bytes) | `create_group` | `refund_vault_rent`, after `distribute` or `emergency_cancel` closed the vault into GroupConfig | `group_config.rent_payer` |
 | JoinGate (40 bytes) | `set_join_authority` | `close_group`, in the same instruction as `GroupConfig` | `group_config.rent_payer` |
+| JoinTally (44 bytes) | the member's first `join_group` at the group address | `close_join_tally`, once no group lives at that address | `join_tally.rent_payer` |
 | MemberRecord (166 bytes) | `join_group` | `leave_group` while the group is Open, or `close_member_record` 30 days after settlement | `member_record.rent_payer` |
 
 `distribute` and `emergency_cancel` name no rent recipient. They close the vault into the GroupConfig PDA, so the instructions that move member tokens credit no lamports to an address outside the program.
@@ -187,7 +207,7 @@ A member joins the group and makes their initial deposit.
 
 **Accounts:**
 - `member` (signer) — recorded as `member_record.member` and authority of the deposit transfer. Pays no SOL, so a member with no SOL can sign
-- `rent_payer` (signer, mut) — pays the `member_record` rent. Recorded as `member_record.rent_payer`. May be the same key as `member`. It is not a token authority: the deposit always comes from the member's own token account
+- `rent_payer` (signer, mut) — pays the `member_record` rent, and the `join_tally` rent at the member's first join. Recorded as `member_record.rent_payer`, and as `join_tally.rent_payer` when the tally is created. May be the same key as `member`. It is not a token authority: the deposit always comes from the member's own token account
 - `group_config` (mut) — increments member count
 - `member_record` (init, payer = `rent_payer`) — PDA for this member in this group
 - `member_token_account` (mut) — member's canonical ATA for the group mint (source). Enforced via `associated_token::` constraints: settlement derives each member's ATA deterministically, so any other token account would brick the group at `distribute` time (issue #44 M-3)
@@ -198,6 +218,7 @@ A member joins the group and makes their initial deposit.
 - `join_gate` — the address `["join", group_config]`, enforced by seeds. It may hold nothing
 - `join_authority` (optional signer) — must sign when a `JoinGate` exists at `join_gate`. Ignored otherwise
 - `instructions_sysvar` — address pinned to the instructions sysvar. Read only for a gated group
+- `join_tally` (mut, `init_if_needed`, payer = `rent_payer`). Seeds `["tally", group_config, member]`. The last account, so a client that omits it fails with `AccountNotEnoughKeys`
 
 **Args:** None (deposit amount comes from `group_config.deposit_amount`)
 
@@ -207,12 +228,17 @@ A member joins the group and makes their initial deposit.
 - Member doesn't already have a `MemberRecord` for this group (PDA uniqueness handles this)
 - When this program owns `join_gate`, it must deserialize as a `JoinGate`, and `join_authority` must be present, sign, and equal `join_gate.authority` (`JoinNotApproved`). A system-owned address, with or without lamports, means the group has no gate
 - For a gated group, instruction 0 of the transaction is not `AdvanceNonceAccount` (`DurableNonceNotAllowed`). See "Approval replayed in a later group at the same code" under Security
+- An existing `join_tally` must be owned by this program and carry the `JoinTally` discriminator (Anchor's `init_if_needed` checks). A system-owned address, with or without lamports, gets a new tally
 - Member has sufficient USDC balance
 
 **Effects:**
 - Creates `MemberRecord` with `total_deposited = deposit_amount`, `deposits_made = 1`, `periods_deposited[0] = true`, `rent_payer` = the `rent_payer` signer
 - Transfers `deposit_amount` from member to vault via CPI
 - Increments `group_config.current_members`
+- Creates `JoinTally` at the first join, with `rent_payer` = the `rent_payer` signer. The handler sets `rent_payer` only when `joins == 0`, which holds only for a tally created in this instruction, so a rejoin keeps the first payer
+- Increments `join_tally.joins`
+
+The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,493,520 lamports of the record. A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,046,240. The tally adds 7,736 to 10,736 compute units to a join, most of it in the tally's PDA bump search and its creation. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 824 bytes, under the 1,232-byte limit.
 
 ---
 
@@ -562,6 +588,7 @@ Closes the `GroupConfig` of a settled group that has no member record left, and 
 **Effects:**
 - Transfers all lamports of `group_config` to `rent_payer` and closes the account. That includes the vault rent that settlement moved into it, when `refund_vault_rent` was not sent first: 3,048,000 lamports in total (1,559,560 for 179 bytes plus 1,488,440 for the 165-byte vault)
 - When this program owns `join_gate`, closes that `JoinGate` to `rent_payer` too (853,440 lamports for 40 bytes). See "Gate inherited at a freed code" under Security
+- Leaves every `JoinTally` of the group open. `close_join_tally` closes each one afterwards
 
 The lamport figures above come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-11. The program reads rent from the `Rent` sysvar at runtime, so the figures are examples only.
 
@@ -572,6 +599,8 @@ There is no retention check. A group with records waits for them, and their rete
 Records closed before `close_member_record` decremented the count left `current_members` above zero. `close_group` fails for such a group with `GroupHasOpenRecords`, and the group stays open as before.
 
 A client sends `close_group` after the last `close_member_record`. After it, the group code is free: anyone can create a group with it, at the same addresses. A client must not hand out a code it used before, and must not treat a group address as unique over time.
+
+A new group at a freed code inherits no member record and no join gate. It does inherit every join tally still open at that address, with its count. A client that wants the next group to start from 0 sends `close_join_tally` for each member after `close_group`. See "Tally inherited at a freed code" under Security.
 
 ---
 
@@ -604,6 +633,29 @@ There is no instruction to change or remove the authority.
 Send `set_join_authority` in the same transaction as `create_group`, before the creator's `join_group`. See "Gate set after a join" under Security.
 
 A backend that holds the authority checks every message it co-signs. See "Co-signed join widened by the client" under Security.
+
+---
+
+#### 14. `close_join_tally`
+
+Closes one member's `JoinTally` once no group lives at its group address, and pays its rent to the wallet that paid it. Anyone can call it.
+
+**Accounts:**
+- `group_config`. The group address the tally counts joins at. Never read. Must not be owned by this program
+- `join_tally` (mut, `close = rent_payer`). Seeds `["tally", group_config, member]`
+- `rent_payer` (mut). Must equal `join_tally.rent_payer`. Receives lamports only. The program never reads it
+
+**Args:** `member: Pubkey`. A seed of `join_tally` only
+
+**Validation, in this order:**
+- `group_config` is not owned by this program (`GroupNotClosed`). Only `create_group` makes a program-owned account at a group address, and `close_group` returns it to the System Program. So a program-owned account there is a live group of any status, and a new group at the freed code blocks the close again until that group closes too
+- `join_tally` matches the seeds, so `member` cannot name another member's tally (`ConstraintSeeds`)
+- `rent_payer.key() == join_tally.rent_payer` (`InvalidRentPayer`)
+
+**Effects:**
+- Transfers all lamports of `join_tally` to `rent_payer` and closes the account (873,760 lamports for 44 bytes, plus any lamports sent to the address)
+
+The handler does nothing. Every check is a constraint, and Anchor's `close` moves the lamports after the handler returns. The instruction emits no event.
 
 ---
 
@@ -672,7 +724,7 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | Event | Emitted by | Fields |
 |-------|------------|--------|
 | `GroupCreated` | `create_group` | `group`, `creator`, `rent_payer`, `mint`, `deposit_amount`, `total_periods`, `max_members` |
-| `MemberJoined` | `join_group` | `group`, `member`, `rent_payer`, `amount`, `current_members` (after the join) |
+| `MemberJoined` | `join_group` | `group`, `member`, `rent_payer`, `amount`, `current_members` (after the join), `joins` (this member's joins at this group address, this join included) |
 | `MemberLeft` | `leave_group` | `group`, `member`, `refund`, `current_members` (after the leave) |
 | `CycleStarted` | `start_cycle` | `group`, `members`, `cycle_start`, `cycle_end` (`GroupConfig::cycle_end`, the time `distribute` checks) |
 | `DepositMade` | `deposit` | `group`, `member`, `period` (zero-based), `amount`, `deposits_made` |
@@ -683,7 +735,7 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | `JoinAuthoritySet` | `set_join_authority` | `group`, `creator`, `authority` |
 | `GroupClosed` | `close_group` | `group`, `rent_payer`, `lamports` (`GroupConfig` balance, the vault rent included when `refund_vault_rent` never ran), `join_gate_lamports` (0 without a gate) |
 
-`init_treasury`, `refund_vault_rent` and `close_member_record` emit nothing. `close_group` emits before Anchor closes `GroupConfig` at the end of the instruction, so `lamports` is the amount that close pays.
+`init_treasury`, `refund_vault_rent`, `close_member_record` and `close_join_tally` emit nothing. `close_group` emits before Anchor closes `GroupConfig` at the end of the instruction, so `lamports` is the amount that close pays.
 
 ### PDA Derivation Summary
 
@@ -692,6 +744,7 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | GroupConfig | `["group", group_code]` | Group parameters and state. Closed by `close_group` after settlement, once no member record is left |
 | MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking. Closed by `leave_group` while Open, or by `close_member_record` after settlement |
 | JoinGate | `["join", group_config_key]` | Join authority of a gated group. Created by `set_join_authority`, closed by `close_group` |
+| JoinTally | `["tally", group_config_key, member_key]` | Joins of one member at one group address. Created by the first `join_group`, closed by `close_join_tally` after `close_group` |
 | Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority) |
 | TreasuryAuthority | `["treasury"]` | Authority over the protocol-fee ATA; holds no data |
 | TreasuryATA | canonical ATA of `(mint, TreasuryAuthority)` | Accumulates 5% of every penalty pool until `withdraw_fees` is called; created once per mint via `init_treasury` (fee recipient signs and pays) |
@@ -765,6 +818,8 @@ pub enum SafeNudgeError {
     JoinNotApproved,
     #[msg("A gated join cannot use a durable nonce")]
     DurableNonceNotAllowed,
+    #[msg("Close the group before closing a join tally")]
+    GroupNotClosed,
 }
 ```
 
@@ -928,6 +983,8 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 
 The join gate changes no layout of an existing account either. `JoinGate` is a new account. For a client: `join_group` takes three more accounts after `system_program`, `join_gate`, the optional signer `join_authority` and `instructions_sysvar`, so earlier positions do not move; `close_group` takes `join_gate` after `rent_payer`; `set_join_authority` is new; and `GroupHasMembers` (6028), `InvalidJoinAuthority` (6029), `JoinNotApproved` (6030) and `DurableNonceNotAllowed` (6031) are new error codes. An Anchor client derives `join_gate` from the IDL seeds and fills `instructions_sysvar` from its fixed address. It fills an omitted optional signer with the provider wallet, so a client must pass `joinAuthority: null` for an open group, or the authority for a gated one.
 
+The join tally changes no layout of an existing account. `JoinTally` is a new account. For a client: `join_group` takes `join_tally` as its last account, after `instructions_sysvar`, so earlier positions do not move, and a client on the previous IDL fails with `AccountNotEnoughKeys`; `close_join_tally` is new; `MemberJoined` gains `joins`; and `GroupNotClosed` (6032) is a new error code. An Anchor client derives `join_tally` from the IDL seeds. Clients repin the IDL in the same release window as the upgrade.
+
 Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
 
 1. Copy the new `target/idl/safenudge.json` into the Microscope deployment.
@@ -1025,7 +1082,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Fake member injection | MemberRecord PDA derived from `["member", group_config_key, member_key]`. Anchor's `init` constraint prevents duplicates. `deposit` checks `member_record.group` and the seeds; `distribute` and `emergency_cancel` run `validate_member_pair` (program owner, group, canonical PDA, no duplicates). |
 | Frontrunning distribution | Distribution is permissionless, and every computed payout depends only on on-chain state. The caller does choose the order of the remaining-account pairs, and the last-listed member gets the vault balance in place of a computed payout. In `distribute` that balance exceeds the computed payout by `redistributable % compliant_count`, at most `compliant_count - 1` base units: 9 in a 10-member group (0.000009 USDC at 6 decimals). In `emergency_cancel` the computed refunds sum to the vault balance, so the excess is 0. In both, tokens that someone transfers into the vault outside the program also go to the last-listed member. |
 | Durable nonce pre-signing | No time-sensitive admin actions. `start_cycle` captures `Clock::get()` at execution time, not from arguments. Period calculation uses on-chain clock. |
-| Rent refund redirected | Every rent refund goes to the `rent_payer` key stored in the account at `create_group` or `join_group`, where that wallet signed. `refund_vault_rent` and `close_member_record` take no destination argument and reject any other account with `InvalidRentPayer`. |
+| Rent refund redirected | Every rent refund goes to the `rent_payer` key stored in the account at `create_group` or `join_group`, where that wallet signed. `refund_vault_rent`, `close_member_record` and `close_join_tally` take no destination argument and reject any other account with `InvalidRentPayer`. |
 | Rent payer drained by the creator | `emergency_cancel` and `distribute` pay no lamports to the creator or the caller. The vault rent goes to `GroupConfig` and from there only to `group_config.rent_payer`. `close_group` returns the `GroupConfig` rent to the same wallet once every record is closed. |
 | Group code reuse after close | `close_group` requires a settled status and `current_members == 0`. `current_members` goes up only with a record created by `join_group` and down only with a record closed by `leave_group` or `close_member_record`, so it is never lower than the number of open records. At zero no record exists, and a new group at the same code, which gets the same `GroupConfig` and member record addresses, inherits none. Records closed before the decrement existed can only leave the count too high, which keeps that group open. The invariant is a convention, not a type: a new instruction that creates or closes a record must update the count (tested in `close_group`, "lets a new group reuse the code with no old member record"). |
 | Record closed before settlement | `close_member_record` requires Completed or Cancelled. Settlement needs every record, and both statuses are final. `leave_group` closes a record only while the group is Open and decrements `current_members` in the same instruction, so settlement still finds exactly `current_members` records. `close_member_record` decrements it after settlement, when no settlement can run again. |
@@ -1042,6 +1099,9 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Stranger joins a gated group | `join_group` needs the `JoinGate` authority's signature whenever this program owns `["join", group_config]`. The seeds pin that address, and only `set_join_authority`, which needs the creator, the recorded rent payer, Open status and no member, can create a program-owned account there. Lamports sent to the address leave it system-owned, which means open. |
 | Gate set after a join (race, accepted) | `set_join_authority` requires `current_members == 0`, so a gate always covers every member. Sent apart from `create_group`, it can fail after a stranger's join, and the group stays open. A client that gates sends create, gate and the creator's join in one transaction. |
 | Gate inherited at a freed code | `close_group` closes the `JoinGate` in the same instruction as `GroupConfig`, and `set_join_authority` needs an Open group, so no gate exists once its group is closed. |
+| Tally inherited at a freed code (accepted) | `close_group` leaves the join tallies open. A tally that nobody closes carries its count into a later group at the same code, so a member of the new group can show joins made in the old one. The count can only be too high, which makes a join authority refuse an approval that it could give, not give one that it should refuse. `close_join_tally` after `close_group` removes the carry-over. |
+| Tally closed then count restarts (accepted) | After `close_group`, anyone can close any tally of the group. A later group at the code then starts that member from 0, and the count can reach a value that an authority stored for the old group. A join authority must not compare a count across group instances. It binds each approval to the instance off chain, for example to the `GroupCreated` event that started the group. |
+| Join tally closed while the group lives | `close_join_tally` fails with `GroupNotClosed` whenever this program owns the group address, in every status, so a member cannot reset the count of a live group. The tally seeds pin `group_config`, so the caller cannot pass another address. |
 | Join authority key stolen or lost (accepted) | The key can only allow joins: with it, a stranger can join a gated group, and no funds move. Without it, the group takes no new member, and members can still leave and the creator can still cancel. |
 | Co-signed join widened by the client | The authority signs the whole message, so a client could add joins for other wallets. The backend that holds the authority checks that a message holds exactly one join for the approved member, and signs over a recent blockhash only. |
 | Approval replayed in a later group at the same code | Nothing in a join names the group instance, so a held approval could join a later group at the same code that uses the same authority. `join_group` rejects a gated join whose transaction starts with `AdvanceNonceAccount` (`DurableNonceNotAllowed`), so an approval lives at most about 150 slots. Within that time a replay needs the creator to cancel an empty group, close it and create the same code again: the creator's own group. Binding the instance in the instruction would need a field in `GroupConfig`, which ADR-0003 avoids. |
@@ -1053,7 +1113,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Instruction | Who can call | Fund movement | Status required | Key validation |
 |-------------|-------------|---------------|-----------------|----------------|
 | `create_group` | Anyone (creator signs, `rent_payer` signs and pays rent) | None | N/A (creates new) | Group code format, param ranges, supported mint |
-| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent) | Member -> Vault | Open | Group not full, valid mint, member's canonical ATA |
+| `join_group` | Anyone (becomes member; `rent_payer` signs and pays the record rent, and the tally rent at the first join) | Member -> Vault | Open | Group not full, valid mint, member's canonical ATA, tally seeds |
 | `start_cycle` | Creator only | None | Open | `creator == signer`, members >= 2 |
 | `deposit` | Members only | Member -> Vault | Active | Valid MemberRecord, correct period, not already deposited |
 | `distribute` | Anyone | Vault -> All Members + Treasury. Vault rent -> GroupConfig | Active (cycle ended) | All member records present, cycle time elapsed |
@@ -1063,6 +1123,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | `refund_vault_rent` | Anyone | Lamports only: GroupConfig surplus -> `group_config.rent_payer` | Completed or Cancelled | `rent_payer == group_config.rent_payer` |
 | `close_member_record` | Anyone | Lamports only: MemberRecord rent -> `member_record.rent_payer` | Completed or Cancelled, and 30 days since `settled_at` | Canonical record PDA for the group, `rent_payer == member_record.rent_payer` |
 | `leave_group` | The member only | Vault -> a token account the member owns (`total_deposited`). MemberRecord rent -> `member_record.rent_payer` | Open | Member signs, canonical record PDA for the group and the signer, destination owned by the signer, `rent_payer == member_record.rent_payer` |
+| `close_join_tally` | Anyone | Lamports only: JoinTally rent -> `join_tally.rent_payer` | No program-owned account at the group address (after `close_group`) | Tally seeds from `group_config` and the `member` argument, `rent_payer == join_tally.rent_payer` |
 
 ### Program Constraints Template
 

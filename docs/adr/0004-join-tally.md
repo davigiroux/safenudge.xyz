@@ -1,0 +1,100 @@
+---
+status: accepted
+date: 2026-10-13
+---
+
+# A join tally per member and group address
+
+A join authority (ADR-0003) approves each join off chain and then
+co-signs it. To approve well it must know whether a wallet already
+joined the group. A `MemberRecord` shows a current member, but
+`leave_group` closes it, so a wallet that joined and left looks the same
+as one that never joined. The authority can then approve the same wallet
+again and again, for example for a one-time grant per new member.
+
+The authority could scan the transaction history of the group address
+for `MemberJoined` events. A scan depends on an RPC that keeps the full
+history, and it is slow for an old group. A wallet can also grief it:
+many small transactions that touch the address make the scan page
+through all of them to reach the joins. Only state that the program writes at
+each join gives an answer in one account read.
+
+## Decision
+
+**Join tally.**
+
+- `JoinTally`, PDA `["tally", group_config, member]`, holds `rent_payer`
+  and `joins: u32`. It is 44 bytes with its own discriminator,
+  `snTally1`. The address names the group and the member, so the account
+  stores neither, and it stores no bump.
+- `join_group` takes the tally as its last account, with
+  `init_if_needed` and `payer = rent_payer`. The first join of a member
+  at a group address creates it, and every join adds one to `joins`. The
+  handler writes `rent_payer` only when `joins == 0`. Creation and the
+  first increment happen in one instruction, so a stored tally is never
+  0, and a rejoin keeps the first payer.
+- `leave_group`, `close_member_record` and `close_group` do not touch
+  the tally. It counts joins at a group address, not in one group
+  instance.
+- `close_join_tally(member)` closes one tally and pays its rent to
+  `join_tally.rent_payer`. Anyone can call it. It fails with
+  `GroupNotClosed` while this program owns the group address, so a tally
+  closes only after `close_group`, and only until a new group takes the
+  code.
+- `MemberJoined` gains `joins`, the count after this join.
+
+The authority reads `joins` at offset 40, and an absent tally means 0.
+It stores the value when it approves a join. When it co-signs, a
+different value means the approval is spent.
+
+## Considered options
+
+- **Store the group, the member and the bump in the tally.** 109 bytes
+  in place of 44, so more rent at every first join. It would let a
+  client find tallies with `memcmp` and save the bump search at close.
+  Every reader already knows both keys and derives the address, so the
+  fields carry nothing new.
+- **Create the tally with a manual `create_account` CPI.** It avoids the
+  `init_if_needed` feature, but the handler then branches on the owner,
+  signs with the seeds and writes the discriminator by hand. That repeats
+  what Anchor does, including the case of an address that already holds
+  lamports.
+- **Close the tallies inside `close_group`**, passed as remaining
+  accounts. A group of 10 members, and every member who left, would add
+  that many accounts to a transaction that already carries the group and
+  its gate. A member missed in that list stays open anyway, so the
+  separate instruction is needed in every case.
+- **Reset the count when a new group takes the code.** The program would
+  need to tell two group instances at one address apart, and
+  `GroupConfig` has no field for that. Adding one is a layout change,
+  which ADR-0003 avoids, and a reset breaks the rule that the count only
+  grows.
+
+## Consequences
+
+- No layout change of an existing account. The upgrade can land while
+  groups are live.
+- A sponsor pays 873,760 lamports more at a member's first join at a
+  group address (devnet and mainnet rent, 2026-10-13). A rejoin pays the
+  record rent only. `close_join_tally` returns the tally rent.
+- A join costs 7,736 to 10,736 more compute units. Most of it is the
+  tally's PDA bump search, because the tally stores no bump, and the
+  account creation. A gated create transaction with a
+  32-character code is 824 bytes of the 1,232-byte limit.
+- `anchor-lang` now enables `init-if-needed`, for the first time in this
+  program. The usual risk is a second initialization that rewrites
+  state. Here the payer is the `rent_payer` signer of the join, Anchor
+  checks the owner and the discriminator of an existing tally, and the
+  handler writes `rent_payer` only at `joins == 0`, which holds only at
+  creation. A tally address that already holds lamports works.
+- A tally that nobody closes carries its count into a later group at the
+  same code. The count is then too high, which makes an authority refuse
+  more, not approve more.
+- After `close_group` anyone can close a tally. A later group at the code
+  then starts that member from 0, so the count can return to a value that
+  an authority stored for the old group. An authority must not compare
+  counts across group instances.
+- `join_group` takes one more account at the end. A client on the
+  previous IDL fails with `AccountNotEnoughKeys` and must repin the IDL.
+  An Anchor client derives the tally from the IDL seeds.
+  `GroupNotClosed` (6032) is a new error code.
