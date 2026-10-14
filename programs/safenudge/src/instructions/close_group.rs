@@ -11,6 +11,9 @@ use crate::state::{GroupConfig, JoinGate, STATUS_CANCELLED, STATUS_COMPLETED};
 /// gets this address and so the same member and join gate PDAs. `current_members` counts open
 /// MemberRecords and is never too low, so zero proves no old record is left for the new group to
 /// inherit, and closing the gate here means the new group starts with none.
+///
+/// JoinTally accounts are per member and outlive the group; `close_join_tally` closes each one
+/// afterwards. A tally left open carries its count into a later group at this code.
 #[derive(Accounts)]
 pub struct CloseGroup<'info> {
     #[account(

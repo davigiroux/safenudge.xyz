@@ -66,4 +66,6 @@ pub enum SafeNudgeError {
     JoinNotApproved,
     #[msg("A gated join cannot use a durable nonce")]
     DurableNonceNotAllowed,
+    #[msg("Close the group before closing a join tally")]
+    GroupNotClosed,
 }
