@@ -83,8 +83,7 @@ pub struct JoinGroup<'info> {
     pub instructions_sysvar: UncheckedAccount<'info>,
 
     /// Created at the first join and paid by `rent_payer`; every later join adds one. Last in the
-    /// list so an older client fails with `AccountNotEnoughKeys` instead of shifting the accounts
-    /// before it.
+    /// list so the accounts before it keep their positions.
     #[account(
         init_if_needed,
         payer = rent_payer,
@@ -96,7 +95,7 @@ pub struct JoinGroup<'info> {
 }
 
 impl<'info> JoinGroup<'info> {
-    pub fn handler(&mut self, bumps: &JoinGroupBumps) -> Result<()> {
+    pub fn handler(&mut self, bumps: &JoinGroupBumps, expected_joins: Option<u32>) -> Result<()> {
         // ── Checks ──────────────────────────────────────────
         if self.join_gate.owner == &crate::ID {
             let gate = JoinGate::try_deserialize(&mut &self.join_gate.try_borrow_data()?[..])?;
@@ -111,6 +110,11 @@ impl<'info> JoinGroup<'info> {
                 !uses_durable_nonce(&self.instructions_sysvar)?,
                 SafeNudgeError::DurableNonceNotAllowed
             );
+            // The authority signs for the count it read, so one approval cannot land twice.
+            require!(expected_joins.is_some(), SafeNudgeError::ExpectedJoinsRequired);
+        }
+        if let Some(expected) = expected_joins {
+            require!(self.join_tally.joins == expected, SafeNudgeError::JoinCountMismatch);
         }
 
         // ── Effects ─────────────────────────────────────────

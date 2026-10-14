@@ -813,6 +813,10 @@ export type Safenudge = {
     },
     {
       "name": "joinGroup",
+      "docs": [
+        "Joins with the first deposit. `expected_joins`, when given, must equal the member's",
+        "JoinTally count before this join (0 for a first join). A gated group requires it."
+      ],
       "discriminator": [
         121,
         56,
@@ -1027,8 +1031,7 @@ export type Safenudge = {
           "name": "joinTally",
           "docs": [
             "Created at the first join and paid by `rent_payer`; every later join adds one. Last in the",
-            "list so an older client fails with `AccountNotEnoughKeys` instead of shifting the accounts",
-            "before it."
+            "list so the accounts before it keep their positions."
           ],
           "writable": true,
           "pda": {
@@ -1055,7 +1058,14 @@ export type Safenudge = {
           }
         }
       ],
-      "args": []
+      "args": [
+        {
+          "name": "expectedJoins",
+          "type": {
+            "option": "u32"
+          }
+        }
+      ]
     },
     {
       "name": "leaveGroup",
@@ -1766,6 +1776,16 @@ export type Safenudge = {
       "code": 6032,
       "name": "groupNotClosed",
       "msg": "Close the group before closing a join tally"
+    },
+    {
+      "code": 6033,
+      "name": "joinCountMismatch",
+      "msg": "The member's join count no longer matches the approved join"
+    },
+    {
+      "code": 6034,
+      "name": "expectedJoinsRequired",
+      "msg": "A gated join must name the member's expected join count"
     }
   ],
   "types": [
