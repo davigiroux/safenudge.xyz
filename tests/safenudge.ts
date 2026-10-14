@@ -520,13 +520,11 @@ describe("safenudge", () => {
     mint?: PublicKey; tokenProgram?: PublicKey; joinAuthority?: PublicKey | null; expectedJoins?: number | null;
   };
 
-  // A gated join names the count it expects; every gated join here is a first join unless it says so.
   function joinMethod(
     member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey,
-    { mint = usdcMint, tokenProgram = TOKEN_PROGRAM_ID, joinAuthority = null, expectedJoins }: JoinOpts = {},
+    { mint = usdcMint, tokenProgram = TOKEN_PROGRAM_ID, joinAuthority = null, expectedJoins = null }: JoinOpts = {},
   ) {
-    const expected = expectedJoins === undefined ? (joinAuthority ? 0 : null) : expectedJoins;
-    return program.methods.joinGroup(expected)
+    return program.methods.joinGroup(expectedJoins)
       .accounts({
         member: member.keypair.publicKey, rentPayer, groupConfig: gPda, memberRecord: member.recordPda,
         memberTokenAccount: member.tokenAccount, vault: vPda, mint,
@@ -1690,7 +1688,7 @@ describe("safenudge", () => {
       const member = await newJoiner(gPda);
       const authorityBefore = lamportsOf(authority.publicKey);
 
-      await joinCall(member, gPda, vPda, { joinAuthority: authority });
+      await joinCall(member, gPda, vPda, { joinAuthority: authority, expectedJoins: 0 });
 
       const record = await program.account.memberRecord.fetch(member.recordPda);
       assert.equal(record.member.toBase58(), member.keypair.publicKey.toBase58());
@@ -1717,7 +1715,7 @@ describe("safenudge", () => {
       assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
 
       const approvedJoin = await joinMethod(
-        creatorMember, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey },
+        creatorMember, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey, expectedJoins: 0 },
       ).instruction();
       sendAs(sponsor, [createIx, gateIx, approvedJoin], [creator, authority]);
 
@@ -1737,7 +1735,7 @@ describe("safenudge", () => {
       const member = await newJoiner(gPda);
       const nonce = await createNonceAccount(member.keypair.publicKey);
       const join = await joinMethod(
-        member, gPda, vPda, member.keypair.publicKey, { joinAuthority: authority.publicKey },
+        member, gPda, vPda, member.keypair.publicKey, { joinAuthority: authority.publicKey, expectedJoins: 0 },
       ).instruction();
 
       await expectError(
@@ -1760,7 +1758,7 @@ describe("safenudge", () => {
       const advance = SystemProgram.nonceAdvance({ noncePubkey: nonce, authorizedPubkey: member.keypair.publicKey });
       const tx = new Transaction().add(
         new TransactionInstruction({ ...advance, data: Buffer.concat([advance.data, Buffer.from([0])]) }),
-        await joinMethod(member, gPda, vPda, member.keypair.publicKey, { joinAuthority: authority.publicKey }).instruction(),
+        await joinMethod(member, gPda, vPda, member.keypair.publicKey, { joinAuthority: authority.publicKey, expectedJoins: 0 }).instruction(),
       );
       tx.feePayer = member.keypair.publicKey;
       tx.recentBlockhash = nonceValue(nonce);
@@ -1797,7 +1795,7 @@ describe("safenudge", () => {
       const holder = await newJoiner(gPda);
       const nonce = await createNonceAccount(holder.keypair.publicKey);
       const held = signOverNonce(holder.keypair, nonce, [
-        await joinMethod(holder, gPda, vPda, holder.keypair.publicKey, { joinAuthority: authority.publicKey }).instruction(),
+        await joinMethod(holder, gPda, vPda, holder.keypair.publicKey, { joinAuthority: authority.publicKey, expectedJoins: 0 }).instruction(),
       ], [authority]);
 
       await cancelCall(gPda, vPda, []);
@@ -1805,7 +1803,7 @@ describe("safenudge", () => {
       await createWeeklyGroup(code, { depositAmount: 10_000_000 }, sponsor);
       await setJoinAuthorityCall(gPda, authority.publicKey, sponsor);
       const approved = await newJoiner(gPda);
-      await joinCall(approved, gPda, vPda, { joinAuthority: authority });
+      await joinCall(approved, gPda, vPda, { joinAuthority: authority, expectedJoins: 0 });
 
       await expectError(() => submit(held), "Error Code: DurableNonceNotAllowed. Error Number: 6031.");
 
@@ -1818,7 +1816,7 @@ describe("safenudge", () => {
     it("lets a member leave a gated group with no authority", async () => {
       const { gPda, vPda, authority } = await gatedGroup("gate-leave");
       const member = await newJoiner(gPda);
-      await joinCall(member, gPda, vPda, { joinAuthority: authority });
+      await joinCall(member, gPda, vPda, { joinAuthority: authority, expectedJoins: 0 });
 
       await leaveCall(member, gPda, vPda);
 
@@ -2046,7 +2044,7 @@ describe("safenudge", () => {
       const cost = sendAs(sponsor, [
         await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.keypair.publicKey, sponsor.publicKey).instruction(),
         await setJoinAuthorityMethod(gPda, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey).instruction(),
-        await joinMethod(creator, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey }).instruction(),
+        await joinMethod(creator, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey, expectedJoins: 0 }).instruction(),
       ], [creator.keypair, authority]);
 
       assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
@@ -5586,10 +5584,10 @@ describe("safenudge", () => {
       const authority = Keypair.generate();
       await setJoinAuthorityCall(gPda, authority.publicKey);
       const member = await newJoiner(gPda);
-      const signed = async (feePayer: Keypair) => {
+      const signed = async (feePayer: Keypair, expectedJoins: number) => {
         const tx = new Transaction().add(
           await joinMethod(member, gPda, vPda, member.keypair.publicKey, {
-            joinAuthority: authority.publicKey, expectedJoins: 0,
+            joinAuthority: authority.publicKey, expectedJoins,
           }).instruction(),
         );
         tx.feePayer = feePayer.publicKey;
@@ -5597,15 +5595,27 @@ describe("safenudge", () => {
         tx.sign(feePayer, member.keypair, authority);
         return tx;
       };
-      const first = await signed(await fundedKeypair());
-      const second = await signed(await fundedKeypair());
+      const first = await signed(await fundedKeypair(), 0);
+      const second = await signed(await fundedKeypair(), 0);
 
       submit(first);
       await leaveCall(member, gPda, vPda);
-      await expectError(() => submit(second), "6033");
-
+      await expectError(() => submit(second), "JoinCountMismatch");
       assert.equal(tallyJoinsOrNull(gPda, member), 1);
       assert.isNull(context.banksClient.getAccount(member.recordPda));
+
+      submit(await signed(await fundedKeypair(), 1));
+      assert.equal(tallyJoinsOrNull(gPda, member), 2);
+    });
+
+    it("fails with JoinNotApproved, not ExpectedJoinsRequired, on a gated join with neither", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("expect-gated-bare", { depositAmount: 10_000_000 });
+      await setJoinAuthorityCall(gPda, Keypair.generate().publicKey);
+      const member = await newJoiner(gPda);
+
+      await expectError(joinCall(member, gPda, vPda), "JoinNotApproved");
+
+      assert.isNull(tallyJoinsOrNull(gPda, member));
     });
   });
 

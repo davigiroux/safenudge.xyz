@@ -454,7 +454,7 @@
       "JoinNotApproved": "This group takes new members only through the app that manages its approvals. You can't join it here.",
       "DurableNonceNotAllowed": "This group can't accept this join request.",
       "GroupNotClosed": "Close the group before closing its join tally.",
-      "JoinCountMismatch": "This join approval was already used. Ask for a new one.",
+      "JoinCountMismatch": "This join approval no longer matches. Ask for a new one.",
       "ExpectedJoinsRequired": "This group can't accept this join request."
     }
   }
