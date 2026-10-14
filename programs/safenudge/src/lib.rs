@@ -117,8 +117,10 @@ pub mod safenudge {
         )
     }
 
-    pub fn join_group(ctx: Context<JoinGroup>) -> Result<()> {
-        ctx.accounts.handler(&ctx.bumps)
+    /// Joins with the first deposit. `expected_joins`, when given, must equal the member's
+    /// JoinTally count before this join (0 for a first join). A gated group requires it.
+    pub fn join_group(ctx: Context<JoinGroup>, expected_joins: Option<u32>) -> Result<()> {
+        ctx.accounts.handler(&ctx.bumps, expected_joins)
     }
 
     pub fn leave_group(ctx: Context<LeaveGroup>) -> Result<()> {

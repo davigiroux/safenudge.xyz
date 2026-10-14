@@ -68,4 +68,8 @@ pub enum SafeNudgeError {
     DurableNonceNotAllowed,
     #[msg("Close the group before closing a join tally")]
     GroupNotClosed,
+    #[msg("The member's join count no longer matches the approved join")]
+    JoinCountMismatch,
+    #[msg("A gated join must name the member's expected join count")]
+    ExpectedJoinsRequired,
 }

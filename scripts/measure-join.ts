@@ -43,6 +43,7 @@ type Env = {
   mint: PublicKey;
   mintAuthority: Keypair;
   hasTally: boolean;
+  hasExpectedJoins: boolean;
 };
 
 function freshEnv(build: Build, run: string): Env {
@@ -64,9 +65,10 @@ function freshEnv(build: Build, run: string): Env {
     createInitializeMintInstruction(mintKeypair.publicKey, DECIMALS, mintAuthority.publicKey, null),
   ], [mintKeypair]);
 
-  const joinAccounts: { name: string }[] = idl.instructions.find((ix: { name: string }) => ix.name === "join_group").accounts;
-  const hasTally = joinAccounts.some((account) => account.name === "join_tally");
-  return { client, program, payer, mint: mintKeypair.publicKey, mintAuthority, hasTally };
+  const join = idl.instructions.find((ix: { name: string }) => ix.name === "join_group");
+  const hasTally = join.accounts.some((account: { name: string }) => account.name === "join_tally");
+  const hasExpectedJoins = join.args.some((arg: { name: string }) => arg.name === "expected_joins");
+  return { client, program, payer, mint: mintKeypair.publicKey, mintAuthority, hasTally, hasExpectedJoins };
 }
 
 function send(client: LiteSVM, feePayer: Keypair, ixs: TransactionInstruction[], signers: Keypair[] = []) {
@@ -122,7 +124,10 @@ async function joinIx(env: Env, groupConfig: PublicKey, member: Member, rentPaye
   if (env.hasTally) {
     accounts.joinTally = pda(env.program, [Buffer.from("tally"), groupConfig.toBuffer(), member.keypair.publicKey.toBuffer()]);
   }
-  return env.program.methods.joinGroup().accounts(accounts).instruction();
+  const method = env.hasExpectedJoins
+    ? env.program.methods.joinGroup(joinAuthority ? 0 : null)
+    : env.program.methods.joinGroup();
+  return method.accounts(accounts).instruction();
 }
 
 async function gateIx(env: Env, groupConfig: PublicKey, authority: PublicKey, creator: PublicKey, rentPayer: PublicKey) {
