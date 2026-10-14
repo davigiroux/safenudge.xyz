@@ -164,6 +164,13 @@ pub mod safenudge {
         CloseGroup::handler(ctx)
     }
 
+    /// Closes one member's JoinTally after the group at its address is closed. `member` is only
+    /// a seed of `join_tally`, read through `#[instruction(member: Pubkey)]`.
+    pub fn close_join_tally(ctx: Context<CloseJoinTally>, member: Pubkey) -> Result<()> {
+        let _ = member;
+        CloseJoinTally::handler(ctx)
+    }
+
     /// Makes every later join_group of an Open, empty group require the signature of
     /// `authority`. Once per group; there is no instruction to change or remove it.
     pub fn set_join_authority(ctx: Context<SetJoinAuthority>, authority: Pubkey) -> Result<()> {

@@ -658,6 +658,11 @@ describe("safenudge", () => {
     return program.methods.closeGroup().accounts({ groupConfig: gPda, rentPayer, joinGate: getJoinGatePda(gPda)[0] });
   }
 
+  function closeTallyMethod(gPda: PublicKey, member: PublicKey, rentPayer: PublicKey) {
+    return program.methods.closeJoinTally(member)
+      .accounts({ groupConfig: gPda, joinTally: getJoinTallyPda(gPda, member)[0], rentPayer });
+  }
+
   async function settledGroup(
     code: string, how: "distribute" | "cancel", sponsor?: Keypair,
   ): Promise<{ gPda: PublicKey; vPda: PublicKey; members: Member[] }> {
@@ -5378,6 +5383,20 @@ describe("safenudge", () => {
       assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_176_000n);
     });
 
+    it("leaves the join tallies open", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await settledGroupWithRecordsClosed("cg-tallies", "cancel", sponsor);
+
+      await closeGroupMethod(gPda, sponsor.publicKey).rpc();
+
+      assert.isNull(context.banksClient.getAccount(gPda));
+      for (const m of members) {
+        const [tallyPda] = getJoinTallyPda(gPda, m.keypair.publicKey);
+        assert.equal((await program.account.joinTally.fetch(tallyPda)).joins, 1);
+        assert.equal(lamportsOf(tallyPda), rentFor(JOIN_TALLY_SIZE));
+      }
+    });
+
     it("closes a Cancelled group with no members right away", async () => {
       const sponsor = await fundedKeypair();
       const { gPda, vPda } = await createWeeklyGroup("cg-empty-cancel", { depositAmount: 10_000_000 }, sponsor);
@@ -5490,6 +5509,203 @@ describe("safenudge", () => {
       assert.isNull(context.banksClient.getAccount(gatePda));
       assert.equal((await program.account.memberRecord.fetch(stranger.recordPda)).group.toBase58(), gPda.toBase58());
       assert.equal((await program.account.groupConfig.fetch(gPda)).currentMembers, 1);
+    });
+  });
+
+  describe("close_join_tally", () => {
+    function tallyPdaOf(gPda: PublicKey, member: Member): PublicKey {
+      return getJoinTallyPda(gPda, member.keypair.publicKey)[0];
+    }
+
+    async function closedGroup(code: string, sponsor: Keypair): Promise<{ gPda: PublicKey; members: Member[] }> {
+      const { gPda, members } = await settledGroup(code, "cancel", sponsor);
+      passRecordRetention();
+      for (const m of members) {
+        await closeRecordMethod(gPda, m.recordPda, sponsor.publicKey).rpc();
+      }
+      await closeGroupMethod(gPda, sponsor.publicKey).rpc();
+      return { gPda, members };
+    }
+
+    it("fails with GroupNotClosed while the group is Open", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cjt-open", { depositAmount: 10_000_000 });
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+
+      await expectError(
+        closeTallyMethod(gPda, member.keypair.publicKey, member.keypair.publicKey).rpc(),
+        "Error Code: GroupNotClosed. Error Number: 6032.",
+      );
+
+      assert.equal((await program.account.joinTally.fetch(tallyPdaOf(gPda, member))).joins, 1);
+    });
+
+    it("fails with GroupNotClosed while the group is Active", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cjt-active", { depositAmount: 10_000_000 });
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      await joinNewMember(gPda, vPda, 10_000_000);
+      await startCycle(gPda);
+
+      await expectError(
+        closeTallyMethod(gPda, member.keypair.publicKey, member.keypair.publicKey).rpc(), "GroupNotClosed",
+      );
+
+      assert.equal(lamportsOf(tallyPdaOf(gPda, member)), rentFor(JOIN_TALLY_SIZE));
+    });
+
+    for (const how of ["distribute", "cancel"] as const) {
+      it(`fails with GroupNotClosed while the group is settled by ${how} and not closed`, async () => {
+        const sponsor = await fundedKeypair();
+        const { gPda, members } = await settledGroup(`cjt-unclosed-${how}`, how, sponsor);
+        passRecordRetention();
+        await closeRecordMethod(gPda, members[0].recordPda, sponsor.publicKey).rpc();
+
+        await expectError(
+          closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).rpc(), "GroupNotClosed",
+        );
+
+        assert.equal((await program.account.groupConfig.fetch(gPda)).status, how === "distribute" ? 2 : 3);
+        assert.equal(lamportsOf(tallyPdaOf(gPda, members[0])), rentFor(JOIN_TALLY_SIZE));
+      });
+    }
+
+    it("fails with GroupNotClosed after a new group takes the freed code, and the tally stays at 1", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-reused", sponsor);
+      await createWeeklyGroup("cjt-reused", { depositAmount: 10_000_000 }, sponsor);
+
+      await expectError(
+        closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).rpc(), "GroupNotClosed",
+      );
+
+      assert.equal((await program.account.joinTally.fetch(tallyPdaOf(gPda, members[0]))).joins, 1);
+    });
+
+    it("closes after close_group and pays the tally rent to the recorded rent payer, not the caller", async () => {
+      const sponsor = await fundedKeypair();
+      const stranger = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-close", sponsor);
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+      const strangerBefore = lamportsOf(stranger.publicKey);
+
+      sendAs(stranger, [await closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).instruction()]);
+
+      assert.isNull(context.banksClient.getAccount(tallyPdaOf(gPda, members[0])));
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(JOIN_TALLY_SIZE));
+      assert.equal(strangerBefore - lamportsOf(stranger.publicKey), SIGNATURE_FEE);
+      assert.equal(lamportsOf(tallyPdaOf(gPda, members[1])), rentFor(JOIN_TALLY_SIZE));
+    });
+
+    it("pays the first rent payer and nothing to the payer of a rejoin", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cjt-two-payers", { depositAmount: 10_000_000, totalPeriods: 1 });
+      const member = await newJoiner(gPda);
+      const first = await fundedKeypair();
+      const second = await fundedKeypair();
+      await joinCall(member, gPda, vPda, { rentPayer: first });
+      await leaveCall(member, gPda, vPda, first.publicKey);
+      await joinCall(member, gPda, vPda, { rentPayer: second });
+      await cancelCall(gPda, vPda, [member]);
+      passRecordRetention();
+      await closeRecordMethod(gPda, member.recordPda, second.publicKey).rpc();
+      await closeGroupMethod(gPda, payer.publicKey).rpc();
+      const firstBefore = lamportsOf(first.publicKey);
+      const secondBefore = lamportsOf(second.publicKey);
+
+      await expectError(
+        closeTallyMethod(gPda, member.keypair.publicKey, second.publicKey).rpc(), "InvalidRentPayer",
+      );
+      await closeTallyMethod(gPda, member.keypair.publicKey, first.publicKey).rpc();
+
+      assert.equal(lamportsOf(first.publicKey) - firstBefore, rentFor(JOIN_TALLY_SIZE));
+      assert.equal(lamportsOf(second.publicKey), secondBefore);
+      assert.isNull(context.banksClient.getAccount(tallyPdaOf(gPda, member)));
+    });
+
+    it("fails with InvalidRentPayer when the destination is the creator or a stranger, and the tally stays", async () => {
+      const sponsor = await fundedKeypair();
+      const stranger = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-redirect", sponsor);
+      const strangerBefore = lamportsOf(stranger.publicKey);
+
+      await expectError(
+        closeTallyMethod(gPda, members[0].keypair.publicKey, payer.publicKey).rpc(), "InvalidRentPayer",
+      );
+      await expectError(
+        closeTallyMethod(gPda, members[0].keypair.publicKey, stranger.publicKey).rpc(), "InvalidRentPayer",
+      );
+
+      assert.equal(lamportsOf(stranger.publicKey), strangerBefore);
+      assert.equal(lamportsOf(tallyPdaOf(gPda, members[0])), rentFor(JOIN_TALLY_SIZE));
+      assert.equal((await program.account.joinTally.fetch(tallyPdaOf(gPda, members[0]))).joins, 1);
+    });
+
+    it("fails with AccountNotInitialized on a second close", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-twice", sponsor);
+      await closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).rpc();
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+      await expectError(
+        closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).rpc(), "AccountNotInitialized",
+      );
+
+      assert.equal(lamportsOf(sponsor.publicKey), sponsorBefore);
+    });
+
+    it("fails with ConstraintSeeds when the member argument names another member", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-wrong-member", sponsor);
+      const ix = await closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).instruction();
+      const wrongArgument = new TransactionInstruction({
+        programId: ix.programId,
+        keys: ix.keys,
+        data: Buffer.concat([ix.data.subarray(0, 8), members[1].keypair.publicKey.toBuffer()]),
+      });
+
+      await expectError(() => sendAs(payer, [wrongArgument]), "ConstraintSeeds");
+
+      assert.equal(lamportsOf(tallyPdaOf(gPda, members[0])), rentFor(JOIN_TALLY_SIZE));
+    });
+
+    it("carries the count of a tally left open into a new group at the same code", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-carry", sponsor);
+      const { vPda } = await createWeeklyGroup("cjt-carry", { depositAmount: 10_000_000 });
+
+      await joinCall(members[0], gPda, vPda);
+
+      const tally = await program.account.joinTally.fetch(tallyPdaOf(gPda, members[0]));
+      assert.equal(tally.joins, 2);
+      assert.equal(tally.rentPayer.toBase58(), sponsor.publicKey.toBase58());
+    });
+
+    it("starts the next group at the same code from 1, paid by the new rent payer, once the tally is closed", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-fresh", sponsor);
+      await closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).rpc();
+      const { vPda } = await createWeeklyGroup("cjt-fresh", { depositAmount: 10_000_000 });
+
+      await joinCall(members[0], gPda, vPda);
+
+      const tally = await program.account.joinTally.fetch(tallyPdaOf(gPda, members[0]));
+      assert.equal(tally.joins, 1);
+      assert.equal(tally.rentPayer.toBase58(), members[0].keypair.publicKey.toBase58());
+    });
+
+    it("closes when the freed group address holds donated lamports but no account", async () => {
+      const sponsor = await fundedKeypair();
+      const { gPda, members } = await closedGroup("cjt-donated", sponsor);
+      await provider.sendAndConfirm(
+        new Transaction().add(SystemProgram.transfer({ fromPubkey: payer.publicKey, toPubkey: gPda, lamports: 1_000_000 })),
+        [payer],
+      );
+      assert.equal(context.banksClient.getAccount(gPda).owner.toBase58(), SystemProgram.programId.toBase58());
+      const sponsorBefore = lamportsOf(sponsor.publicKey);
+
+      await closeTallyMethod(gPda, members[0].keypair.publicKey, sponsor.publicKey).rpc();
+
+      assert.isNull(context.banksClient.getAccount(tallyPdaOf(gPda, members[0])));
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(JOIN_TALLY_SIZE));
+      assert.equal(lamportsOf(gPda), 1_000_000n);
     });
   });
 
@@ -5691,7 +5907,7 @@ describe("safenudge", () => {
       assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
     });
 
-    it("returns every lamport a sponsor paid for a 10-member group except GroupConfig rent, join tally rent and fees", async () => {
+    it("returns every lamport a sponsor paid for a 10-member group except fees", async () => {
       const sponsor = await fundedKeypair(5 * LAMPORTS_PER_SOL);
       const creator = Keypair.generate();
       const sponsorBefore = lamportsOf(sponsor.publicKey);
@@ -5725,24 +5941,27 @@ describe("safenudge", () => {
         ixs.push(await closeRecordMethod(gPda, m.recordPda, sponsor.publicKey).instruction());
       }
       sendAs(sponsor, ixs);
+      const tallyIxs = [await closeGroupMethod(gPda, sponsor.publicKey).instruction()];
+      for (const m of members) {
+        tallyIxs.push(await closeTallyMethod(gPda, m.keypair.publicKey, sponsor.publicKey).instruction());
+      }
+      const closeCost = sendAs(sponsor, tallyIxs);
 
       const createFee = 2n * SIGNATURE_FEE;
       const joinFees = 10n * 2n * SIGNATURE_FEE;
-      const teardownFee = SIGNATURE_FEE;
-      assert.equal(
-        sponsorBefore - lamportsOf(sponsor.publicKey),
-        rentFor(GROUP_CONFIG_SIZE) + 10n * rentFor(JOIN_TALLY_SIZE) + createFee + joinFees + teardownFee,
-      );
-      assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
+      const teardownFees = 2n * SIGNATURE_FEE;
+      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), createFee + joinFees + teardownFees);
+      assert.equal(sponsorBefore - lamportsOf(sponsor.publicKey), 24n * SIGNATURE_FEE);
+      assert.isAtMost(closeCost.bytes, TRANSACTION_BYTE_LIMIT);
+      assert.isNull(context.banksClient.getAccount(gPda));
       assert.equal(lamportsOf(creator.publicKey), 0n);
       for (const m of members) {
         assert.equal(lamportsOf(m.keypair.publicKey), 0n);
         assert.equal(await getTokenBalanceOrZero(m.tokenAccount), 10_000_000n);
         assert.isNull(context.banksClient.getAccount(m.recordPda));
+        assert.isNull(context.banksClient.getAccount(getJoinTallyPda(gPda, m.keypair.publicKey)[0]));
       }
       assert.isNull(context.banksClient.getAccount(vPda));
-      const data = Buffer.from(context.banksClient.getAccount(gPda).data);
-      assert.deepEqual(data.subarray(40, 72), sponsor.publicKey.toBuffer());
     });
 
     // The runtime rejects a transaction that adds lamports to an account and still leaves it
@@ -5823,6 +6042,21 @@ describe("safenudge", () => {
         data: {
           group: gPda.toBase58(), member: keypair.publicKey.toBase58(), rentPayer: sponsor.publicKey.toBase58(),
           amount: 10_000_000n, currentMembers: 3, joins: 1,
+        },
+      }]);
+    });
+
+    it("test_join_group_rejoin_emits_member_joined_with_joins_2", async () => {
+      const { gPda, vPda, m2 } = await openGroupWithTwoMembers("ev-rejoin");
+      await leaveCall(m2, gPda, vPda);
+
+      const events = await eventsOf(joinMethod(m2, gPda, vPda, m2.keypair.publicKey), [m2.keypair]);
+
+      assert.deepEqual(events, [{
+        name: "memberJoined",
+        data: {
+          group: gPda.toBase58(), member: m2.keypair.publicKey.toBase58(), rentPayer: m2.keypair.publicKey.toBase58(),
+          amount: 10_000_000n, currentMembers: 2, joins: 2,
         },
       }]);
     });
