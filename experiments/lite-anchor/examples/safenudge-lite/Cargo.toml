@@ -1,0 +1,28 @@
+[package]
+name = "safenudge-lite"
+version = "0.1.0"
+edition = "2021"
+description = "SafeNudge's deposit instruction ported to lite-anchor"
+license = "Apache-2.0"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+# Mirrors programs/safenudge: adds the 5-minute frequency code 3.
+devnet = []
+
+[dependencies]
+lite-anchor = { path = "../../lite-anchor" }
+solana-compiler-builtins = "0.1.0"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(target_os, values("solana"))', 'cfg(target_feature, values("static-syscalls"))'] }
+
+# The same arithmetic and cast lints as programs/safenudge.
+[lints.clippy]
+arithmetic_side_effects = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_possible_wrap = "deny"

@@ -1,0 +1,35 @@
+# `programs/safenudge` cut down to `deposit` alone, built the usual Anchor way (`cargo build-sbf`),
+# so the lite-anchor port has a same-scope program to compare sizes against. Sources are copied
+# unchanged from `programs/safenudge/src` except `lib.rs` and `state/mod.rs`.
+[package]
+name = "anchor-deposit"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+cpi = ["no-entrypoint"]
+default = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+devnet = []
+
+[dependencies]
+anchor-lang = "1.0.2"
+anchor-spl = "1.0.2"
+
+[lints.rust]
+# Feature names Anchor's macros test for.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(feature, values("custom-heap", "custom-panic", "anchor-debug"))'] }
+
+[workspace]
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1

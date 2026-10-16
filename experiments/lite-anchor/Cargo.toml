@@ -1,0 +1,11 @@
+[workspace]
+members = ["lite-anchor", "lite-anchor-macros", "examples/safenudge-lite", "harness"]
+# `baselines/` holds Anchor crates built with the Solana platform-tools fork (`cargo build-sbf`),
+# so they stay out of this upstream-toolchain workspace.
+exclude = ["baselines"]
+resolver = "2"
+
+[profile.release]
+overflow-checks = true
+lto = "fat"
+codegen-units = 1
