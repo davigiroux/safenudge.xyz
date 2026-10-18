@@ -984,7 +984,7 @@ The `rent_payer` change is such an upgrade. It also changes the interface that e
 - `create_group` and `join_group` take a new required signer, `rent_payer`, in the second account position. Later accounts move down one position.
 - `distribute` no longer takes `creator`. `group_config` and every later account move up one position.
 - `creator` in `create_group` and `emergency_cancel`, and `member` in `join_group`, are no longer writable.
-- `GroupConfig` and `MemberRecord` have new field orders, sizes (179 and 166 bytes), and discriminators. Any hard-coded `memcmp` offset or account decoder must change.
+- `GroupConfig` and `MemberRecord` have new field orders, sizes (179 and 166 bytes at the time; `GroupConfig` is 180 since issue #92), and discriminators. Any hard-coded `memcmp` offset or account decoder must change.
 - Vault rent is no longer paid inside settlement. A client that wants it returned sends `refund_vault_rent`.
 - Two instructions and two error codes are new: `refund_vault_rent`, `close_member_record`, `InvalidRentPayer`, `RecordRetentionNotElapsed`.
 
