@@ -5301,7 +5301,7 @@ describe("safenudge", () => {
   });
 
   describe("close_group", () => {
-    const GROUP_CONFIG_RENT = 2_136_720n;
+    const GROUP_CONFIG_RENT = 2_143_680n;
     const VAULT_RENT = 2_039_280n;
 
     async function settledGroupWithRecordsClosed(
@@ -5386,7 +5386,7 @@ describe("safenudge", () => {
       await closeGroupMethod(gPda, sponsor.publicKey).rpc();
 
       assert.isNull(context.banksClient.getAccount(gPda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_176_000n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_182_960n);
     });
 
     it("leaves the join tallies open", async () => {
@@ -5412,7 +5412,7 @@ describe("safenudge", () => {
       await closeGroupMethod(gPda, sponsor.publicKey).rpc();
 
       assert.isNull(context.banksClient.getAccount(gPda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_176_000n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_182_960n);
     });
 
     it("lets any wallet send it and still pays the recorded rent payer", async () => {
@@ -5426,7 +5426,7 @@ describe("safenudge", () => {
       sendAs(stranger, [await closeGroupMethod(gPda, sponsor.publicKey).instruction()]);
 
       assert.isNull(context.banksClient.getAccount(gPda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_176_000n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_182_960n);
       assert.equal(lamportsOf(payer.publicKey), creatorBefore);
       assert.equal(strangerBefore - lamportsOf(stranger.publicKey), SIGNATURE_FEE);
     });
@@ -5484,7 +5484,7 @@ describe("safenudge", () => {
 
       assert.isNull(context.banksClient.getAccount(gPda));
       assert.isNull(context.banksClient.getAccount(gatePda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 5_345_280n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 5_352_240n);
     });
 
     it("fails with ConstraintSeeds when another address is passed as the join gate, and the gate stays", async () => {
@@ -6420,7 +6420,7 @@ describe("safenudge", () => {
 
       assert.deepEqual(events, [{
         name: "groupClosed",
-        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 4_176_000n, joinGateLamports: 0n },
+        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 4_182_960n, joinGateLamports: 0n },
       }]);
     });
 
@@ -6435,7 +6435,7 @@ describe("safenudge", () => {
 
       assert.deepEqual(events, [{
         name: "groupClosed",
-        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 2_136_720n, joinGateLamports: 1_169_280n },
+        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 2_143_680n, joinGateLamports: 1_169_280n },
       }]);
     });
 

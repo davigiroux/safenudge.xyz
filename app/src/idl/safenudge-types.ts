@@ -1423,7 +1423,7 @@ export type Safenudge = {
         111,
         117,
         112,
-        50
+        51
       ]
     },
     {
@@ -2062,9 +2062,17 @@ export type Safenudge = {
             "type": "u8"
           },
           {
+            "name": "vaultBump",
+            "docs": [
+              "Offset 143. Canonical PDA bump for the vault, stored by create_group so the instructions",
+              "that take the vault derive it once instead of searching for it."
+            ],
+            "type": "u8"
+          },
+          {
             "name": "groupCode",
             "docs": [
-              "Offset 143. Human-readable group code, used as PDA seed."
+              "Offset 144. Human-readable group code, used as PDA seed."
             ],
             "type": "string"
           }
