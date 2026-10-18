@@ -6,7 +6,7 @@ use crate::errors::SafeNudgeError;
 ///
 /// Every fixed-size field comes before `group_code`, the only variable-length one, so each field
 /// above it sits at the same byte offset in every group and clients can `memcmp`-filter on it.
-#[account(discriminator = b"snGroup2")]
+#[account(discriminator = b"snGroup3")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
     /// Offset 8. Group creator wallet: can start_cycle and emergency_cancel.
@@ -40,12 +40,15 @@ pub struct GroupConfig {
     pub status: u8,
     /// Offset 142. PDA bump for group_config.
     pub bump: u8,
-    /// Offset 143. Human-readable group code, used as PDA seed.
+    /// Offset 143. Canonical PDA bump for the vault, stored by create_group so the instructions
+    /// that take the vault derive it once instead of searching for it.
+    pub vault_bump: u8,
+    /// Offset 144. Human-readable group code, used as PDA seed.
     #[max_len(32)]
     pub group_code: String,
 }
 
-const _: () = assert!(8 + GroupConfig::INIT_SPACE == 179);
+const _: () = assert!(8 + GroupConfig::INIT_SPACE == 180);
 
 impl GroupConfig {
     /// First unix timestamp after the last deposit period of the cycle.
@@ -131,6 +134,7 @@ mod tests {
             penalty_type: 0,
             status: 0,
             bump: 0,
+            vault_bump: 0,
             group_code: String::new(),
         };
         assert_eq!(group.cycle_end().unwrap(), 1_000 + 4 * 604_800);
@@ -179,12 +183,13 @@ mod tests {
             penalty_type: 12,
             status: 13,
             bump: 14,
+            vault_bump: 15,
             group_code: "abc".to_string(),
         };
         let mut bytes = Vec::new();
         group.try_serialize(&mut bytes).unwrap();
 
-        assert_eq!(&bytes[0..8], b"snGroup2");
+        assert_eq!(&bytes[0..8], b"snGroup3");
         assert_eq!(&bytes[8..40], &[1; 32]);
         assert_eq!(&bytes[40..72], &[2; 32]);
         assert_eq!(&bytes[72..104], &[3; 32]);
@@ -192,9 +197,9 @@ mod tests {
         assert_eq!(&bytes[112..120], &[5; 8]);
         assert_eq!(&bytes[120..128], &[6; 8]);
         assert_eq!(&bytes[128..136], &[7; 8]);
-        assert_eq!(&bytes[136..143], &[8, 9, 10, 11, 12, 13, 14]);
-        assert_eq!(&bytes[143..147], &3u32.to_le_bytes());
-        assert_eq!(&bytes[147..], b"abc");
+        assert_eq!(&bytes[136..144], &[8, 9, 10, 11, 12, 13, 14, 15]);
+        assert_eq!(&bytes[144..148], &3u32.to_le_bytes());
+        assert_eq!(&bytes[148..], b"abc");
     }
 
     #[test]
@@ -214,11 +219,12 @@ mod tests {
             penalty_type: 0,
             status: 0,
             bump: 0,
+            vault_bump: 0,
             group_code: "a".repeat(32),
         };
         let mut bytes = Vec::new();
         group.try_serialize(&mut bytes).unwrap();
-        assert_eq!(bytes.len(), 179);
+        assert_eq!(bytes.len(), 180);
     }
 }
 

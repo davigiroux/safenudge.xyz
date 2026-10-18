@@ -103,6 +103,7 @@ impl<'info> CreateGroup<'info> {
         group.penalty_type = penalty_type;
         group.status = STATUS_OPEN;
         group.bump = bumps.group_config;
+        group.vault_bump = bumps.vault;
         group.group_code = group_code;
 
         emit!(GroupCreated {

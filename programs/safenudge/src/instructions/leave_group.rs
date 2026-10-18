@@ -46,7 +46,7 @@ pub struct LeaveGroup<'info> {
     #[account(
         mut,
         seeds = [b"vault", group_config.key().as_ref()],
-        bump,
+        bump = group_config.vault_bump,
     )]
     pub vault: InterfaceAccount<'info, TokenAccount>,
 
@@ -59,7 +59,7 @@ pub struct LeaveGroup<'info> {
 }
 
 impl<'info> LeaveGroup<'info> {
-    pub fn handler(&mut self, bumps: &LeaveGroupBumps) -> Result<()> {
+    pub fn handler(&mut self) -> Result<()> {
         let refund = self.member_record.total_deposited;
 
         self.group_config.current_members = self
@@ -69,7 +69,7 @@ impl<'info> LeaveGroup<'info> {
             .ok_or(SafeNudgeError::ArithmeticOverflow)?;
 
         let group_key = self.group_config.key();
-        let bump_bytes = [bumps.vault];
+        let bump_bytes = [self.group_config.vault_bump];
         let signer_seeds: &[&[u8]] = &[b"vault", group_key.as_ref(), &bump_bytes];
         let signer = &[signer_seeds];
 

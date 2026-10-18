@@ -27,7 +27,7 @@ pub struct Distribute<'info> {
     #[account(
         mut,
         seeds = [b"vault", group_config.key().as_ref()],
-        bump,
+        bump = group_config.vault_bump,
     )]
     pub vault: InterfaceAccount<'info, TokenAccount>,
 
@@ -263,7 +263,7 @@ impl<'info> Distribute<'info> {
 
         // ── Interactions ────────────────────────────────────
 
-        let vault_bump = ctx.bumps.vault;
+        let vault_bump = ctx.accounts.group_config.vault_bump;
         let bump_bytes = [vault_bump];
         let signer_seeds: &[&[u8]] = &[b"vault", group_key.as_ref(), &bump_bytes];
         let signer = &[signer_seeds];
