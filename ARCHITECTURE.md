@@ -30,7 +30,7 @@ Stores the group's parameters and state. Created once per group. `close_group` c
 Every fixed-size field comes before `group_code`, the only variable-length field. Each field above `group_code` therefore sits at the same byte offset in every group, and clients can `memcmp`-filter on it.
 
 ```rust
-#[account(discriminator = b"snGroup2")]
+#[account(discriminator = b"snGroup3")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
     pub creator: Pubkey,           // offset 8,   32 bytes. Can start_cycle and emergency_cancel
@@ -47,14 +47,17 @@ pub struct GroupConfig {
     pub penalty_type: u8,          // offset 140. 0 = fixed amount, 1 = percentage
     pub status: u8,                // offset 141. 0 = open, 1 = active, 2 = completed, 3 = cancelled
     pub bump: u8,                  // offset 142. PDA bump
+    pub vault_bump: u8,            // offset 143. Canonical bump of the vault PDA, stored by create_group
     #[max_len(32)]
-    pub group_code: String,        // offset 143, 4 + up to 32 bytes. Group code, used as PDA seed
+    pub group_code: String,        // offset 144, 4 + up to 32 bytes. Group code, used as PDA seed
 }
 // Seeds: [b"group", group_code.as_bytes()]
-// Space: 8 (discriminator) + 32 * 3 + 8 * 4 + 1 * 7 + (4 + 32) = 179
+// Space: 8 (discriminator) + 32 * 3 + 8 * 4 + 1 * 8 + (4 + 32) = 180
 ```
 
-The size is pinned at compile time (`const _: () = assert!(8 + GroupConfig::INIT_SPACE == 179)`), and a unit test in `state/group_config.rs` serializes a `GroupConfig` and checks each offset above.
+The size is pinned at compile time (`const _: () = assert!(8 + GroupConfig::INIT_SPACE == 180)`), and a unit test in `state/group_config.rs` serializes a `GroupConfig` and checks each offset above.
+
+`vault_bump` is the only stored bump that is not the account's own. `create_group` takes it from the `init` constraint on the vault, which finds the canonical bump, so it is canonical by construction. `join_group`, `leave_group`, `deposit`, `distribute` and `emergency_cancel` check the vault with `bump = group_config.vault_bump`: one derivation instead of a search from 255 that costs 1,500 compute units per bump tried. `leave_group`, `distribute` and `emergency_cancel` also sign vault transfers with it. A wrong value would fail the seeds check and move no funds, and the tests compare the stored value with `findProgramAddressSync` and settle a group whose vault bump is below 255 on every path (issue #92).
 
 #### MemberRecord
 
@@ -116,7 +119,7 @@ An authority must also bind each approval to the group instance it was made for,
 
 | Rent | Paid at | Returned by | Destination |
 |------|---------|-------------|-------------|
-| GroupConfig (179 bytes) | `create_group` | `close_group`, after settlement and once every member record is closed | `group_config.rent_payer` |
+| GroupConfig (180 bytes) | `create_group` | `close_group`, after settlement and once every member record is closed | `group_config.rent_payer` |
 | Vault (165 bytes) | `create_group` | `refund_vault_rent`, after `distribute` or `emergency_cancel` closed the vault into GroupConfig | `group_config.rent_payer` |
 | JoinGate (40 bytes) | `set_join_authority` | `close_group`, in the same instruction as `GroupConfig` | `group_config.rent_payer` |
 | JoinTally (44 bytes) | the member's first `join_group` at the group address | `close_join_tally`, once no group lives at that address | `join_tally.rent_payer` |
@@ -126,7 +129,7 @@ An authority must also bind each approval to the group instance it was made for,
 
 #### Accounts in the previous layout
 
-Both accounts use explicit discriminators (`snGroup2`, `snMembr2`). An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. See "Upgrades that change an account layout" under Deployment.
+Both accounts use explicit discriminators (`snGroup3`, `snMembr2`). A `GroupConfig` written before `vault_bump` existed carries `snGroup2` and is 179 bytes; every instruction rejects it with `AccountDiscriminatorMismatch`. An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. See "Upgrades that change an account layout" under Deployment.
 
 #### GroupVault
 
@@ -493,7 +496,7 @@ Pays the vault rent that settlement left in `GroupConfig` to the wallet that pai
 The second check is a raw `constraint`, not `has_one`. Anchor 1.0.2 runs every `has_one` before any raw constraint, and the status check must run first.
 
 **Effects:**
-- Moves `group_config` lamports above the rent-exempt minimum for its 179 bytes to `rent_payer`
+- Moves `group_config` lamports above the rent-exempt minimum for its 180 bytes to `rent_payer`
 - When nothing is above the minimum, succeeds and moves nothing. A second call, or a call batched with other instructions, cannot fail for that reason
 - Never takes `group_config` below the rent-exempt minimum, so the account stays open until `close_group`
 - Lamports that anyone sends to `group_config` also go to `rent_payer` on the next call
@@ -590,7 +593,7 @@ Closes the `GroupConfig` of a settled group that has no member record left, and 
 - `rent_payer.key() == group_config.rent_payer` (`InvalidRentPayer`), a raw `constraint` for the same reason as in `refund_vault_rent`
 
 **Effects:**
-- Transfers all lamports of `group_config` to `rent_payer` and closes the account. That includes the vault rent that settlement moved into it, when `refund_vault_rent` was not sent first: 3,048,000 lamports in total (1,559,560 for 179 bytes plus 1,488,440 for the 165-byte vault)
+- Transfers all lamports of `group_config` to `rent_payer` and closes the account. That includes the vault rent that settlement moved into it, when `refund_vault_rent` was not sent first: 3,053,080 lamports in total (1,564,640 for 180 bytes plus 1,488,440 for the 165-byte vault)
 - When this program owns `join_gate`, closes that `JoinGate` to `rent_payer` too (853,440 lamports for 40 bytes). See "Gate inherited at a freed code" under Security
 - Leaves every `JoinTally` of the group open. `close_join_tally` closes each one afterwards
 
@@ -749,7 +752,7 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | MemberRecord | `["member", group_config_key, member_key]` | Per-member deposit tracking. Closed by `leave_group` while Open, or by `close_member_record` after settlement |
 | JoinGate | `["join", group_config_key]` | Join authority of a gated group. Created by `set_join_authority`, closed by `close_group` |
 | JoinTally | `["tally", group_config_key, member_key]` | Joins of one member at one group address. Created by the first `join_group`, closed by `close_join_tally` after `close_group` |
-| Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority) |
+| Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority). Its bump is stored in `group_config.vault_bump` |
 | TreasuryAuthority | `["treasury"]` | Authority over the protocol-fee ATA; holds no data |
 | TreasuryATA | canonical ATA of `(mint, TreasuryAuthority)` | Accumulates 5% of every penalty pool until `withdraw_fees` is called; created once per mint via `init_treasury` (fee recipient signs and pays) |
 
@@ -993,6 +996,8 @@ The join gate changes no layout of an existing account either. `JoinGate` is a n
 
 The join tally changes no layout of an existing account. `JoinTally` is a new account. For a client: `join_group` takes the argument `expected_joins: Option<u32>`, which a gated join must set, and `join_tally` as its last account, after `instructions_sysvar`, so earlier positions do not move. A client on the previous IDL sends no argument and fails with `InstructionDidNotDeserialize`. `close_join_tally` is new, `MemberJoined` gains `joins`, and `GroupNotClosed` (6032), `JoinCountMismatch` (6033) and `ExpectedJoinsRequired` (6034) are new error codes. An Anchor client derives `join_tally` from the IDL seeds. Clients repin the IDL in the same release window as the upgrade.
 
+The stored vault bump (issue #92) is a layout change of `GroupConfig`: a new field at offset 143, `group_code` moved to offset 144, size 180 bytes, discriminator `snGroup3`. Every live group must be settled or cancelled with the previous binary before the upgrade, as above. No instruction's accounts or arguments change, so a client changes only its IDL and any hard-coded offset at or after 143 (the group code's length prefix and bytes). The watchdog in `ops/watchdog/core.ts` reads the code at 144.
+
 Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
 
 1. Copy the new `target/idl/safenudge.json` into the Microscope deployment.
@@ -1114,7 +1119,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Co-signed join widened by the client | The authority signs the whole message, so a client could add joins for other wallets. The backend that holds the authority checks that a message holds exactly one join for the approved member, that its `expected_joins` argument is `Some` of the count stored at approval, and that the instruction has exactly the accounts of the current IDL. It signs over a recent blockhash only. Without the argument check, a client picks the count that the program compares. |
 | One approval co-signed twice | Two co-signed messages for one approval could both land, with a leave between them. A gated join must name `expected_joins`, and the program refuses it unless the tally holds that count (`ExpectedJoinsRequired`, `JoinCountMismatch`). The first join raises the count, so a second message signed for the same count fails. |
 | Approval replayed in a later group at the same code | Nothing in a join names the group instance, so a held approval could join a later group at the same code that uses the same authority. `join_group` rejects a gated join whose transaction starts with `AdvanceNonceAccount` (`DurableNonceNotAllowed`), so an approval lives at most about 150 slots. Within that time a replay needs the creator to cancel an empty group, close it and create the same code again: the creator's own group. Binding the instance in the instruction would need a field in `GroupConfig`, which ADR-0003 avoids. |
-| Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 179 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
+| Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 180 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 
 ### Instruction Security Matrix

@@ -51,7 +51,7 @@ pub struct JoinGroup<'info> {
     #[account(
         mut,
         seeds = [b"vault", group_config.key().as_ref()],
-        bump,
+        bump = group_config.vault_bump,
     )]
     pub vault: InterfaceAccount<'info, TokenAccount>,
 

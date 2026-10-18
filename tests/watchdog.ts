@@ -74,14 +74,14 @@ describe("watchdog", () => {
 
   describe("unsettled groups", () => {
     it("test_decode_group_reads_fixed_offsets", () => {
-      const data = Buffer.alloc(179);
-      data.write("snGroup2", 0);
+      const data = Buffer.alloc(180);
+      data.write("snGroup3", 0);
       data.writeBigInt64LE(1_700_000_000n, 120);
       data.writeUInt8(3, 136);
       data.writeUInt8(12, 137);
       data.writeUInt8(1, 141);
-      data.writeUInt32LE(6, 143);
-      data.write("amigos", 147);
+      data.writeUInt32LE(6, 144);
+      data.write("amigos", 148);
       expect(decodeGroup(GROUP_A, data)).to.deep.equal({
         address: GROUP_A,
         cycleStart: 1_700_000_000n,

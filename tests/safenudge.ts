@@ -353,7 +353,7 @@ describe("safenudge", () => {
   const SIGNATURE_FEE = 5_000n;
   const TRANSACTION_BYTE_LIMIT = 1232;
   const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
-  const GROUP_CONFIG_SIZE = 179;
+  const GROUP_CONFIG_SIZE = 180;
   const MEMBER_RECORD_SIZE = 166;
   const JOIN_GATE_SIZE = 40;
   const JOIN_TALLY_SIZE = 44;
@@ -996,20 +996,21 @@ describe("safenudge", () => {
       assert.equal(lamportsOf(gPda), rentFor(GROUP_CONFIG_SIZE));
     });
 
-    it("stores creator at byte 8, rent payer at 40, mint at 72 and status at 141", async () => {
+    it("stores creator at byte 8, rent payer at 40, mint at 72, status at 141 and the vault bump at 143", async () => {
       const creator = await fundedKeypair();
       const sponsor = await fundedKeypair();
       await createGroupCall("x", GROUP, creator, sponsor);
 
       const data = Buffer.from(context.banksClient.getAccount(getGroupPda("x")[0]).data);
-      assert.equal(data.length, 179);
-      assert.equal(data.subarray(0, 8).toString(), "snGroup2");
+      assert.equal(data.length, 180);
+      assert.equal(data.subarray(0, 8).toString(), "snGroup3");
       assert.deepEqual(data.subarray(8, 40), creator.publicKey.toBuffer());
       assert.deepEqual(data.subarray(40, 72), sponsor.publicKey.toBuffer());
       assert.deepEqual(data.subarray(72, 104), usdcMint.toBuffer());
       assert.equal(data[141], 0);
-      assert.equal(data.readUInt32LE(143), 1);
-      assert.equal(data.subarray(147, 148).toString(), "x");
+      assert.equal(data[143], getVaultPda(getGroupPda("x")[0])[1]);
+      assert.equal(data.readUInt32LE(144), 1);
+      assert.equal(data.subarray(148, 149).toString(), "x");
     });
 
     it("fails when the rent payer does not sign", async () => {
@@ -5813,6 +5814,111 @@ describe("safenudge", () => {
       assert.isNull(context.banksClient.getAccount(tallyPdaOf(gPda, members[0])));
       assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, rentFor(JOIN_TALLY_SIZE));
       assert.equal(lamportsOf(gPda), 1_000_000n);
+    });
+  });
+
+  describe("stored vault bump", () => {
+    /** The first code with the given prefix whose vault's canonical bump is at most `maxBump`. */
+    function codeWithVaultBumpAtMost(prefix: string, maxBump: number): string {
+      for (let i = 0; ; i++) {
+        const code = `${prefix}-${i}`;
+        if (getVaultPda(getGroupPda(code)[0])[1] <= maxBump) return code;
+      }
+    }
+
+    it("test_create_group_stores_the_canonical_vault_bump", async () => {
+      const codes = ["vb-a", "vb-b", "vb-c", codeWithVaultBumpAtMost("vb-low", 253)];
+      for (const code of codes) {
+        await createGroupCall(code, { depositAmount: 10_000_000 });
+        const [gPda] = getGroupPda(code);
+        const group = await program.account.groupConfig.fetch(gPda);
+        assert.equal(group.vaultBump, getVaultPda(gPda)[1], code);
+      }
+    });
+
+    it("test_vault_below_bump_255_joins_leaves_deposits_and_distributes", async () => {
+      const code = codeWithVaultBumpAtMost("vb-dist", 253);
+      const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000, totalPeriods: 2 });
+      const leaver = await joinNewMember(gPda, vPda, 10_000_000);
+      await leaveCall(leaver, gPda, vPda);
+      assert.equal(await getTokenBalanceOrZero(leaver.tokenAccount), 10_000_000n);
+
+      const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 100_000_000);
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await depositCall(m1, gPda, vPda);
+      await depositCall(m2, gPda, vPda);
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+      await distributeCall(gPda, vPda, [m1, m2], null);
+
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 100_000_000n);
+      assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 100_000_000n);
+      assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
+    });
+
+    it("test_vault_below_bump_255_emergency_cancel_refunds_and_closes", async () => {
+      const code = codeWithVaultBumpAtMost("vb-cancel", 253);
+      const { gPda, vPda } = await createWeeklyGroup(code, { depositAmount: 10_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 10_000_000);
+      const m2 = await joinNewMember(gPda, vPda, 10_000_000);
+
+      await cancelCall(gPda, vPda, [m1, m2]);
+
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(m2.tokenAccount), 10_000_000n);
+      assert.isNull(context.banksClient.getAccount(vPda), "vault must be closed");
+    });
+
+    it("test_vault_bump_rejects_a_vault_that_is_not_the_group_vault", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("vb-wrong", { depositAmount: 10_000_000 });
+      const { vPda: otherVault } = await createWeeklyGroup("vb-other", { depositAmount: 10_000_000 });
+      const member = await newJoiner(gPda, 10_000_000);
+
+      await expectError(joinCall(member, gPda, otherVault), "ConstraintSeeds");
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+    });
+  });
+
+  describe("accounts in the snGroup2 layout", () => {
+    /** A GroupConfig as the previous binary wrote it: 179 bytes, no vault bump, code at 143. */
+    function plantSnGroup2Group(code: string): PublicKey {
+      const [gPda, bump] = getGroupPda(code);
+      const data = Buffer.alloc(179);
+      data.write("snGroup2", 0);
+      payer.publicKey.toBuffer().copy(data, 8);
+      payer.publicKey.toBuffer().copy(data, 40);
+      usdcMint.toBuffer().copy(data, 72);
+      data.writeBigUInt64LE(10_000_000n, 104);
+      Buffer.from([0, 4, 5, 0, 0, 0, bump]).copy(data, 136);
+      data.writeUInt32LE(code.length, 143);
+      data.write(code, 147);
+      provider.client.setAccount(gPda, {
+        lamports: Number(rentFor(179)), data, owner: program.programId, executable: false, rentEpoch: 0,
+      });
+      return gPda;
+    }
+
+    it("test_snGroup2_group_is_rejected_by_every_instruction_that_loads_one", async () => {
+      const gPda = plantSnGroup2Group("sn2");
+      const [vPda] = getVaultPda(gPda);
+      const member = await newJoiner(gPda, 10_000_000);
+      const startCycleMethod = program.methods.startCycle().accounts({ creator: payer.publicKey, groupConfig: gPda });
+
+      const calls: [string, () => Promise<unknown>][] = [
+        ["join_group", () => joinCall(member, gPda, vPda)],
+        ["leave_group", () => leaveCall(member, gPda, vPda)],
+        ["start_cycle", () => startCycleMethod.rpc()],
+        ["deposit", () => depositCall(member, gPda, vPda)],
+        ["distribute", () => distributeCall(gPda, vPda, [], null)],
+        ["emergency_cancel", () => cancelCall(gPda, vPda, [])],
+      ];
+      for (const [name, call] of calls) {
+        await expectError(call, "AccountDiscriminatorMismatch").catch((e) => {
+          throw new Error(`${name}: ${e.message}`);
+        });
+      }
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount), 10_000_000n);
     });
   });
 
