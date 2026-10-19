@@ -34,7 +34,9 @@ Adds the v1 revenue stream so the protocol can sustain itself without yield infr
 - [x] Multisig migration — 2-of-3 Squads multisig created on mainnet, all three keys verified to sign; vault `3M4JicDn…` is the mainnet `FEE_RECIPIENT` (issue #20)
 - [x] Cluster-gated `declare_id!` — PR #52
 - [x] Mainnet program keypair generated; program ID `98poy9z9…` and the Squad vault fee recipient set in the mainnet build (PR #101)
-- [ ] Mainnet deploy, authority handed to the Squad vault — tracked in issue #20. Gated on sustained app-level devnet testing first, per [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md). Also blocks SafePool's mainnet cutover: its server has no mainnet program to read
+- [x] Mainnet deploy on 2026-10-19 (slot 458982364), upgrade authority handed to the Squad vault ten minutes later (issue #20). The operator confirmed the app-level devnet testing that [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md) requires
+- [ ] `init_treasury` for BRS, as the Squad's first proposal
+- [ ] `--final` per ADR-0001, after issue #20, an external review and a mainnet soak
 
 ### v2 — Yield Integration
 

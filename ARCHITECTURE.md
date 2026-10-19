@@ -724,6 +724,22 @@ Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor 
 
 **Mainnet deploy.** Build with `anchor build --ignore-keys -- --features mainnet`: without `--ignore-keys`, anchor compares `declare_id!` with the local `target/deploy` keypair and fails. Never run `anchor keys sync`, which rewrites `declare_id!` to that local key. Before deploying, check that `target/idl/safenudge.json` has `address` `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc`. Deploy with `solana program deploy --program-id <mainnet program keypair>` from a single-use deployer key, then move the upgrade authority to the Squad vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` in the next transaction (`--skip-new-upgrade-authority-signer-check`). Before the first mainnet group settles with a penalty, the vault runs `init_treasury` for the group mint.
 
+**Mainnet deployment record (2026-10-19).**
+
+| | |
+|---|---|
+| Program | `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` |
+| ProgramData | `GH4q8T3vU9MfkJuDwThhK8rd7ChRvBndeNmdnnyhV9gV` |
+| Upgrade authority | Squad vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` (vault 0 of multisig `VWgaKaDZg59EobucU1zappymft9BQarUTbtgxJEmiFt`, 2-of-3) |
+| Source | `e3d1a4b`, Solana CLI 3.1.10, anchor-cli 1.0.2, built on macOS |
+| Binary | 488,016 bytes, sha256 `7ad1ddd1ab0467d201e2ab9da8c442cd154d404bc64a0d7ab39ed0c61c034999`; the on-chain bytes hash the same |
+| ProgramData size | 732,024 bytes (1.5×), 3.71956076 SOL rent at 5,080 lamports per byte |
+| Deployed | slot 458982364; authority moved at slot 458983835 |
+
+The build is not byte-for-byte reproducible across operating systems: the same commit built on Linux has the same size but a different hash, because the platform tools differ per OS and embed their paths. Both binaries carry the mainnet program ID and the Squad vault, and neither carries a devnet or test key. An upgrade should build with `solana-verify` (Docker) so anyone can reproduce its hash.
+
+Read rent from the cluster (`solana rent <bytes>`), never from a per-byte rate remembered from older docs: mainnet charged 5,080 lamports per byte on this date, not 6,960.
+
 ---
 
 ### Events
