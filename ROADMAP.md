@@ -35,7 +35,7 @@ Adds the v1 revenue stream so the protocol can sustain itself without yield infr
 - [x] Cluster-gated `declare_id!` — PR #52
 - [x] Mainnet program keypair generated; program ID `98poy9z9…` and the Squad vault fee recipient set in the mainnet build (PR #101)
 - [x] Mainnet deploy on 2026-10-19 (slot 458982364), upgrade authority handed to the Squad vault five minutes later (slot 458983835) (issue #20). The operator confirmed the app-level devnet testing that [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md) requires
-- [ ] `init_treasury` for BRS, as the Squad's first proposal
+- [x] `init_treasury` for BRS, the Squad's first proposal, executed 2026-10-19 (slot 458990772): treasury BRS account `AW7Mhh99yHguUav3op7nw89PCkWVWgh5kLjz7U89BXbz`
 - [ ] `--final` per ADR-0001, after issue #20, an external review and a mainnet soak
 
 ### v2 — Yield Integration
