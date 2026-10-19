@@ -733,7 +733,7 @@ Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor 
 | Upgrade authority | Squad vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` (vault 0 of multisig `VWgaKaDZg59EobucU1zappymft9BQarUTbtgxJEmiFt`, 2-of-3) |
 | Source | `e3d1a4b`, Solana CLI 3.1.10, anchor-cli 1.0.2, built on macOS |
 | Binary | 488,016 bytes, sha256 `7ad1ddd1ab0467d201e2ab9da8c442cd154d404bc64a0d7ab39ed0c61c034999`; the on-chain bytes hash the same |
-| ProgramData size | 732,024 bytes (1.5×), 3.71956076 SOL rent at 5,080 lamports per byte |
+| ProgramData size | 732,024 bytes of program space (1.5×); the account is 732,069 bytes with its 45-byte header, 3.71956076 SOL rent at 5,080 lamports per byte |
 | Deployed | slot 458982364; authority moved at slot 458983835 |
 
 The build is not byte-for-byte reproducible across operating systems: the same commit built on Linux has the same size but a different hash, because the platform tools differ per OS and embed their paths. Both binaries carry the mainnet program ID and the Squad vault, and neither carries a devnet or test key. An upgrade should build with `solana-verify` (Docker) so anyone can reproduce its hash.
