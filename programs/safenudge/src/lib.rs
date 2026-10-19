@@ -11,9 +11,9 @@ use anchor_lang::prelude::*;
 #[cfg(not(feature = "mainnet"))]
 declare_id!("GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc");
 
-// Mainnet program ID (issue #20). The keypair was generated off-machine and is
-// backed up there; it never enters this repository. Losing it after the first
-// deploy means this ID can never be deployed to again.
+// Mainnet program ID (issue #20), deployed 2026-10-19. The keypair was generated on
+// the deploy machine and is backed up off-machine; it never enters this repository.
+// The Squad vault, not this keypair, holds the upgrade authority.
 // `devnet` shortens `MAX_FREQUENCY` and `RECORD_RETENTION_SECS` for testing. Built
 // together with `mainnet`, it would give the mainnet program devnet timing.
 #[cfg(all(feature = "mainnet", feature = "devnet"))]
