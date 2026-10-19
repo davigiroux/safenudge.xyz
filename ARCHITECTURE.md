@@ -355,8 +355,8 @@ for each member:
     total_penalties += penalty
 
 // Protocol fee: 5% of the penalty pool. Skipped (0) when no one is
-// compliant (pro-rata refund branch) or when FEE_RECIPIENT is the
-// compile-time placeholder (fee_recipient_configured() == false) — the
+// compliant (pro-rata refund branch) or when FEE_RECIPIENT is
+// Pubkey::default() (fee_recipient_configured() == false) — the
 // full pool is then redistributed, nothing accumulates or is burned
 // (issue #44 H-4).
 compliant_count = members where deposits_made == total_periods
@@ -475,7 +475,7 @@ One-shot, per-mint creation of the protocol treasury ATA. Signed and paid for by
 **Effects:**
 - Creates the treasury ATA for the given mint (all work happens in account constraints)
 
-**Ops runbook:** before the first fee-charging settlement on a cluster, `FEE_RECIPIENT` must run `init_treasury` for each supported mint (USDC at minimum). Until then, fee-charging `distribute` calls fail with `TreasuryNotInitialized` (retriable); fee-free settlements are unaffected. Under the mainnet placeholder `FEE_RECIPIENT`, this instruction is uncallable (the system program cannot sign) — consistent with fees being disabled there.
+**Ops runbook:** before the first fee-charging settlement on a cluster, `FEE_RECIPIENT` must run `init_treasury` for each supported mint (USDC at minimum). Until then, fee-charging `distribute` calls fail with `TreasuryNotInitialized` (retriable); fee-free settlements are unaffected. On mainnet `FEE_RECIPIENT` is the Squads vault, so `init_treasury` is a multisig proposal, and it must execute for BRS (`BRSxQRUaGswjLs7ewcH7uXj3r7SgmfKSSLLXyCKHZtUo`) before the first mainnet group with a missed deposit settles.
 
 ---
 
@@ -686,7 +686,7 @@ pub treasury_token_account: InterfaceAccount<'info, TokenAccount>
 ```rust
 let protocol_fee = if compliant_count == 0 || !fee_recipient_configured() {
     // Pro-rata refund branch has no penalty pool to skim from; a
-    // placeholder FEE_RECIPIENT (mainnet until issue #20) disables the
+    // default FEE_RECIPIENT (no cluster uses one now) disables the
     // fee entirely so nothing accumulates in an unwithdrawable treasury.
     0
 } else {
@@ -706,7 +706,7 @@ The fee CPI runs **before** any member-payout CPIs so the "last member gets vaul
 
 ```rust
 #[cfg(feature = "mainnet")]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("111..."); // placeholder == Pubkey::default()
+pub const FEE_RECIPIENT: Pubkey = pubkey!("3M4JicDn..."); // Squads v4 vault, 2-of-3
 
 #[cfg(all(feature = "devnet", not(feature = "mainnet")))]
 pub const FEE_RECIPIENT: Pubkey = pubkey!("2jwEs8aP...");
@@ -718,9 +718,9 @@ pub const FEE_RECIPIENT: Pubkey = pubkey!("2jwEs8aP...");
 pub const FEE_RECIPIENT: Pubkey = pubkey!("A3xewgQH...");
 ```
 
-**Placeholder semantics:** the mainnet placeholder is byte-identical to `Pubkey::default()`. While it is in place, `fee_recipient_configured()` is false: `distribute` skips the protocol fee (the full penalty pool is redistributed — nothing accumulates in a treasury no one could ever withdraw from) and `init_treasury` / `withdraw_fees` are uncallable. Replace via issue #20 before any fee-collecting mainnet deploy.
+**Default recipient:** if `FEE_RECIPIENT` were `Pubkey::default()`, `fee_recipient_configured()` would be false: `distribute` would skip the protocol fee (the full penalty pool redistributed, nothing accumulating in a treasury no one could withdraw from) and `init_treasury` / `withdraw_fees` would be uncallable. Every cluster sets a real recipient now; on mainnet it is the Squads vault, so `init_treasury` and `withdraw_fees` each run as a multisig proposal.
 
-Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor build -- --features mainnet`. **Devnet deploys MUST build with `--features devnet`** — a plain build embeds the test fixture key (whose private half is public in this repo) as the fee recipient. Mainnet placeholder + multisig migration tracked in issue #20.
+Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor build -- --features mainnet`. **Devnet deploys MUST build with `--features devnet`** — a plain build embeds the test fixture key (whose private half is public in this repo) as the fee recipient. The mainnet program ID and recipient were set in issue #20; a mainnet build also runs `mainnet_build_tests` under `cargo test --features mainnet`.
 
 ---
 

@@ -8,6 +8,12 @@ skip-lint = false
 [programs.devnet]
 safenudge = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
 
+# Mainnet (issue #20). Upgrade authority: the Squads vault 3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX.
+# Build with `anchor build -- --features mainnet`; deploy per the SafePool runbook
+# docs/runbooks/mainnet-cutover.md, never with `anchor deploy` from a personal key.
+[programs.mainnet]
+safenudge = "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc"
+
 # anchor-litesvm's fromWorkspace() hard-codes a lookup of programs.localnet,
 # so this block must stay present for the in-process test suite to load. The
 # program ID is the same as the devnet entry above.

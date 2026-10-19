@@ -267,18 +267,10 @@ Per-cluster builds for the protocol fee recipient:
 ```bash
 anchor build                              # local / test fallback recipient
 anchor build -- --features devnet         # devnet recipient
-anchor build -- --features mainnet        # refused until configured — see below
+anchor build -- --features mainnet        # mainnet program ID and Squads fee recipient
 ```
 
-The mainnet build is refused on purpose. `declare_id!` is cluster-gated the same way `FEE_RECIPIENT` is, and a `--features mainnet` build stops with one error until both are configured:
-
-```
-error: mainnet build is not configured: set MAINNET_PROGRAM_ID and the mainnet
-       FEE_RECIPIENT in programs/safenudge/src/lib.rs, then remove this
-       compile_error!. See issue #20.
-```
-
-This exists so a mainnet artifact pointed at placeholder values cannot be produced at all. A placeholder program ID deploys to the wrong address. A placeholder fee recipient is worse: `distribute` succeeds, members are paid correctly, and the protocol collects nothing — no error, no failed transaction, nothing to notice. Both values are set as part of [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20).
+The mainnet build embeds the mainnet program ID `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` and, as `FEE_RECIPIENT`, the Squads vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` (2-of-3), which also holds the upgrade authority ([ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md)). Both are compile-time constants, set in [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20). Until they were set, a `compile_error!` refused the build, so no artifact pointed at placeholder values could exist.
 
 ### Run the frontend
 

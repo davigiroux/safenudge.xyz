@@ -197,8 +197,8 @@ impl<'info> Distribute<'info> {
         // each member their full deposit and `total_penalties` is logically
         // forgiven — fee must be zero so that branch is preserved.
         //
-        // The fee is also skipped entirely while FEE_RECIPIENT is the
-        // compile-time placeholder (mainnet builds until issue #20): the full
+        // The fee is also skipped entirely if FEE_RECIPIENT is ever
+        // `Pubkey::default()` (no cluster sets that now): the full
         // penalty pool then flows into `redistributable` below, so nothing
         // accumulates in a treasury no one can withdraw from (issue #44 H-4).
         let protocol_fee: u64 = if compliant_count == 0 || !crate::fee_recipient_configured() {
