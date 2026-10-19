@@ -11,36 +11,14 @@ use anchor_lang::prelude::*;
 #[cfg(not(feature = "mainnet"))]
 declare_id!("GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc");
 
-// A mainnet build is refused until it is configured, rather than producing
-// a deployable artifact pointed at placeholder values. Both of these must
-// be replaced before the `compile_error!` is removed (issue #20):
-//
-//   1. `MAINNET_PROGRAM_ID` below — the pubkey of a mainnet program keypair
-//      generated with `solana-keygen new -o <path>` and backed up off-machine.
-//      Losing it after the first deploy means that program ID can never be
-//      redeployed to.
-//   2. `FEE_RECIPIENT`'s `mainnet` branch — the Squads multisig vault
-//      address. While it is `Pubkey::default()`, `distribute` skips the
-//      protocol fee entirely and mainnet collects no revenue (issue #44 H-4).
-//
-// Deleting this `compile_error!` without doing both is the failure it exists
-// to prevent. `anchor build` and CI never pass `--features mainnet`, so this
-// gate costs nothing until someone deliberately builds for mainnet.
+// Mainnet program ID (issue #20). The keypair was generated off-machine and is
+// backed up there; it never enters this repository. Losing it after the first
+// deploy means this ID can never be deployed to again.
 #[cfg(feature = "mainnet")]
-compile_error!(
-    "mainnet build is not configured: set MAINNET_PROGRAM_ID and the mainnet \
-     FEE_RECIPIENT in programs/safenudge/src/lib.rs, then remove this \
-     compile_error!. See issue #20."
-);
-
-/// Placeholder mainnet program ID. Not deployable — the `compile_error!`
-/// above fires first. Present so a `--features mainnet` build reports one
-/// clear error instead of a cascade of missing-`ID` failures.
-#[cfg(feature = "mainnet")]
-pub const MAINNET_PROGRAM_ID: &str = "11111111111111111111111111111111";
+pub const MAINNET_PROGRAM_ID: &str = "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc";
 
 #[cfg(feature = "mainnet")]
-declare_id!("11111111111111111111111111111111");
+declare_id!("98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc");
 
 pub mod errors;
 pub mod events;
@@ -60,14 +38,11 @@ pub const PROTOCOL_FEE_BPS: u64 = 500;
 // or `--features mainnet` to swap; the fallback is used by `anchor test` and
 // local validators.
 //
-// Mainnet placeholder is the System Program ID (== `Pubkey::default()`). While
-// it is in place, `fee_recipient_configured()` is false: `distribute` skips the
-// protocol fee entirely (the full penalty pool is redistributed to compliant
-// members — nothing accumulates, nothing is burned) and `init_treasury` /
-// `withdraw_fees` are uncallable (the system program cannot sign). Replace via
-// issue #20 before any mainnet deploy that should collect fees.
+// Mainnet recipient: the Squads v4 vault (2-of-3, vault index 0) that also holds
+// the mainnet upgrade authority (ADR-0001). It is a PDA with no private key, so
+// `init_treasury` and `withdraw_fees` each run as a multisig proposal.
 #[cfg(feature = "mainnet")]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("11111111111111111111111111111111");
+pub const FEE_RECIPIENT: Pubkey = pubkey!("3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX");
 
 // Devnet recipient. It replaced FobkDn4r…, whose key was lost. With no signer for the old
 // recipient, `init_treasury` was uncallable on devnet: no treasury could be created, so every
@@ -82,9 +57,9 @@ pub const FEE_RECIPIENT: Pubkey = pubkey!("2jwEs8aP8TvdDFeDJL5bYdnXZkbnexaCJTVns
 #[cfg(not(any(feature = "mainnet", feature = "devnet")))]
 pub const FEE_RECIPIENT: Pubkey = pubkey!("A3xewgQHyKpHHVC87mmiYkFo8qBgq4dz2UTw3XtANXvy");
 
-/// True when the compiled-in `FEE_RECIPIENT` is a real key. The mainnet
-/// placeholder is `Pubkey::default()` (the System Program ID); until issue #20
-/// replaces it, the protocol fee is skipped at distribute time. Deterministic
+/// True when the compiled-in `FEE_RECIPIENT` is a real key, not `Pubkey::default()`.
+/// Every cluster sets one now; the check stays so a build with a default recipient
+/// skips the fee instead of trapping it (issue #44 H-4). Deterministic
 /// per build — `FEE_RECIPIENT` is a compile-time constant, so this folds to a
 /// constant boolean.
 pub fn fee_recipient_configured() -> bool {
@@ -177,5 +152,18 @@ pub mod safenudge {
     /// `authority`. Once per group; there is no instruction to change or remove it.
     pub fn set_join_authority(ctx: Context<SetJoinAuthority>, authority: Pubkey) -> Result<()> {
         ctx.accounts.handler(authority)
+    }
+}
+
+#[cfg(all(test, feature = "mainnet"))]
+mod mainnet_build_tests {
+    use super::*;
+
+    #[test]
+    fn mainnet_build_pins_the_program_id_and_the_squad_vault() {
+        assert_eq!(ID.to_string(), MAINNET_PROGRAM_ID);
+        assert_eq!(ID.to_string(), "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc");
+        assert_eq!(FEE_RECIPIENT.to_string(), "3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX");
+        assert!(fee_recipient_configured());
     }
 }
