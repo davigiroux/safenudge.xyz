@@ -9,8 +9,11 @@ skip-lint = false
 safenudge = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
 
 # Mainnet (issue #20). Upgrade authority: the Squads vault 3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX.
-# Build with `anchor build -- --features mainnet`; deploy per the SafePool runbook
-# docs/runbooks/mainnet-cutover.md, never with `anchor deploy` from a personal key.
+# Build with `anchor build --ignore-keys -- --features mainnet` and check that
+# target/idl/safenudge.json has this address. Never run `anchor keys sync`: it
+# rewrites declare_id! to a local keypair. Deploy with `solana program deploy`
+# and hand the upgrade authority to the Squad vault in the next transaction
+# (ARCHITECTURE.md, "Mainnet deploy"), never with `anchor deploy`.
 [programs.mainnet]
 safenudge = "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc"
 

@@ -267,7 +267,7 @@ Per-cluster builds for the protocol fee recipient:
 ```bash
 anchor build                              # local / test fallback recipient
 anchor build -- --features devnet         # devnet recipient
-anchor build -- --features mainnet        # mainnet program ID and Squads fee recipient
+anchor build --ignore-keys -- --features mainnet   # mainnet program ID and Squads fee recipient; never `anchor keys sync`
 ```
 
 The mainnet build embeds the mainnet program ID `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` and, as `FEE_RECIPIENT`, the Squads vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` (2-of-3), which also holds the upgrade authority ([ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md)). Both are compile-time constants, set in [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20). Until they were set, a `compile_error!` refused the build, so no artifact pointed at placeholder values could exist.

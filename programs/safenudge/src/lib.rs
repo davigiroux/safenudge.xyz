@@ -14,6 +14,11 @@ declare_id!("GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc");
 // Mainnet program ID (issue #20). The keypair was generated off-machine and is
 // backed up there; it never enters this repository. Losing it after the first
 // deploy means this ID can never be deployed to again.
+// `devnet` shortens `MAX_FREQUENCY` and `RECORD_RETENTION_SECS` for testing. Built
+// together with `mainnet`, it would give the mainnet program devnet timing.
+#[cfg(all(feature = "mainnet", feature = "devnet"))]
+compile_error!("the mainnet and devnet features are mutually exclusive");
+
 #[cfg(feature = "mainnet")]
 pub const MAINNET_PROGRAM_ID: &str = "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc";
 
@@ -165,5 +170,8 @@ mod mainnet_build_tests {
         assert_eq!(ID.to_string(), "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc");
         assert_eq!(FEE_RECIPIENT.to_string(), "3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX");
         assert!(fee_recipient_configured());
+        assert!(!cfg!(feature = "devnet"));
+        assert_eq!(state::MAX_FREQUENCY, 2);
+        assert_eq!(state::RECORD_RETENTION_SECS, 2_592_000);
     }
 }

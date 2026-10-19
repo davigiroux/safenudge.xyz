@@ -50,6 +50,12 @@ jobs:
         run: |
           cargo clippy -p safenudge
           cargo clippy -p safenudge --features devnet
+          cargo clippy -p safenudge --features mainnet
+
+      # Pins the mainnet program ID, fee recipient and timing constants
+      # (`mainnet_build_tests` in lib.rs).
+      - name: Mainnet build unit tests
+        run: cargo test -p safenudge --lib --features mainnet
 
       - name: Cache Solana install
         uses: actions/cache@v4
@@ -82,6 +88,13 @@ jobs:
         run: |
           mkdir -p ~/.config/solana
           solana-keygen new --no-bip39-passphrase --silent --outfile ~/.config/solana/id.json
+
+      # The mainnet artifact must carry the mainnet program ID. Built before
+      # the default build so the tests below load the default .so.
+      - name: Mainnet build carries the mainnet program ID
+        run: |
+          anchor build --ignore-keys -- --features mainnet
+          test "$(node -p "require('./target/idl/safenudge.json').address")" = "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc"
 
       # `--ignore-keys` because anchor 1.0 generates a fresh program keypair
       # on first build that does not match the `declare_id!()` baked into
