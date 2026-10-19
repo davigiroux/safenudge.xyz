@@ -5,6 +5,12 @@ date: 2026-09-17
 
 # Multisig upgrade authority now, immutability later
 
+> **Status note, 2026-10-19:** the placeholder `FEE_RECIPIENT` and the
+> ungated `declare_id!` described below are resolved. The mainnet build
+> pins program ID `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` and the
+> Squad vault `3M4JicDn…` as fee recipient (PR #101). The decision itself
+> is unchanged.
+
 SafeNudge's stated posture is that no individual can modify the program
 after deployment — `solana program set-upgrade-authority <PROGRAM_ID>
 --final`, which sets the authority to `None` permanently. That is still
