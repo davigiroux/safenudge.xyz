@@ -16,6 +16,15 @@ const STATUS_BY_CODE: Record<number, GroupStatus> = {
   3: 'cancelled',
 }
 
+/** The `GroupTerms` a join signs, in the on-chain encoding the screen was built from. */
+export type GroupTerms = {
+  depositAmount: BN
+  frequency: number
+  totalPeriods: number
+  penaltyType: number
+  penaltyValue: BN
+}
+
 export type GroupConfigData = {
   groupCode: string
   creator: string
@@ -32,6 +41,7 @@ export type GroupConfigData = {
   status: GroupStatus
   cycleStart: number
   pda: string
+  terms: GroupTerms
 }
 
 /** Shape returned by program.account.groupConfig.fetch() */
@@ -72,6 +82,13 @@ function parseGroupConfig(account: GroupConfigAccount, pda: PublicKey): GroupCon
     status,
     cycleStart: account.cycleStart.toNumber(),
     pda: pda.toString(),
+    terms: {
+      depositAmount: account.depositAmount,
+      frequency: account.frequency,
+      totalPeriods: account.totalPeriods,
+      penaltyType: account.penaltyType,
+      penaltyValue: account.penaltyValue,
+    },
   }
 }
 

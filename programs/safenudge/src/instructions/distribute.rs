@@ -5,7 +5,8 @@ use anchor_spl::token_interface::{
 };
 
 use crate::errors::SafeNudgeError;
-use crate::events::{GroupSettled, MemberSettled};
+use crate::events::GroupSettled;
+use crate::state::settlement::{settle, MemberDeposits, Settlement};
 use crate::state::{validate_member_pair, GroupConfig, STATUS_ACTIVE, STATUS_COMPLETED};
 use crate::PROTOCOL_FEE_BPS;
 
@@ -85,176 +86,47 @@ impl<'info> Distribute<'info> {
         );
 
         let group_key = ctx.accounts.group_config.key();
-        let total_periods = group.total_periods;
-        let deposit_amount = group.deposit_amount;
-        let penalty_type = group.penalty_type;
-        let penalty_value = group.penalty_value;
+        let terms = group.terms();
         let decimals = ctx.accounts.mint.decimals;
-
-        // ── Pass 1: Calculate penalties and payouts ──────────
-
-        struct MemberPayout {
-            member: Pubkey,
-            penalty: u64,
-            payout: u64,
-            is_compliant: bool,
-            total_deposited: u64,
-        }
-
-        let mut member_payouts: Vec<MemberPayout> = Vec::with_capacity(member_count);
-        let mut total_penalties: u64 = 0;
-        let mut compliant_count: u64 = 0;
-        let mut seen_records: Vec<Pubkey> = Vec::with_capacity(member_count);
         let mint_key = ctx.accounts.mint.key();
 
-        for i in 0..member_count {
-            let record_idx = i.checked_mul(2).ok_or(SafeNudgeError::ArithmeticOverflow)?;
-            let token_idx = record_idx
-                .checked_add(1)
-                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-            let record_info = &ctx.remaining_accounts[record_idx];
-            let token_info = &ctx.remaining_accounts[token_idx];
-
-            let member_record = validate_member_pair(
-                record_info,
-                token_info,
-                &group_key,
-                &mint_key,
-                &mut seen_records,
-            )?;
-
-            let deposits_made = member_record.deposits_made as u64;
-            let missed = (total_periods as u64)
-                .checked_sub(deposits_made)
-                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-
-            // Calculate penalty in u128 so no admissible input can overflow
-            // before the total_deposited cap clamps it (issue #44 H-1: a fixed
-            // penalty_value near u64::MAX used to error out at checked_mul and
-            // permanently brick settlement). missed <= 52 and both factors are
-            // u64, so every intermediate provably fits in u128; the checked_*
-            // calls are kept per the arithmetic rules but are unreachable.
-            let raw_penalty: u128 = if missed == 0 {
-                0
-            } else {
-                match penalty_type {
-                    0 => {
-                        // Fixed: penalty = missed * penalty_value
-                        (missed as u128)
-                            .checked_mul(penalty_value as u128)
-                            .ok_or(SafeNudgeError::ArithmeticOverflow)?
-                    }
-                    1 => {
-                        // Percentage: penalty = missed * (deposit_amount * penalty_value / 10000)
-                        let per_period = (deposit_amount as u128)
-                            .checked_mul(penalty_value as u128)
-                            .ok_or(SafeNudgeError::ArithmeticOverflow)?
-                            .checked_div(10000)
-                            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-                        (missed as u128)
-                            .checked_mul(per_period)
-                            .ok_or(SafeNudgeError::ArithmeticOverflow)?
-                    }
-                    _ => return Err(SafeNudgeError::InvalidPenaltyConfig.into()),
-                }
-            };
-
-            // Cap penalty at total deposited; the cap also makes the narrowing
-            // back to u64 infallible (result <= total_deposited <= u64::MAX).
-            let penalty = u64::try_from(std::cmp::min(
-                raw_penalty,
-                member_record.total_deposited as u128,
-            ))
-            .map_err(|_| SafeNudgeError::ArithmeticOverflow)?;
-
-            let base_payout = member_record
-                .total_deposited
-                .checked_sub(penalty)
-                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-
-            let is_compliant = deposits_made == total_periods as u64;
-            if is_compliant {
-                compliant_count = compliant_count
-                    .checked_add(1)
-                    .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-            }
-
-            total_penalties = total_penalties
-                .checked_add(penalty)
-                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-
-            member_payouts.push(MemberPayout {
+        let mut deposits: Vec<MemberDeposits> = Vec::with_capacity(member_count);
+        let mut seen_records: Vec<Pubkey> = Vec::with_capacity(member_count);
+        for pair in ctx.remaining_accounts.chunks_exact(2) {
+            let member_record =
+                validate_member_pair(&pair[0], &pair[1], &group_key, &mint_key, &mut seen_records)?;
+            deposits.push(MemberDeposits {
                 member: member_record.member,
-                penalty,
-                payout: base_payout,
-                is_compliant,
                 total_deposited: member_record.total_deposited,
+                deposits_made: member_record.deposits_made,
             });
         }
 
-        // 5% protocol fee skimmed off the penalty pool before redistribution.
-        // When no one is compliant, the pro-rata refund branch (below) returns
-        // each member their full deposit and `total_penalties` is logically
-        // forgiven — fee must be zero so that branch is preserved.
-        //
-        // The fee is also skipped entirely if FEE_RECIPIENT is ever
-        // `Pubkey::default()` (no cluster sets that now): the full
-        // penalty pool then flows into `redistributable` below, so nothing
-        // accumulates in a treasury no one can withdraw from (issue #44 H-4).
-        let protocol_fee: u64 = if compliant_count == 0 || !crate::fee_recipient_configured() {
-            0
-        } else {
-            total_penalties
-                .checked_mul(PROTOCOL_FEE_BPS)
-                .and_then(|x| x.checked_div(10_000))
-                .ok_or(SafeNudgeError::ArithmeticOverflow)?
-        };
+        // The fee is skipped entirely if FEE_RECIPIENT is ever `Pubkey::default()` (no cluster
+        // sets that now): the full penalty pool is then redistributed, so nothing accumulates in
+        // a treasury no one can withdraw from (issue #44 H-4).
+        let fee_bps = if crate::fee_recipient_configured() { PROTOCOL_FEE_BPS } else { 0 };
+        let Settlement {
+            members: mut settled,
+            protocol_fee,
+            compliant_count,
+            total_deposited,
+        } = settle(group_key, &terms, &deposits, fee_bps)?;
+
+        require!(
+            ctx.accounts.vault.amount >= total_deposited,
+            SafeNudgeError::VaultShortfall
+        );
 
         // Fee-evasion guard: distribute is permissionless, so the caller must
         // not be able to dodge the fee by omitting the treasury account. When
         // a fee is due the canonical treasury ATA must be passed and exist
         // (created via init_treasury); otherwise settlement is blocked — not
-        // bricked — until FEE_RECIPIENT initializes it. Still the Checks
-        // phase (CEI): nothing has been mutated yet.
+        // bricked — until FEE_RECIPIENT initializes it.
         require!(
             protocol_fee == 0 || ctx.accounts.treasury_token_account.is_some(),
             SafeNudgeError::TreasuryNotInitialized
         );
-
-        let redistributable = total_penalties
-            .checked_sub(protocol_fee)
-            .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-
-        let bonus_per_compliant = if compliant_count > 0 {
-            redistributable
-                .checked_div(compliant_count)
-                .ok_or(SafeNudgeError::ArithmeticOverflow)?
-        } else {
-            0
-        };
-
-        // With no compliant member every deposit returns, so no penalty is charged.
-        let mut settled: Vec<MemberSettled> = Vec::with_capacity(member_count);
-        for mp in &member_payouts {
-            let (penalty, final_payout) = if compliant_count == 0 {
-                (0, mp.total_deposited)
-            } else if mp.is_compliant {
-                let payout = mp
-                    .payout
-                    .checked_add(bonus_per_compliant)
-                    .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-                (mp.penalty, payout)
-            } else {
-                (mp.penalty, mp.payout)
-            };
-            settled.push(MemberSettled {
-                group: group_key,
-                member: mp.member,
-                deposited: mp.total_deposited,
-                penalty,
-                payout: final_payout,
-            });
-        }
 
         // ── Effects ─────────────────────────────────────────
 
@@ -350,8 +222,7 @@ impl<'info> Distribute<'info> {
         emit!(GroupSettled {
             group: group_key,
             members: ctx.accounts.group_config.current_members,
-            compliant_count: u8::try_from(compliant_count)
-                .map_err(|_| SafeNudgeError::ArithmeticOverflow)?,
+            compliant_count,
             total_penalties: total_penalties_charged,
             protocol_fee,
             total_paid,

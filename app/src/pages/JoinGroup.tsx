@@ -63,7 +63,7 @@ export default function JoinGroup() {
     const sig = await execute(
       runMethod(
         (payer) => program.methods
-          .joinGroup(null)
+          .joinGroup(group.terms, null)
           .accountsPartial({
             member: publicKey,
             rentPayer: payer,

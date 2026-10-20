@@ -72,4 +72,10 @@ pub enum SafeNudgeError {
     JoinCountMismatch,
     #[msg("A gated join must name the member's expected join count")]
     ExpectedJoinsRequired,
+    #[msg("The group's terms changed since the join was signed")]
+    TermsMismatch,
+    #[msg("Settlement payouts do not add up to the deposits")]
+    SettlementImbalance,
+    #[msg("The vault holds less than the members deposited")]
+    VaultShortfall,
 }

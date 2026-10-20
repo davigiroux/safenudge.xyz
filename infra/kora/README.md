@@ -86,7 +86,7 @@ const call = (method: string, params: unknown) =>
 const relay = new PublicKey((await call('getPayerSigner', {})).result.signer_address)
 const { blockhash } = (await call('getBlockhash', {})).result
 
-const ix = await program.methods.joinGroup()
+const ix = await program.methods.joinGroup(terms, null)   // terms: the GroupTerms the member was shown
   .accountsPartial({ member, rentPayer: relay, /* ... */ })
   .instruction()
 const tx = new Transaction({ feePayer: relay, recentBlockhash: blockhash }).add(ix)
@@ -103,4 +103,4 @@ Never pass the relay as `creator` or `member`. It is the fee payer and the rent 
 
 ## When the rent rate or the layouts change
 
-`max_allowed_lamports` is the rent of one `create_group` with its `JoinGate`, the creator's `join_group` and one token account: `solana rent` of 180, 165, 40, 166 and 165 bytes, added together. The comment above it in `kora.devnet.toml` shows the sum.
+`max_allowed_lamports` is the rent of one `create_group` with its `JoinGate`, the creator's `join_group` and one token account: `solana rent` of 244, 165, 40, 198 and 165 bytes, added together. The comment above it in `kora.devnet.toml` shows the sum.

@@ -7,7 +7,7 @@ use solana_instructions_sysvar::load_instruction_at_checked;
 
 use crate::errors::SafeNudgeError;
 use crate::events::MemberJoined;
-use crate::state::{GroupConfig, JoinGate, JoinTally, MemberRecord, STATUS_OPEN};
+use crate::state::{GroupConfig, GroupTerms, JoinGate, JoinTally, MemberRecord, STATUS_OPEN};
 
 #[derive(Accounts)]
 pub struct JoinGroup<'info> {
@@ -25,7 +25,7 @@ pub struct JoinGroup<'info> {
         constraint = group_config.status == STATUS_OPEN @ SafeNudgeError::InvalidGroupStatus,
         constraint = group_config.current_members < group_config.max_members @ SafeNudgeError::GroupFull,
     )]
-    pub group_config: Account<'info, GroupConfig>,
+    pub group_config: Box<Account<'info, GroupConfig>>,
 
     #[account(
         init,
@@ -34,12 +34,10 @@ pub struct JoinGroup<'info> {
         seeds = [b"member", group_config.key().as_ref(), member.key().as_ref()],
         bump,
     )]
-    pub member_record: Account<'info, MemberRecord>,
+    pub member_record: Box<Account<'info, MemberRecord>>,
 
     /// Must be the member's canonical ATA for the group mint (pins owner and
-    /// mint too). Settlement derives each member's ATA deterministically, so
-    /// accepting any other token account here would brick the whole group at
-    /// distribute time (issue #44 M-3).
+    /// mint too), so the first deposit comes from the account clients look up.
     #[account(
         mut,
         associated_token::mint = mint,
@@ -95,8 +93,17 @@ pub struct JoinGroup<'info> {
 }
 
 impl<'info> JoinGroup<'info> {
-    pub fn handler(&mut self, bumps: &JoinGroupBumps, expected_joins: Option<u32>) -> Result<()> {
+    pub fn handler(
+        &mut self,
+        bumps: &JoinGroupBumps,
+        expected_terms: GroupTerms,
+        expected_joins: Option<u32>,
+    ) -> Result<()> {
         // ── Checks ──────────────────────────────────────────
+        require!(
+            self.group_config.terms() == expected_terms,
+            SafeNudgeError::TermsMismatch
+        );
         if self.join_gate.owner == &crate::ID {
             let gate = JoinGate::try_deserialize(&mut &self.join_gate.try_borrow_data()?[..])?;
             let approved = self

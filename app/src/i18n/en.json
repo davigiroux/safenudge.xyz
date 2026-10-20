@@ -455,7 +455,10 @@
       "DurableNonceNotAllowed": "This group can't accept this join request.",
       "GroupNotClosed": "Close the group before closing its join tally.",
       "JoinCountMismatch": "This join approval no longer matches. Ask for a new one.",
-      "ExpectedJoinsRequired": "This group can't accept this join request."
+      "ExpectedJoinsRequired": "This group can't accept this join request.",
+      "TermsMismatch": "This group's terms changed after you opened it. Check the new terms before you join.",
+      "SettlementImbalance": "We couldn't settle this group safely, so no money moved. Please try again later.",
+      "VaultShortfall": "The group's balance doesn't match its deposits, so no money moved. Please try again later."
     }
   }
 }
