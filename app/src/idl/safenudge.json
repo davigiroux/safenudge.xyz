@@ -2200,6 +2200,10 @@
         "kind": "struct",
         "fields": [
           {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
             "name": "deposit_amount",
             "type": "u64"
           },

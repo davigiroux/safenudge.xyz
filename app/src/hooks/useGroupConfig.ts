@@ -18,6 +18,7 @@ const STATUS_BY_CODE: Record<number, GroupStatus> = {
 
 /** The `GroupTerms` a join signs, in the on-chain encoding the screen was built from. */
 export type GroupTerms = {
+  creator: PublicKey
   depositAmount: BN
   frequency: number
   totalPeriods: number
@@ -83,6 +84,7 @@ function parseGroupConfig(account: GroupConfigAccount, pda: PublicKey): GroupCon
     cycleStart: account.cycleStart.toNumber(),
     pda: pda.toString(),
     terms: {
+      creator: account.creator,
       depositAmount: account.depositAmount,
       frequency: account.frequency,
       totalPeriods: account.totalPeriods,

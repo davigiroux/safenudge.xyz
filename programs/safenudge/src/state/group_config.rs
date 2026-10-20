@@ -58,6 +58,7 @@ const _: () = assert!(8 + GroupConfig::INIT_SPACE == 244);
 /// created later at the same code on other terms.
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroupTerms {
+    pub creator: Pubkey,
     pub deposit_amount: u64,
     pub frequency: u8,
     pub total_periods: u8,
@@ -68,6 +69,7 @@ pub struct GroupTerms {
 impl GroupConfig {
     pub fn terms(&self) -> GroupTerms {
         GroupTerms {
+            creator: self.creator,
             deposit_amount: self.deposit_amount,
             frequency: self.frequency,
             total_periods: self.total_periods,

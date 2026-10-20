@@ -517,7 +517,7 @@ describe("safenudge", () => {
   }
 
   type GroupTerms = {
-    depositAmount: BN; frequency: number; totalPeriods: number; penaltyType: number; penaltyValue: BN;
+    creator: PublicKey; depositAmount: BN; frequency: number; totalPeriods: number; penaltyType: number; penaltyValue: BN;
   };
 
   type JoinOpts = {
@@ -526,9 +526,9 @@ describe("safenudge", () => {
   };
 
   /** The terms `createGroupMethod` gives a group, for a join built before the group exists. */
-  function termsFor(opts: GroupOpts): GroupTerms {
+  function termsFor(opts: GroupOpts, creator: PublicKey = payer.publicKey): GroupTerms {
     return {
-      depositAmount: new BN(opts.depositAmount), frequency: 0, totalPeriods: opts.totalPeriods ?? 4,
+      creator, depositAmount: new BN(opts.depositAmount), frequency: 0, totalPeriods: opts.totalPeriods ?? 4,
       penaltyType: 0, penaltyValue: new BN(opts.penaltyValue ?? 0),
     };
   }
@@ -543,8 +543,8 @@ describe("safenudge", () => {
     try {
       const group = program.coder.accounts.decode("groupConfig", Buffer.from(account.data));
       return {
-        depositAmount: group.depositAmount, frequency: group.frequency, totalPeriods: group.totalPeriods,
-        penaltyType: group.penaltyType, penaltyValue: group.penaltyValue,
+        creator: group.creator, depositAmount: group.depositAmount, frequency: group.frequency,
+        totalPeriods: group.totalPeriods, penaltyType: group.penaltyType, penaltyValue: group.penaltyValue,
       };
     } catch {
       return termsFor({ depositAmount: 0 });
@@ -1566,6 +1566,19 @@ describe("safenudge", () => {
       assert.equal(await getTokenBalanceOrZero(victim.tokenAccount), 1_000_000_000n);
       assert.equal(await getTokenBalanceOrZero(vPda), 0n);
     });
+
+    it("test_join_signed_for_a_closed_group_fails_when_another_creator_recreates_the_code_on_the_same_money_terms", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("terms-creator", { depositAmount: 10_000_000 });
+      const member = await newJoiner(gPda, 100_000_000);
+      const signedTerms = groupTerms(gPda);
+
+      await cancelCall(gPda, vPda, []);
+      await closeGroupMethod(gPda, payer.publicKey).rpc();
+      await createGroupCall("terms-creator", { depositAmount: 10_000_000 }, await fundedKeypair());
+
+      await expectError(joinCall(member, gPda, vPda, { expectedTerms: signedTerms }), "TermsMismatch");
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+    });
   });
 
   describe("set_join_authority", () => {
@@ -1787,7 +1800,7 @@ describe("safenudge", () => {
       const createIx = await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.publicKey, sponsor.publicKey).instruction();
       const gateIx = await setJoinAuthorityMethod(gPda, authority.publicKey, creator.publicKey, sponsor.publicKey).instruction();
 
-      const terms = termsFor({ depositAmount: 10_000_000 });
+      const terms = termsFor({ depositAmount: 10_000_000 }, creator.publicKey);
       const unapprovedJoin = await joinMethod(creatorMember, gPda, vPda, sponsor.publicKey, { expectedTerms: terms }).instruction();
       await expectError(() => sendAs(sponsor, [createIx, gateIx, unapprovedJoin], [creator]), "JoinNotApproved");
       assert.isNull(context.banksClient.getAccount(gPda));
@@ -2014,7 +2027,8 @@ describe("safenudge", () => {
       const authority = Keypair.generate();
       const creator = await zeroSolJoiner(gPda);
       const approvedJoin = (expectedJoins: number) => joinMethod(creator, gPda, vPda, sponsor.publicKey, {
-        joinAuthority: authority.publicKey, expectedJoins, expectedTerms: termsFor({ depositAmount: 10_000_000 }),
+        joinAuthority: authority.publicKey, expectedJoins,
+        expectedTerms: termsFor({ depositAmount: 10_000_000 }, creator.keypair.publicKey),
       }).instruction();
       sendAs(sponsor, [
         await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.keypair.publicKey, sponsor.publicKey).instruction(),
@@ -2124,12 +2138,13 @@ describe("safenudge", () => {
         await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.keypair.publicKey, sponsor.publicKey).instruction(),
         await setJoinAuthorityMethod(gPda, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey).instruction(),
         await joinMethod(creator, gPda, vPda, sponsor.publicKey, {
-          joinAuthority: authority.publicKey, expectedJoins: 0, expectedTerms: termsFor({ depositAmount: 10_000_000 }),
+          joinAuthority: authority.publicKey, expectedJoins: 0,
+          expectedTerms: termsFor({ depositAmount: 10_000_000 }, creator.keypair.publicKey),
         }).instruction(),
       ], [creator.keypair, authority]);
 
       assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
-      assert.equal(cost.bytes, 848);
+      assert.equal(cost.bytes, 880);
       assert.equal((await fetchTally(gPda, creator)).joins, 1);
     });
 
@@ -2150,7 +2165,7 @@ describe("safenudge", () => {
       assert.equal(before - afterFirst, rentFor(MEMBER_RECORD_SIZE) + rentFor(JOIN_TALLY_SIZE) + 2n * SIGNATURE_FEE);
       assert.equal(afterLeave - lamportsOf(sponsor.publicKey), rentFor(MEMBER_RECORD_SIZE) + 2n * SIGNATURE_FEE);
       assert.isBelow(Number(first.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
-      assert.equal(first.computeUnits - rejoin.computeUnits, 2_602n);
+      assert.equal(first.computeUnits - rejoin.computeUnits, 2_603n);
       assert.equal((await fetchTally(gPda, member)).joins, 2);
     });
   });
