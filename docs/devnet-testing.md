@@ -286,6 +286,25 @@ Through the web app, the shortest frequency is weekly, so a 4-period cycle takes
 - Treasury gets 5% of the penalty pool
 - Sum of all payouts + fee = sum of all deposits (conservation invariant)
 
+## 5a. Scripted rehearsal of an upgrade
+
+`scripts/rehearse-devnet.ts` drives a devnet build through two paths in about 11 minutes, with
+no wallet app. First, a join signed for an empty group fails with `TermsMismatch` after the
+creator cancels, closes and creates the code again on other terms. Second, three members join,
+two deposit in each 5-minute period and one misses, and `distribute` pays out exactly what went
+in, protocol fee included. It creates its own mint, and it creates the treasury ATA itself, so
+the `FEE_RECIPIENT` key is not needed. The payer needs about 0.2 SOL.
+
+```bash
+anchor build -- --features devnet
+npx ts-node -P tsconfig.json scripts/rehearse-devnet.ts \
+  --url https://api.devnet.solana.com --payer ~/.config/solana/id.json
+```
+
+Each check prints `ok`, and the last line is `rehearsal passed`. With `--url
+http://127.0.0.1:8899` it runs against `solana-test-validator`, after a
+`solana program deploy` of the same build.
+
 ## 5b. Local rehearsal with Surfpool
 
 [Surfpool](https://github.com/solana-foundation/surfpool) runs a local RPC

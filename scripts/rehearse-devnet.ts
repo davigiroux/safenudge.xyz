@@ -43,6 +43,8 @@ const payer = Keypair.fromSecretKey(Uint8Array.from(JSON.parse(fs.readFileSync(a
 const idl = JSON.parse(fs.readFileSync(arg("idl", "target/idl/safenudge.json"), "utf-8"));
 const program = new Program(idl, new AnchorProvider(connection, new Wallet(payer), { commitment: "confirmed" }));
 const programId = program.programId;
+// The IDL is read at run time, so the type checker does not know its account names.
+const accounts: any = program.account;
 
 const pda = (...seeds: Buffer[]) => PublicKey.findProgramAddressSync(seeds, programId)[0];
 const groupPda = (code: string) => pda(Buffer.from("group"), Buffer.from(code));
@@ -89,7 +91,7 @@ function createGroup(code: string, mint: PublicKey, deposit: number, penalty: nu
 }
 
 async function termsOf(group: PublicKey) {
-  const g = await program.account.groupConfig.fetch(group);
+  const g = await accounts.groupConfig.fetch(group);
   return {
     creator: g.creator, depositAmount: g.depositAmount, frequency: g.frequency, totalPeriods: g.totalPeriods,
     penaltyType: g.penaltyType, penaltyValue: g.penaltyValue,
@@ -140,7 +142,7 @@ async function lifecycle(mint: PublicKey, suffix: string) {
   check(recordInfo?.data.length === 198 && recordInfo.data.subarray(0, 8).toString() === "snMembr3", "MemberRecord is 198 bytes, snMembr3");
 
   await program.methods.startCycle().accountsPartial({ creator: payer.publicKey, groupConfig: group }).rpc();
-  const cycleStart = (await program.account.groupConfig.fetch(group)).cycleStart.toNumber();
+  const cycleStart = (await accounts.groupConfig.fetch(group)).cycleStart.toNumber();
 
   await waitUntil(cycleStart + PERIOD_SECS);
   for (const m of members.slice(0, 2)) {
