@@ -147,6 +147,7 @@ mod tests {
 
     fn terms(penalty_type: u8, penalty_value: u64) -> GroupTerms {
         GroupTerms {
+            creator: Pubkey::default(),
             deposit_amount: 1_000_000,
             frequency: 0,
             total_periods: 4,

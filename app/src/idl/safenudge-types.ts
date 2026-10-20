@@ -2206,6 +2206,10 @@ export type Safenudge = {
         "kind": "struct",
         "fields": [
           {
+            "name": "creator",
+            "type": "pubkey"
+          },
+          {
             "name": "depositAmount",
             "type": "u64"
           },

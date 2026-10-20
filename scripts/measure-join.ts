@@ -105,6 +105,7 @@ function fundedMember(env: Env, keypair: Keypair, lamports: number): Member {
 }
 
 const GROUP_TERMS = { depositAmount: new BN(DEPOSIT), frequency: 0, totalPeriods: 4, penaltyType: 0, penaltyValue: new BN(0) };
+const termsFor = (creator: PublicKey) => ({ creator, ...GROUP_TERMS });
 
 async function createGroupIx(env: Env, code: string, creator: PublicKey, rentPayer: PublicKey) {
   const groupConfig = pda(env.program, [Buffer.from("group"), Buffer.from(code)]);
@@ -119,8 +120,8 @@ async function createGroupIx(env: Env, code: string, creator: PublicKey, rentPay
 }
 
 async function joinIx(
-  env: Env, groupConfig: PublicKey, member: Member, rentPayer: PublicKey, joinAuthority: PublicKey | null,
-  expectedJoins: number | null,
+  env: Env, groupConfig: PublicKey, creator: PublicKey, member: Member, rentPayer: PublicKey,
+  joinAuthority: PublicKey | null, expectedJoins: number | null,
 ) {
   const accounts: Record<string, PublicKey | null> = {
     member: member.keypair.publicKey, rentPayer, groupConfig,
@@ -133,7 +134,7 @@ async function joinIx(
     accounts.joinTally = pda(env.program, [Buffer.from("tally"), groupConfig.toBuffer(), member.keypair.publicKey.toBuffer()]);
   }
   const args: unknown[] = [];
-  if (env.hasTerms) args.push(GROUP_TERMS);
+  if (env.hasTerms) args.push(termsFor(creator));
   if (env.hasExpectedJoins) args.push(expectedJoins);
   const method = env.program.methods.joinGroup(...args);
   return method.accounts(accounts).instruction();
@@ -156,7 +157,7 @@ async function measureJoin(build: Build, run: number): Promise<{ computeUnits: b
   const member = fundedMember(env, seeded(`join-${run}:member`), 0);
   const before = env.client.getBalance(sponsor.publicKey) ?? 0n;
   const { computeUnits } = send(
-    env.client, sponsor, [await joinIx(env, groupConfig, member, sponsor.publicKey, null, null)], [member.keypair],
+    env.client, sponsor, [await joinIx(env, groupConfig, env.payer.publicKey, member, sponsor.publicKey, null, null)], [member.keypair],
   );
   const after = env.client.getBalance(sponsor.publicKey) ?? 0n;
   return { computeUnits, sponsorPaid: before - after - 2n * SIGNATURE_FEE };
@@ -171,7 +172,7 @@ async function measureGatedCreate(build: Build): Promise<{ bytes: number; comput
   return send(env.client, sponsor, [
     await createGroupIx(env, "gated-measure", creator.keypair.publicKey, sponsor.publicKey),
     await gateIx(env, groupConfig, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey),
-    await joinIx(env, groupConfig, creator, sponsor.publicKey, authority.publicKey, 0),
+    await joinIx(env, groupConfig, creator.keypair.publicKey, creator, sponsor.publicKey, authority.publicKey, 0),
   ], [creator.keypair, authority]);
 }
 
