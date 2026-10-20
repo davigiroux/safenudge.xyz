@@ -6,7 +6,7 @@ use crate::errors::SafeNudgeError;
 ///
 /// Every fixed-size field comes before `group_code`, the only variable-length one, so each field
 /// above it sits at the same byte offset in every group and clients can `memcmp`-filter on it.
-#[account(discriminator = b"snGroup3")]
+#[account(discriminator = b"snGroup4")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
     /// Offset 8. Group creator wallet: can start_cycle and emergency_cancel.
@@ -43,14 +43,39 @@ pub struct GroupConfig {
     /// Offset 143. Canonical PDA bump for the vault, stored by create_group so the instructions
     /// that take the vault derive it once instead of searching for it.
     pub vault_bump: u8,
-    /// Offset 144. Human-readable group code, used as PDA seed.
+    /// Offset 144. Zero. Room for fixed-size fields added later, so a new field does not move
+    /// `group_code` or force every live group to settle before the upgrade.
+    pub reserved: [u8; 64],
+    /// Offset 208. Human-readable group code, used as PDA seed.
     #[max_len(32)]
     pub group_code: String,
 }
 
-const _: () = assert!(8 + GroupConfig::INIT_SPACE == 180);
+const _: () = assert!(8 + GroupConfig::INIT_SPACE == 244);
+
+/// What a member agrees to when joining. `join_group` takes the terms the client showed and
+/// fails unless the group still has them, so a join signed for one group cannot land in a group
+/// created later at the same code on other terms.
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroupTerms {
+    pub deposit_amount: u64,
+    pub frequency: u8,
+    pub total_periods: u8,
+    pub penalty_type: u8,
+    pub penalty_value: u64,
+}
 
 impl GroupConfig {
+    pub fn terms(&self) -> GroupTerms {
+        GroupTerms {
+            deposit_amount: self.deposit_amount,
+            frequency: self.frequency,
+            total_periods: self.total_periods,
+            penalty_type: self.penalty_type,
+            penalty_value: self.penalty_value,
+        }
+    }
+
     /// First unix timestamp after the last deposit period of the cycle.
     pub fn cycle_end(&self) -> Result<i64> {
         let cycle_duration = i64::from(self.total_periods)
@@ -135,6 +160,7 @@ mod tests {
             status: 0,
             bump: 0,
             vault_bump: 0,
+            reserved: [0; 64],
             group_code: String::new(),
         };
         assert_eq!(group.cycle_end().unwrap(), 1_000 + 4 * 604_800);
@@ -184,12 +210,13 @@ mod tests {
             status: 13,
             bump: 14,
             vault_bump: 15,
+            reserved: [0; 64],
             group_code: "abc".to_string(),
         };
         let mut bytes = Vec::new();
         group.try_serialize(&mut bytes).unwrap();
 
-        assert_eq!(&bytes[0..8], b"snGroup3");
+        assert_eq!(&bytes[0..8], b"snGroup4");
         assert_eq!(&bytes[8..40], &[1; 32]);
         assert_eq!(&bytes[40..72], &[2; 32]);
         assert_eq!(&bytes[72..104], &[3; 32]);
@@ -198,8 +225,9 @@ mod tests {
         assert_eq!(&bytes[120..128], &[6; 8]);
         assert_eq!(&bytes[128..136], &[7; 8]);
         assert_eq!(&bytes[136..144], &[8, 9, 10, 11, 12, 13, 14, 15]);
-        assert_eq!(&bytes[144..148], &3u32.to_le_bytes());
-        assert_eq!(&bytes[148..], b"abc");
+        assert_eq!(&bytes[144..208], &[0; 64]);
+        assert_eq!(&bytes[208..212], &3u32.to_le_bytes());
+        assert_eq!(&bytes[212..], b"abc");
     }
 
     #[test]
@@ -220,11 +248,12 @@ mod tests {
             status: 0,
             bump: 0,
             vault_bump: 0,
+            reserved: [0; 64],
             group_code: "a".repeat(32),
         };
         let mut bytes = Vec::new();
         group.try_serialize(&mut bytes).unwrap();
-        assert_eq!(bytes.len(), 180);
+        assert_eq!(bytes.len(), 244);
     }
 }
 

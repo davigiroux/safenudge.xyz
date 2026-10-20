@@ -31,6 +31,7 @@ pub mod instructions;
 pub mod state;
 
 use instructions::*;
+use state::GroupTerms;
 
 /// Protocol fee charged on the penalty pool at distribute time, in basis points.
 /// 500 bps = 5%. Constant — no runtime override.
@@ -97,10 +98,15 @@ pub mod safenudge {
         )
     }
 
-    /// Joins with the first deposit. `expected_joins`, when given, must equal the member's
-    /// JoinTally count before this join (0 for a first join). A gated group requires it.
-    pub fn join_group(ctx: Context<JoinGroup>, expected_joins: Option<u32>) -> Result<()> {
-        ctx.accounts.handler(&ctx.bumps, expected_joins)
+    /// Joins with the first deposit. `expected_terms` must equal the group's terms.
+    /// `expected_joins`, when given, must equal the member's JoinTally count before this join
+    /// (0 for a first join). A gated group requires it.
+    pub fn join_group(
+        ctx: Context<JoinGroup>,
+        expected_terms: GroupTerms,
+        expected_joins: Option<u32>,
+    ) -> Result<()> {
+        ctx.accounts.handler(&ctx.bumps, expected_terms, expected_joins)
     }
 
     pub fn leave_group(ctx: Context<LeaveGroup>) -> Result<()> {

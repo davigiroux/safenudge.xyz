@@ -353,8 +353,8 @@ describe("safenudge", () => {
   const SIGNATURE_FEE = 5_000n;
   const TRANSACTION_BYTE_LIMIT = 1232;
   const DEFAULT_COMPUTE_UNIT_LIMIT = 200_000n;
-  const GROUP_CONFIG_SIZE = 180;
-  const MEMBER_RECORD_SIZE = 166;
+  const GROUP_CONFIG_SIZE = 244;
+  const MEMBER_RECORD_SIZE = 198;
   const JOIN_GATE_SIZE = 40;
   const JOIN_TALLY_SIZE = 44;
   const CURRENT_MEMBERS_OFFSET = 139;
@@ -516,15 +516,49 @@ describe("safenudge", () => {
     );
   }
 
+  type GroupTerms = {
+    depositAmount: BN; frequency: number; totalPeriods: number; penaltyType: number; penaltyValue: BN;
+  };
+
   type JoinOpts = {
     mint?: PublicKey; tokenProgram?: PublicKey; joinAuthority?: PublicKey | null; expectedJoins?: number | null;
+    expectedTerms?: GroupTerms;
   };
+
+  /** The terms `createGroupMethod` gives a group, for a join built before the group exists. */
+  function termsFor(opts: GroupOpts): GroupTerms {
+    return {
+      depositAmount: new BN(opts.depositAmount), frequency: 0, totalPeriods: opts.totalPeriods ?? 4,
+      penaltyType: 0, penaltyValue: new BN(opts.penaltyValue ?? 0),
+    };
+  }
+
+  /**
+   * The terms the group holds now, as a client reads them before it builds a join. A group this
+   * IDL cannot decode, such as one in an earlier layout, gets placeholder terms, so the join
+   * reaches the program and fails there.
+   */
+  function groupTerms(gPda: PublicKey): GroupTerms {
+    const account = context.banksClient.getAccount(gPda);
+    try {
+      const group = program.coder.accounts.decode("groupConfig", Buffer.from(account.data));
+      return {
+        depositAmount: group.depositAmount, frequency: group.frequency, totalPeriods: group.totalPeriods,
+        penaltyType: group.penaltyType, penaltyValue: group.penaltyValue,
+      };
+    } catch {
+      return termsFor({ depositAmount: 0 });
+    }
+  }
 
   function joinMethod(
     member: Member, gPda: PublicKey, vPda: PublicKey, rentPayer: PublicKey,
-    { mint = usdcMint, tokenProgram = TOKEN_PROGRAM_ID, joinAuthority = null, expectedJoins = null }: JoinOpts = {},
+    {
+      mint = usdcMint, tokenProgram = TOKEN_PROGRAM_ID, joinAuthority = null, expectedJoins = null,
+      expectedTerms = groupTerms(gPda),
+    }: JoinOpts = {},
   ) {
-    return program.methods.joinGroup(expectedJoins)
+    return program.methods.joinGroup(expectedTerms, expectedJoins)
       .accounts({
         member: member.keypair.publicKey, rentPayer, groupConfig: gPda, memberRecord: member.recordPda,
         memberTokenAccount: member.tokenAccount, vault: vPda, mint,
@@ -564,12 +598,13 @@ describe("safenudge", () => {
 
   function joinCall(
     member: Member, gPda: PublicKey, vPda: PublicKey,
-    { mint = usdcMint, rentPayer = member.keypair, joinAuthority, expectedJoins }: {
+    { mint = usdcMint, rentPayer = member.keypair, joinAuthority, expectedJoins, expectedTerms }: {
       mint?: PublicKey; rentPayer?: Keypair; joinAuthority?: Keypair; expectedJoins?: number | null;
+      expectedTerms?: GroupTerms;
     } = {},
   ): Promise<string> {
     return joinMethod(member, gPda, vPda, rentPayer.publicKey, {
-      mint, joinAuthority: joinAuthority?.publicKey ?? null, expectedJoins,
+      mint, joinAuthority: joinAuthority?.publicKey ?? null, expectedJoins, expectedTerms,
     })
       .signers(walletSigners(member.keypair, rentPayer, ...(joinAuthority ? [joinAuthority] : [])))
       .rpc();
@@ -1002,15 +1037,15 @@ describe("safenudge", () => {
       await createGroupCall("x", GROUP, creator, sponsor);
 
       const data = Buffer.from(context.banksClient.getAccount(getGroupPda("x")[0]).data);
-      assert.equal(data.length, 180);
-      assert.equal(data.subarray(0, 8).toString(), "snGroup3");
+      assert.equal(data.length, 244);
+      assert.equal(data.subarray(0, 8).toString(), "snGroup4");
       assert.deepEqual(data.subarray(8, 40), creator.publicKey.toBuffer());
       assert.deepEqual(data.subarray(40, 72), sponsor.publicKey.toBuffer());
       assert.deepEqual(data.subarray(72, 104), usdcMint.toBuffer());
       assert.equal(data[141], 0);
       assert.equal(data[143], getVaultPda(getGroupPda("x")[0])[1]);
-      assert.equal(data.readUInt32LE(144), 1);
-      assert.equal(data.subarray(148, 149).toString(), "x");
+      assert.equal(data.readUInt32LE(208), 1);
+      assert.equal(data.subarray(212, 213).toString(), "x");
     });
 
     it("fails when the rent payer does not sign", async () => {
@@ -1483,11 +1518,53 @@ describe("safenudge", () => {
       const member = await joinNewMember(gPda, vPda, 10_000_000, sponsor);
 
       const data = Buffer.from(context.banksClient.getAccount(member.recordPda).data);
-      assert.equal(data.length, 166);
-      assert.equal(data.subarray(0, 8).toString(), "snMembr2");
+      assert.equal(data.length, 198);
+      assert.equal(data.subarray(0, 8).toString(), "snMembr3");
       assert.deepEqual(data.subarray(8, 40), gPda.toBuffer());
       assert.deepEqual(data.subarray(40, 72), member.keypair.publicKey.toBuffer());
       assert.deepEqual(data.subarray(72, 104), sponsor.publicKey.toBuffer());
+    });
+  });
+
+  describe("join_group terms", () => {
+    it("test_join_fails_when_the_deposit_amount_differs_from_the_signed_terms", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("terms-deposit", { depositAmount: 10_000_000 });
+      const member = await newJoiner(gPda, 100_000_000);
+      const expectedTerms = { ...groupTerms(gPda), depositAmount: new BN(9_000_000) };
+
+      await expectError(joinCall(member, gPda, vPda, { expectedTerms }), "TermsMismatch");
+
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
+    });
+
+    it("test_join_fails_when_the_penalty_differs_from_the_signed_terms", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("terms-penalty", { depositAmount: 10_000_000, penaltyValue: 1_000_000 });
+      const member = await newJoiner(gPda, 100_000_000);
+
+      for (const change of [
+        { penaltyValue: new BN(2_000_000) }, { penaltyType: 1 }, { totalPeriods: 5 }, { frequency: 1 },
+      ]) {
+        await expectError(
+          joinCall(member, gPda, vPda, { expectedTerms: { ...groupTerms(gPda), ...change } }),
+          "TermsMismatch",
+        );
+      }
+      assert.isNull(context.banksClient.getAccount(member.recordPda));
+    });
+
+    it("test_join_signed_for_a_closed_group_fails_in_a_new_group_at_the_same_code", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("terms-switch", { depositAmount: 10_000_000 });
+      const victim = await newJoiner(gPda, 1_000_000_000);
+      const signedTerms = groupTerms(gPda);
+
+      await cancelCall(gPda, vPda, []);
+      await closeGroupMethod(gPda, payer.publicKey).rpc();
+      await createWeeklyGroup("terms-switch", { depositAmount: 900_000_000 });
+
+      await expectError(joinCall(victim, gPda, vPda, { expectedTerms: signedTerms }), "TermsMismatch");
+      assert.equal(await getTokenBalanceOrZero(victim.tokenAccount), 1_000_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 0n);
     });
   });
 
@@ -1710,14 +1787,15 @@ describe("safenudge", () => {
       const createIx = await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.publicKey, sponsor.publicKey).instruction();
       const gateIx = await setJoinAuthorityMethod(gPda, authority.publicKey, creator.publicKey, sponsor.publicKey).instruction();
 
-      const unapprovedJoin = await joinMethod(creatorMember, gPda, vPda, sponsor.publicKey).instruction();
+      const terms = termsFor({ depositAmount: 10_000_000 });
+      const unapprovedJoin = await joinMethod(creatorMember, gPda, vPda, sponsor.publicKey, { expectedTerms: terms }).instruction();
       await expectError(() => sendAs(sponsor, [createIx, gateIx, unapprovedJoin], [creator]), "JoinNotApproved");
       assert.isNull(context.banksClient.getAccount(gPda));
       assert.isNull(context.banksClient.getAccount(getJoinGatePda(gPda)[0]));
 
-      const approvedJoin = await joinMethod(
-        creatorMember, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey, expectedJoins: 0 },
-      ).instruction();
+      const approvedJoin = await joinMethod(creatorMember, gPda, vPda, sponsor.publicKey, {
+        joinAuthority: authority.publicKey, expectedJoins: 0, expectedTerms: terms,
+      }).instruction();
       sendAs(sponsor, [createIx, gateIx, approvedJoin], [creator, authority]);
 
       const group = await program.account.groupConfig.fetch(gPda);
@@ -1935,9 +2013,9 @@ describe("safenudge", () => {
       const sponsor = await fundedKeypair();
       const authority = Keypair.generate();
       const creator = await zeroSolJoiner(gPda);
-      const approvedJoin = (expectedJoins: number) => joinMethod(
-        creator, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey, expectedJoins },
-      ).instruction();
+      const approvedJoin = (expectedJoins: number) => joinMethod(creator, gPda, vPda, sponsor.publicKey, {
+        joinAuthority: authority.publicKey, expectedJoins, expectedTerms: termsFor({ depositAmount: 10_000_000 }),
+      }).instruction();
       sendAs(sponsor, [
         await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.keypair.publicKey, sponsor.publicKey).instruction(),
         await setJoinAuthorityMethod(gPda, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey).instruction(),
@@ -2045,11 +2123,13 @@ describe("safenudge", () => {
       const cost = sendAs(sponsor, [
         await createGroupMethod(code, { depositAmount: 10_000_000 }, creator.keypair.publicKey, sponsor.publicKey).instruction(),
         await setJoinAuthorityMethod(gPda, authority.publicKey, creator.keypair.publicKey, sponsor.publicKey).instruction(),
-        await joinMethod(creator, gPda, vPda, sponsor.publicKey, { joinAuthority: authority.publicKey, expectedJoins: 0 }).instruction(),
+        await joinMethod(creator, gPda, vPda, sponsor.publicKey, {
+          joinAuthority: authority.publicKey, expectedJoins: 0, expectedTerms: termsFor({ depositAmount: 10_000_000 }),
+        }).instruction(),
       ], [creator.keypair, authority]);
 
       assert.isAtMost(cost.bytes, TRANSACTION_BYTE_LIMIT);
-      assert.equal(cost.bytes, 829);
+      assert.equal(cost.bytes, 848);
       assert.equal((await fetchTally(gPda, creator)).joins, 1);
     });
 
@@ -2070,7 +2150,7 @@ describe("safenudge", () => {
       assert.equal(before - afterFirst, rentFor(MEMBER_RECORD_SIZE) + rentFor(JOIN_TALLY_SIZE) + 2n * SIGNATURE_FEE);
       assert.equal(afterLeave - lamportsOf(sponsor.publicKey), rentFor(MEMBER_RECORD_SIZE) + 2n * SIGNATURE_FEE);
       assert.isBelow(Number(first.computeUnits), Number(DEFAULT_COMPUTE_UNIT_LIMIT));
-      assert.equal(first.computeUnits - rejoin.computeUnits, 2_601n);
+      assert.equal(first.computeUnits - rejoin.computeUnits, 2_602n);
       assert.equal((await fetchTally(gPda, member)).joins, 2);
     });
   });
@@ -5301,7 +5381,7 @@ describe("safenudge", () => {
   });
 
   describe("close_group", () => {
-    const GROUP_CONFIG_RENT = 2_143_680n;
+    const GROUP_CONFIG_RENT = 2_589_120n;
     const VAULT_RENT = 2_039_280n;
 
     async function settledGroupWithRecordsClosed(
@@ -5386,7 +5466,7 @@ describe("safenudge", () => {
       await closeGroupMethod(gPda, sponsor.publicKey).rpc();
 
       assert.isNull(context.banksClient.getAccount(gPda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_182_960n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_628_400n);
     });
 
     it("leaves the join tallies open", async () => {
@@ -5412,7 +5492,7 @@ describe("safenudge", () => {
       await closeGroupMethod(gPda, sponsor.publicKey).rpc();
 
       assert.isNull(context.banksClient.getAccount(gPda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_182_960n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_628_400n);
     });
 
     it("lets any wallet send it and still pays the recorded rent payer", async () => {
@@ -5426,7 +5506,7 @@ describe("safenudge", () => {
       sendAs(stranger, [await closeGroupMethod(gPda, sponsor.publicKey).instruction()]);
 
       assert.isNull(context.banksClient.getAccount(gPda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_182_960n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 4_628_400n);
       assert.equal(lamportsOf(payer.publicKey), creatorBefore);
       assert.equal(strangerBefore - lamportsOf(stranger.publicKey), SIGNATURE_FEE);
     });
@@ -5484,7 +5564,7 @@ describe("safenudge", () => {
 
       assert.isNull(context.banksClient.getAccount(gPda));
       assert.isNull(context.banksClient.getAccount(gatePda));
-      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 5_352_240n);
+      assert.equal(lamportsOf(sponsor.publicKey) - sponsorBefore, 5_797_680n);
     });
 
     it("fails with ConstraintSeeds when another address is passed as the join gate, and the gate stays", async () => {
@@ -6420,7 +6500,7 @@ describe("safenudge", () => {
 
       assert.deepEqual(events, [{
         name: "groupClosed",
-        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 4_182_960n, joinGateLamports: 0n },
+        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 4_628_400n, joinGateLamports: 0n },
       }]);
     });
 
@@ -6435,7 +6515,7 @@ describe("safenudge", () => {
 
       assert.deepEqual(events, [{
         name: "groupClosed",
-        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 2_143_680n, joinGateLamports: 1_169_280n },
+        data: { group: gPda.toBase58(), rentPayer: sponsor.publicKey.toBase58(), lamports: 2_589_120n, joinGateLamports: 1_169_280n },
       }]);
     });
 

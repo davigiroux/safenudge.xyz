@@ -814,8 +814,9 @@ export type Safenudge = {
     {
       "name": "joinGroup",
       "docs": [
-        "Joins with the first deposit. `expected_joins`, when given, must equal the member's",
-        "JoinTally count before this join (0 for a first join). A gated group requires it."
+        "Joins with the first deposit. `expected_terms` must equal the group's terms.",
+        "`expected_joins`, when given, must equal the member's JoinTally count before this join",
+        "(0 for a first join). A gated group requires it."
       ],
       "discriminator": [
         121,
@@ -895,9 +896,7 @@ export type Safenudge = {
           "name": "memberTokenAccount",
           "docs": [
             "Must be the member's canonical ATA for the group mint (pins owner and",
-            "mint too). Settlement derives each member's ATA deterministically, so",
-            "accepting any other token account here would brick the whole group at",
-            "distribute time (issue #44 M-3)."
+            "mint too), so the first deposit comes from the account clients look up."
           ],
           "writable": true,
           "pda": {
@@ -1059,6 +1058,14 @@ export type Safenudge = {
         }
       ],
       "args": [
+        {
+          "name": "expectedTerms",
+          "type": {
+            "defined": {
+              "name": "groupTerms"
+            }
+          }
+        },
         {
           "name": "expectedJoins",
           "type": {
@@ -1423,7 +1430,7 @@ export type Safenudge = {
         111,
         117,
         112,
-        51
+        52
       ]
     },
     {
@@ -1462,7 +1469,7 @@ export type Safenudge = {
         109,
         98,
         114,
-        50
+        51
       ]
     }
   ],
@@ -1786,6 +1793,21 @@ export type Safenudge = {
       "code": 6034,
       "name": "expectedJoinsRequired",
       "msg": "A gated join must name the member's expected join count"
+    },
+    {
+      "code": 6035,
+      "name": "termsMismatch",
+      "msg": "The group's terms changed since the join was signed"
+    },
+    {
+      "code": 6036,
+      "name": "settlementImbalance",
+      "msg": "Settlement payouts do not add up to the deposits"
+    },
+    {
+      "code": 6037,
+      "name": "vaultShortfall",
+      "msg": "The vault holds less than the members deposited"
     }
   ],
   "types": [
@@ -2070,9 +2092,22 @@ export type Safenudge = {
             "type": "u8"
           },
           {
+            "name": "reserved",
+            "docs": [
+              "Offset 144. Zero. Room for fixed-size fields added later, so a new field does not move",
+              "`group_code` or force every live group to settle before the upgrade."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          },
+          {
             "name": "groupCode",
             "docs": [
-              "Offset 144. Human-readable group code, used as PDA seed."
+              "Offset 208. Human-readable group code, used as PDA seed."
             ],
             "type": "string"
           }
@@ -2155,6 +2190,39 @@ export type Safenudge = {
               "Sum of `MemberSettled.payout`. Plus `protocol_fee`, equals the vault balance before",
               "settlement."
             ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "groupTerms",
+      "docs": [
+        "What a member agrees to when joining. `join_group` takes the terms the client showed and",
+        "fails unless the group still has them, so a join signed for one group cannot land in a group",
+        "created later at the same code on other terms."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "depositAmount",
+            "type": "u64"
+          },
+          {
+            "name": "frequency",
+            "type": "u8"
+          },
+          {
+            "name": "totalPeriods",
+            "type": "u8"
+          },
+          {
+            "name": "penaltyType",
+            "type": "u8"
+          },
+          {
+            "name": "penaltyValue",
             "type": "u64"
           }
         ]
@@ -2373,6 +2441,18 @@ export type Safenudge = {
               "Offset 165. PDA bump for member_record."
             ],
             "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "docs": [
+              "Offset 166. Zero. Room for fields added later without a new layout."
+            ],
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
           }
         ]
       }

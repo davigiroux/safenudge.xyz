@@ -87,7 +87,7 @@ const PERIOD_SECS: Record<Cluster, Record<number, bigint>> = {
   devnet: { 0: 7n * DAY, 1: 14n * DAY, 2: 30n * DAY, 3: 300n },
 };
 
-export const GROUP_DISCRIMINATOR = Buffer.from("snGroup3");
+export const GROUP_DISCRIMINATOR = Buffer.from("snGroup4");
 export const STATUS_OFFSET = 141;
 export const STATUS_ACTIVE = 1;
 
@@ -105,14 +105,14 @@ export function decodeGroup(address: string, data: Buffer): Group {
   if (!data.subarray(0, 8).equals(GROUP_DISCRIMINATOR)) {
     throw new Error(`${address} is not a GroupConfig`);
   }
-  const codeLen = data.readUInt32LE(144);
+  const codeLen = data.readUInt32LE(208);
   return {
     address,
     cycleStart: data.readBigInt64LE(120),
     frequency: data.readUInt8(136),
     totalPeriods: data.readUInt8(137),
     status: data.readUInt8(STATUS_OFFSET),
-    code: data.subarray(148, 148 + codeLen).toString("utf8"),
+    code: data.subarray(212, 212 + codeLen).toString("utf8"),
   };
 }
 

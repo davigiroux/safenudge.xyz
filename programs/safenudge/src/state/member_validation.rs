@@ -34,10 +34,18 @@ pub fn validate_member_pair<'info>(
         SafeNudgeError::InvalidMemberRecord
     );
 
-    let (expected_record, _) = Pubkey::find_program_address(
-        &[b"member", group_key.as_ref(), member_record.member.as_ref()],
+    // The stored bump came from the record's `init` constraint, so it is canonical, and this
+    // program owns the account, so no one else wrote it. That saves the bump search per member.
+    let expected_record = Pubkey::create_program_address(
+        &[
+            b"member",
+            group_key.as_ref(),
+            member_record.member.as_ref(),
+            &[member_record.bump],
+        ],
         &crate::ID,
-    );
+    )
+    .map_err(|_| SafeNudgeError::InvalidMemberRecord)?;
     require_keys_eq!(
         *record_info.key,
         expected_record,

@@ -44,6 +44,7 @@ type Env = {
   mintAuthority: Keypair;
   hasTally: boolean;
   hasExpectedJoins: boolean;
+  hasTerms: boolean;
 };
 
 function freshEnv(build: Build, run: string): Env {
@@ -68,7 +69,8 @@ function freshEnv(build: Build, run: string): Env {
   const join = idl.instructions.find((ix: { name: string }) => ix.name === "join_group");
   const hasTally = join.accounts.some((account: { name: string }) => account.name === "join_tally");
   const hasExpectedJoins = join.args.some((arg: { name: string }) => arg.name === "expected_joins");
-  return { client, program, payer, mint: mintKeypair.publicKey, mintAuthority, hasTally, hasExpectedJoins };
+  const hasTerms = join.args.some((arg: { name: string }) => arg.name === "expected_terms");
+  return { client, program, payer, mint: mintKeypair.publicKey, mintAuthority, hasTally, hasExpectedJoins, hasTerms };
 }
 
 function send(client: LiteSVM, feePayer: Keypair, ixs: TransactionInstruction[], signers: Keypair[] = []) {
@@ -102,10 +104,13 @@ function fundedMember(env: Env, keypair: Keypair, lamports: number): Member {
   return { keypair, tokenAccount };
 }
 
+const GROUP_TERMS = { depositAmount: new BN(DEPOSIT), frequency: 0, totalPeriods: 4, penaltyType: 0, penaltyValue: new BN(0) };
+
 async function createGroupIx(env: Env, code: string, creator: PublicKey, rentPayer: PublicKey) {
   const groupConfig = pda(env.program, [Buffer.from("group"), Buffer.from(code)]);
+  const t = GROUP_TERMS;
   return env.program.methods
-    .createGroup(code, new BN(DEPOSIT), 0, 4, 5, 0, new BN(0))
+    .createGroup(code, t.depositAmount, t.frequency, t.totalPeriods, 5, t.penaltyType, t.penaltyValue)
     .accounts({
       creator, rentPayer, groupConfig, vault: pda(env.program, [Buffer.from("vault"), groupConfig.toBuffer()]),
       mint: env.mint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,
@@ -127,9 +132,10 @@ async function joinIx(
   if (env.hasTally) {
     accounts.joinTally = pda(env.program, [Buffer.from("tally"), groupConfig.toBuffer(), member.keypair.publicKey.toBuffer()]);
   }
-  const method = env.hasExpectedJoins
-    ? env.program.methods.joinGroup(expectedJoins)
-    : env.program.methods.joinGroup();
+  const args: unknown[] = [];
+  if (env.hasTerms) args.push(GROUP_TERMS);
+  if (env.hasExpectedJoins) args.push(expectedJoins);
+  const method = env.program.methods.joinGroup(...args);
   return method.accounts(accounts).instruction();
 }
 

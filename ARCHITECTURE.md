@@ -30,7 +30,7 @@ Stores the group's parameters and state. Created once per group. `close_group` c
 Every fixed-size field comes before `group_code`, the only variable-length field. Each field above `group_code` therefore sits at the same byte offset in every group, and clients can `memcmp`-filter on it.
 
 ```rust
-#[account(discriminator = b"snGroup3")]
+#[account(discriminator = b"snGroup4")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
     pub creator: Pubkey,           // offset 8,   32 bytes. Can start_cycle and emergency_cancel
@@ -48,14 +48,17 @@ pub struct GroupConfig {
     pub status: u8,                // offset 141. 0 = open, 1 = active, 2 = completed, 3 = cancelled
     pub bump: u8,                  // offset 142. PDA bump
     pub vault_bump: u8,            // offset 143. Canonical bump of the vault PDA, stored by create_group
+    pub reserved: [u8; 64],        // offset 144, 64 bytes. Zero. Room for later fixed-size fields
     #[max_len(32)]
-    pub group_code: String,        // offset 144, 4 + up to 32 bytes. Group code, used as PDA seed
+    pub group_code: String,        // offset 208, 4 + up to 32 bytes. Group code, used as PDA seed
 }
 // Seeds: [b"group", group_code.as_bytes()]
-// Space: 8 (discriminator) + 32 * 3 + 8 * 4 + 1 * 8 + (4 + 32) = 180
+// Space: 8 (discriminator) + 32 * 3 + 8 * 4 + 1 * 8 + 64 + (4 + 32) = 244
 ```
 
-The size is pinned at compile time (`const _: () = assert!(8 + GroupConfig::INIT_SPACE == 180)`), and a unit test in `state/group_config.rs` serializes a `GroupConfig` and checks each offset above.
+The size is pinned at compile time (`const _: () = assert!(8 + GroupConfig::INIT_SPACE == 244)`), and a unit test in `state/group_config.rs` serializes a `GroupConfig` and checks each offset above.
+
+`reserved` is padding for fields added later. A new fixed-size field takes bytes from the front of it, so `group_code` and every offset above stay where they are, and a group written by the earlier binary reads the new field as zero. A field added that way needs no settlement of live groups, as long as zero is a valid value for it. The padding costs 325,120 lamports of rent per group at 5,080 lamports per byte, and `close_group` returns it.
 
 `vault_bump` is the only stored bump that is not the account's own. `create_group` takes it from the `init` constraint on the vault, which finds the canonical bump, so it is canonical by construction. `join_group`, `leave_group`, `deposit`, `distribute` and `emergency_cancel` check the vault with `bump = group_config.vault_bump`: one derivation instead of a search from 255 that costs 1,500 compute units per bump tried. `leave_group`, `distribute` and `emergency_cancel` also sign vault transfers with it. A wrong value would fail the seeds check and move no funds, and the tests compare the stored value with `findProgramAddressSync` and settle a group whose vault bump is below 255 on every path (issue #92).
 
@@ -64,7 +67,7 @@ The size is pinned at compile time (`const _: () = assert!(8 + GroupConfig::INIT
 Stores an individual member's state within a group. One per member per group. `leave_group` closes it while the group is Open. `close_member_record` closes it after the group is Completed or Cancelled.
 
 ```rust
-#[account(discriminator = b"snMembr2")]
+#[account(discriminator = b"snMembr3")]
 #[derive(InitSpace)]
 pub struct MemberRecord {
     pub group: Pubkey,             // offset 8,   32 bytes. The GroupConfig PDA
@@ -73,11 +76,14 @@ pub struct MemberRecord {
     pub total_deposited: u64,      // offset 104, 8 bytes.  Total tokens deposited
     pub deposits_made: u8,         // offset 112. Number of on-time deposits (including initial)
     pub periods_deposited: [bool; 52], // offset 113, 52 bytes. Which periods were deposited (max 52 weeks)
-    pub bump: u8,                  // offset 165. PDA bump
+    pub bump: u8,                  // offset 165. Canonical PDA bump, from the init constraint
+    pub reserved: [u8; 32],        // offset 166, 32 bytes. Zero. Room for later fields
 }
 // Seeds: [b"member", group_config.key().as_ref(), member.key().as_ref()]
-// Space: 8 (discriminator) + 32 * 3 + 8 + 1 + 52 + 1 = 166
+// Space: 8 (discriminator) + 32 * 3 + 8 + 1 + 52 + 1 + 32 = 198
 ```
+
+Settlement derives each record's address from the stored `bump` with `create_program_address`, one hash, in place of a bump search per member.
 
 #### JoinGate
 
@@ -119,17 +125,17 @@ An authority must also bind each approval to the group instance it was made for,
 
 | Rent | Paid at | Returned by | Destination |
 |------|---------|-------------|-------------|
-| GroupConfig (180 bytes) | `create_group` | `close_group`, after settlement and once every member record is closed | `group_config.rent_payer` |
+| GroupConfig (244 bytes) | `create_group` | `close_group`, after settlement and once every member record is closed | `group_config.rent_payer` |
 | Vault (165 bytes) | `create_group` | `refund_vault_rent`, after `distribute` or `emergency_cancel` closed the vault into GroupConfig | `group_config.rent_payer` |
 | JoinGate (40 bytes) | `set_join_authority` | `close_group`, in the same instruction as `GroupConfig` | `group_config.rent_payer` |
 | JoinTally (44 bytes) | the member's first `join_group` at the group address | `close_join_tally`, once no group lives at that address | `join_tally.rent_payer` |
-| MemberRecord (166 bytes) | `join_group` | `leave_group` while the group is Open, or `close_member_record` 30 days after settlement | `member_record.rent_payer` |
+| MemberRecord (198 bytes) | `join_group` | `leave_group` while the group is Open, or `close_member_record` 30 days after settlement | `member_record.rent_payer` |
 
 `distribute` and `emergency_cancel` name no rent recipient. They close the vault into the GroupConfig PDA, so the instructions that move member tokens credit no lamports to an address outside the program.
 
 #### Accounts in the previous layout
 
-Both accounts use explicit discriminators (`snGroup3`, `snMembr2`). A `GroupConfig` written before `vault_bump` existed carries `snGroup2` and is 179 bytes; every instruction rejects it with `AccountDiscriminatorMismatch`. An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. See "Upgrades that change an account layout" under Deployment.
+Both accounts use explicit discriminators (`snGroup4`, `snMembr3`). A `GroupConfig` written before `reserved` existed carries `snGroup3` and is 180 bytes, and a `MemberRecord` carries `snMembr2` and is 166 bytes; every instruction rejects them with `AccountDiscriminatorMismatch`. A `GroupConfig` written before `vault_bump` existed carries `snGroup2` and is 179 bytes; every instruction rejects it with `AccountDiscriminatorMismatch`. An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. See "Upgrades that change an account layout" under Deployment.
 
 #### GroupVault
 
@@ -215,7 +221,7 @@ A member joins the group and makes their initial deposit.
 - `rent_payer` (signer, mut) — pays the `member_record` rent, and the `join_tally` rent at the member's first join. Recorded as `member_record.rent_payer`, and as `join_tally.rent_payer` when the tally is created. May be the same key as `member`. It is not a token authority: the deposit always comes from the member's own token account
 - `group_config` (mut) — increments member count
 - `member_record` (init, payer = `rent_payer`) — PDA for this member in this group
-- `member_token_account` (mut) — member's canonical ATA for the group mint (source). Enforced via `associated_token::` constraints: settlement derives each member's ATA deterministically, so any other token account would brick the group at `distribute` time (issue #44 M-3)
+- `member_token_account` (mut) — member's canonical ATA for the group mint (source). Enforced via `associated_token::` constraints. Settlement pays any token account the member owns for the mint
 - `vault` (mut) — group's USDC vault (destination)
 - `mint`
 - `token_program`
@@ -225,11 +231,14 @@ A member joins the group and makes their initial deposit.
 - `instructions_sysvar` — address pinned to the instructions sysvar. Read only for a gated group
 - `join_tally` (mut, `init_if_needed`, payer = `rent_payer`). Seeds `["tally", group_config, member]`. The last account, so earlier positions do not move
 
-**Args:** `expected_joins: Option<u32>`. When given, the member's tally count before this join, 0 for a first join. The deposit amount comes from `group_config.deposit_amount`
+**Args:**
+- `expected_terms: GroupTerms` — `{ deposit_amount, frequency, total_periods, penalty_type, penalty_value }`, the terms the client showed the member. The deposit amount the program moves still comes from `group_config.deposit_amount`
+- `expected_joins: Option<u32>`. When given, the member's tally count before this join, 0 for a first join
 
 **Validation:**
 - `group_config.status == Open (0)`
 - `group_config.current_members < group_config.max_members`
+- `expected_terms` equals the group's terms (`TermsMismatch`). See "Join signed for one group lands in another" under Security
 - Member doesn't already have a `MemberRecord` for this group (PDA uniqueness handles this)
 - When this program owns `join_gate`, it must deserialize as a `JoinGate`, and `join_authority` must be present, sign, and equal `join_gate.authority` (`JoinNotApproved`). A system-owned address, with or without lamports, means the group has no gate
 - For a gated group, instruction 0 of the transaction is not `AdvanceNonceAccount` (`DurableNonceNotAllowed`). See "Approval replayed in a later group at the same code" under Security
@@ -245,7 +254,7 @@ A member joins the group and makes their initial deposit.
 - Creates `JoinTally` at the first join, with `rent_payer` = the `rent_payer` signer. The handler sets `rent_payer` only when `joins == 0`, which holds only for a tally created in this instruction, so a rejoin keeps the first payer
 - Increments `join_tally.joins`
 
-The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,493,520 lamports of the record. A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,046,240. The tally adds 7,745 compute units to a join when its canonical bump is found at the first try, and 1,500 more for each further try. Over 256 member keys, 223 joins added at most 10,776, 250 added at most 13,745, and 6 added more than 15,000, at most 16,745. The search cannot be skipped with a bump passed by the client: a non-canonical bump gives a second tally address at 0. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 829 bytes, under the 1,232-byte limit.
+The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,656,080 lamports of the record (1,493,520 before the 32 reserved bytes). A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,268,960. The tally adds 7,745 compute units to a join when its canonical bump is found at the first try, and 1,500 more for each further try. Over 256 member keys, 223 joins added at most 10,776, 250 added at most 13,745, and 6 added more than 15,000, at most 16,745. The search cannot be skipped with a bump passed by the client: a non-canonical bump gives a second tally address at 0. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 848 bytes, under the 1,232-byte limit (829 before `expected_terms` added 19 bytes).
 
 ---
 
@@ -332,9 +341,10 @@ Settles the cycle. Calculates penalties and distributes funds. Anyone can trigge
 - Cycle has ended: `Clock::get().unix_timestamp >= cycle_start + (total_periods * period_duration)`
 - All member records are passed in remaining accounts
 - Number of member records matches `group_config.current_members`
-- Each `member_record` account is owned by this program and matches the canonical `["member", group, member]` PDA
+- Each `member_record` account is owned by this program and matches the canonical `["member", group, member]` PDA, derived with the record's stored bump
 - No `member_record` is passed twice
 - Each paired `member_token_account` is owned by `member_record.member` and uses `group_config.mint`
+- The computed payouts plus the protocol fee equal the members' `total_deposited`, less rounding dust smaller than the number of compliant members (`SettlementImbalance`). The vault holds at least that total (`VaultShortfall`)
 - If `protocol_fee > 0`, `treasury_token_account` must be passed and initialized (`TreasuryNotInitialized` otherwise — settlement is blocked, not bricked, until `FEE_RECIPIENT` runs `init_treasury`; funds stay in the vault and the call is retriable). The fee cannot be dodged by omitting the account.
 
 **Distribution logic:**
@@ -346,8 +356,8 @@ for each member:
     // is infallible because the result is <= total_deposited.
     if penalty_type == Fixed:
         penalty = missed * penalty_value
-    else: // Percentage
-        penalty = missed * (deposit_amount * penalty_value / 10000)
+    else: // Percentage, multiplied before divided, so it rounds once
+        penalty = missed * deposit_amount * penalty_value / 10000
     
     // Cap penalty at total deposited (can't lose more than you put in)
     penalty = min(penalty, member.total_deposited)
@@ -381,7 +391,10 @@ for each member:
         if member.deposits_made == total_periods:
             payout += bonus_per_compliant
     // The last member in remaining-accounts order gets the vault balance
-    // (vault.reload()) in place of `payout`. See "Frontrunning distribution".
+    // (vault.reload()) in place of `payout`: their payout plus the rounding
+    // dust and any tokens sent to the vault outside the program. The caller
+    // picks the order, so the caller picks who gets the dust, under one
+    // token unit per compliant member. See "Frontrunning distribution".
     
     // Transfer payout from vault to member via CPI with PDA signer seeds
     transfer_checked(vault -> member_token_account, payout)
@@ -1014,7 +1027,9 @@ The join gate changes no layout of an existing account either. `JoinGate` is a n
 
 The join tally changes no layout of an existing account. `JoinTally` is a new account. For a client: `join_group` takes the argument `expected_joins: Option<u32>`, which a gated join must set, and `join_tally` as its last account, after `instructions_sysvar`, so earlier positions do not move. A client on the previous IDL sends no argument and fails with `InstructionDidNotDeserialize`. `close_join_tally` is new, `MemberJoined` gains `joins`, and `GroupNotClosed` (6032), `JoinCountMismatch` (6033) and `ExpectedJoinsRequired` (6034) are new error codes. An Anchor client derives `join_tally` from the IDL seeds. Clients repin the IDL in the same release window as the upgrade.
 
-The stored vault bump (issue #92) is a layout change of `GroupConfig`: a new field at offset 143, `group_code` moved to offset 144, size 180 bytes, discriminator `snGroup3`. Every live group must be settled or cancelled with the previous binary before the upgrade, as above. No instruction's accounts or arguments change, so a client changes only its IDL and any hard-coded offset at or after 143 (the group code's length prefix and bytes). The watchdog in `ops/watchdog/core.ts` reads the code at 144.
+The stored vault bump (issue #92) is a layout change of `GroupConfig`: a new field at offset 143, `group_code` moved to offset 144, size 180 bytes, discriminator `snGroup3`. Every live group must be settled or cancelled with the previous binary before the upgrade, as above. No instruction's accounts or arguments change, so a client changes only its IDL and any hard-coded offset at or after 143 (the group code's length prefix and bytes).
+
+The reserved padding and the join terms are a layout change of both accounts and an interface change, and land together so clients change once. `GroupConfig` gains 64 zero bytes at offset 144, `group_code` moves to offset 208, size 244 bytes, discriminator `snGroup4`. `MemberRecord` gains 32 zero bytes at offset 166, size 198 bytes, discriminator `snMembr3`. Every live group must be settled or cancelled with the previous binary before the upgrade, as above. For a client: `join_group` takes `expected_terms: GroupTerms` as its first argument, before `expected_joins`, and a client on the previous IDL fails with `InstructionDidNotDeserialize`; any hard-coded offset at or after 144 in `GroupConfig` changes, and the account sizes change, so a sponsor's rent budget rises by 489,280 lamports for a gated create (Kora's `max_allowed_lamports`); and `TermsMismatch` (6035), `SettlementImbalance` (6036) and `VaultShortfall` (6037) are new error codes. The watchdog in `ops/watchdog/core.ts` reads the code at 208.
 
 Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
 
@@ -1136,7 +1151,8 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Join authority key stolen or lost (accepted) | The key can only allow joins: with it, a stranger can join a gated group, and no funds move. Without it, the group takes no new member, and members can still leave and the creator can still cancel. |
 | Co-signed join widened by the client | The authority signs the whole message, so a client could add joins for other wallets. The backend that holds the authority checks that a message holds exactly one join for the approved member, that its `expected_joins` argument is `Some` of the count stored at approval, and that the instruction has exactly the accounts of the current IDL. It signs over a recent blockhash only. Without the argument check, a client picks the count that the program compares. |
 | One approval co-signed twice | Two co-signed messages for one approval could both land, with a leave between them. A gated join must name `expected_joins`, and the program refuses it unless the tally holds that count (`ExpectedJoinsRequired`, `JoinCountMismatch`). The first join raises the count, so a second message signed for the same count fails. |
-| Approval replayed in a later group at the same code | Nothing in a join names the group instance, so a held approval could join a later group at the same code that uses the same authority. `join_group` rejects a gated join whose transaction starts with `AdvanceNonceAccount` (`DurableNonceNotAllowed`), so an approval lives at most about 150 slots. Within that time a replay needs the creator to cancel an empty group, close it and create the same code again: the creator's own group. Binding the instance in the instruction would need a field in `GroupConfig`, which ADR-0003 avoids. |
+| Approval replayed in a later group at the same code | Nothing in a join names the group instance, so a held approval could join a later group at the same code that uses the same authority. `join_group` rejects a gated join whose transaction starts with `AdvanceNonceAccount` (`DurableNonceNotAllowed`), so an approval lives at most about 150 slots. Within that time a replay needs the creator to cancel an empty group, close it and create the same code again: the creator's own group. `expected_terms` (below) also makes the replay fail unless the new group has the same terms. |
+| Join signed for one group lands in another | A creator shows an Open, empty group, then cancels it, closes it and creates the same code on other terms, such as a larger deposit or a harsher penalty, before a member's signed join lands. An ungated join may also be held over a durable nonce. `join_group` takes the terms the member was shown as `expected_terms` and fails with `TermsMismatch` unless the group has them, so the member never joins on terms they did not see. |
 | Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 180 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 

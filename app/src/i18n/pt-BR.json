@@ -455,7 +455,10 @@
       "DurableNonceNotAllowed": "Este grupo não pode aceitar este pedido de entrada.",
       "GroupNotClosed": "Feche o grupo antes de fechar o contador de entradas.",
       "JoinCountMismatch": "Esta aprovação de entrada não vale mais. Peça uma nova.",
-      "ExpectedJoinsRequired": "Este grupo não pode aceitar este pedido de entrada."
+      "ExpectedJoinsRequired": "Este grupo não pode aceitar este pedido de entrada.",
+      "TermsMismatch": "As regras deste grupo mudaram depois que você abriu a página. Confira as novas regras antes de entrar.",
+      "SettlementImbalance": "Não conseguimos fechar este grupo com segurança, então nenhum dinheiro saiu. Tente de novo mais tarde.",
+      "VaultShortfall": "O saldo do grupo não bate com os depósitos, então nenhum dinheiro saiu. Tente de novo mais tarde."
     }
   }
 }

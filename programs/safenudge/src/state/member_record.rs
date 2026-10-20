@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 
 /// One member's participation in one group.
-#[account(discriminator = b"snMembr2")]
+#[account(discriminator = b"snMembr3")]
 #[derive(InitSpace)]
 pub struct MemberRecord {
     /// Offset 8. Reference to the GroupConfig PDA.
@@ -19,9 +19,11 @@ pub struct MemberRecord {
     pub periods_deposited: [bool; 52],
     /// Offset 165. PDA bump for member_record.
     pub bump: u8,
+    /// Offset 166. Zero. Room for fields added later without a new layout.
+    pub reserved: [u8; 32],
 }
 
-const _: () = assert!(8 + MemberRecord::INIT_SPACE == 166);
+const _: () = assert!(8 + MemberRecord::INIT_SPACE == 198);
 
 #[cfg(test)]
 mod tests {
@@ -40,12 +42,13 @@ mod tests {
             deposits_made: 5,
             periods_deposited,
             bump: 6,
+            reserved: [0; 32],
         };
         let mut bytes = Vec::new();
         record.try_serialize(&mut bytes).unwrap();
 
-        assert_eq!(bytes.len(), 166);
-        assert_eq!(&bytes[0..8], b"snMembr2");
+        assert_eq!(bytes.len(), 198);
+        assert_eq!(&bytes[0..8], b"snMembr3");
         assert_eq!(&bytes[8..40], &[1; 32]);
         assert_eq!(&bytes[40..72], &[2; 32]);
         assert_eq!(&bytes[72..104], &[3; 32]);
@@ -54,5 +57,6 @@ mod tests {
         assert_eq!(bytes[113], 1);
         assert_eq!(bytes[164], 1);
         assert_eq!(bytes[165], 6);
+        assert_eq!(&bytes[166..], &[0; 32]);
     }
 }
