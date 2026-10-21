@@ -4,7 +4,7 @@
 
 SafeNudge is a group accountability savings protocol on Solana. Users form savings groups, commit to regular deposits, and face penalties for missed commitments. Penalties are redistributed to consistent members. The protocol targets Brazilian users familiar with informal savings groups (caixinhas).
 
-**Stack:** Anchor/Rust program, React/TypeScript frontend, USDC on Solana devnet.
+**Stack:** Anchor/Rust program. Its client is SafePool (private repo, same author). The hackathon web app that lived in `app/` and at safenudge.xyz is retired.
 
 **Repo structure:**
 ```
@@ -14,16 +14,11 @@ safenudge/
 │   ├── instructions/           # One file per instruction
 │   ├── state/                  # Account struct definitions
 │   └── errors.rs               # Custom error codes
-├── tests/                      # Anchor integration tests (TypeScript)
-├── app/                        # React frontend
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── hooks/
-│   │   ├── i18n/               # PT-BR and EN translations
-│   │   ├── utils/
-│   │   └── idl/                # Auto-generated from anchor build
-│   └── vite.config.ts
+├── tests/                      # Anchor integration tests (TypeScript, LiteSVM)
+├── idl/                        # Committed IDL; CI checks it matches the build. SafePool and monitoring copy it
+├── ops/                        # Watchdog and monitoring bundle
+├── infra/kora/                 # Fee relay config used by SafePool
+├── scripts/                    # measure-join.ts, rehearse-devnet.ts
 ├── CONCEPT.md                  # Product concept (read-only reference)
 ├── ARCHITECTURE.md             # Technical architecture (read-only reference)
 ├── CLAUDE.md                   # This file
@@ -118,50 +113,6 @@ let token_program = Pubkey::from_str("Token..."); // Use anchor_spl imports
 
 // NEVER: mutable global state without status guard
 group_config.some_field = x;         // Must check status first
-```
-
-### Agent: Frontend Engineer
-
-**Scope:** `app/src/`
-
-**Rules:**
-- Never store private keys, seeds, or sensitive data in localStorage, sessionStorage, or any client-side storage
-- Never construct transactions manually. Use the Anchor Program client (`program.methods.xxx()`) for all instruction calls
-- Always validate that the connected wallet network matches the expected cluster (devnet) before submitting transactions
-- All user-facing strings MUST go through i18next `t()` function. No hardcoded PT-BR or EN strings in components
-- Every transaction submission MUST have: loading state, error handling with user-readable message, success confirmation
-- Never display raw on-chain errors to users. Map program error codes to localized messages
-- The Ramp Network API key MUST be in environment variables (`VITE_RAMP_API_KEY`), never committed to the repo
-- All token amounts displayed to users MUST be human-readable (divided by decimals, formatted with locale-appropriate separators)
-- Never trust URL parameters without validation. Group codes from URL params must be sanitized (alphanumeric + hyphens, max 32 chars)
-
-**Pre-commit checklist:**
-```
-[ ] tsc --noEmit passes (no type errors)
-[ ] vite build succeeds
-[ ] No hardcoded strings in components (all through t())
-[ ] No sensitive values in committed code
-[ ] All transaction calls have loading + error + success states
-[ ] Token amounts formatted for display (not raw u64)
-[ ] Group code from URL params is sanitized before use
-```
-
-**Forbidden patterns:**
-```typescript
-// NEVER: hardcoded strings
-<p>Depositar</p>                     // Use <p>{t('deposit')}</p>
-
-// NEVER: raw BigInt display
-<span>{balance}</span>              // Use formatTokenAmount(balance, decimals)
-
-// NEVER: unhandled transaction errors
-await program.methods.deposit().rpc(); // Must wrap in try/catch with UI feedback
-
-// NEVER: API keys in code
-const key = "ramp_live_xxx";         // Use import.meta.env.VITE_RAMP_API_KEY
-
-// NEVER: trusting URL params
-const code = params.code;            // Validate: /^[a-zA-Z0-9-]{1,32}$/.test(code)
 ```
 
 ### Agent: Test Engineer
@@ -318,7 +269,7 @@ ACCESS CONTROL:
 ```
 feat/create-group-instruction
 feat/join-group-instruction
-feat/frontend-group-dashboard
+feat/close-group-instruction
 fix/penalty-calculation-overflow
 test/distribution-edge-cases
 security/account-validation-audit
@@ -328,7 +279,7 @@ security/account-validation-audit
 ```
 feat(program): add create_group instruction with validation
 feat(program): add join_group with initial deposit CPI
-feat(frontend): group dashboard with streak visualization
+feat(program): add close_group instruction
 fix(program): use checked_mul in penalty calculation
 test(program): distribution with partial compliance scenarios
 security(program): add mint validation to deposit instruction
@@ -343,82 +294,20 @@ Every PR must include:
 3. **Test coverage** — list of new/modified tests
 4. **Checklist** — completed agent checklist for the relevant role
 
-**Any PR touching `programs/` or `tests/` uses this format, and only this format.** Do not use the `visual-pr` skill on those — its template omits Security impact and Test coverage, and dropping the security note on a program change removes the only place that analysis is written down. For every other PR (docs, frontend, CI, tooling), `visual-pr` is the preferred format.
+**Any PR touching `programs/` or `tests/` uses this format, and only this format.** Do not use the `visual-pr` skill on those — its template omits Security impact and Test coverage, and dropping the security note on a program change removes the only place that analysis is written down. For every other PR (docs, CI, tooling), `visual-pr` is the preferred format.
 
 No PR merges without:
 - [ ] `anchor build` succeeds
 - [ ] `anchor test` passes (all tests, not just new ones)
-- [ ] `tsc --noEmit` passes (if frontend changes)
 - [ ] Security reviewer checklist completed (if program changes)
 
 ### CI Pipeline (GitHub Actions)
 
-```yaml
-# .github/workflows/ci.yml
-name: CI
+`.github/workflows/ci.yml` is the source. It runs:
 
-on: [push, pull_request]
-
-jobs:
-  program:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: coral-xyz/anchor-cli-action@v0.30
-      - run: anchor build
-      - run: anchor test
-
-  frontend:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - run: npm ci
-      - run: npx tsc --noEmit
-      - run: npm run build
-
-  security-lint:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Check for raw arithmetic
-        run: |
-          # Fail if any raw arithmetic on u64/i64 in program code
-          if grep -rn '[^a-z_]\(+\|-\|\*\|/\)[^/\*>]' programs/safenudge/src/ \
-             --include="*.rs" \
-             | grep -v 'checked_' \
-             | grep -v '//' \
-             | grep -v 'test' \
-             | grep -v '#\[' \
-             | grep -v 'use '; then
-            echo "ERROR: Raw arithmetic detected. Use checked_add/sub/mul/div."
-            exit 1
-          fi
-      - name: Check for hardcoded strings in frontend
-        run: |
-          # Warn if potential hardcoded PT-BR/EN strings in components
-          if grep -rn '"Depositar\|"Criar\|"Entrar\|"Create\|"Deposit\|"Join' app/src/components/ \
-             app/src/pages/ 2>/dev/null \
-             | grep -v 't(' \
-             | grep -v 'test' \
-             | grep -v '.test.'; then
-            echo "WARNING: Possible hardcoded strings found. Use i18n t() function."
-            exit 1
-          fi
-      - name: Check for sensitive values
-        run: |
-          # Fail if API keys or secrets in committed code
-          if grep -rn 'ramp_live_\|sk_live_\|PRIVATE_KEY\|BEGIN RSA' app/src/ programs/ \
-             --include="*.ts" --include="*.tsx" --include="*.rs"; then
-            echo "ERROR: Sensitive value detected in source code."
-            exit 1
-          fi
-```
+- **Anchor build & test:** clippy with the arithmetic and cast lints for the default, `devnet` and `mainnet` builds; the mainnet unit tests; a mainnet build that must carry the mainnet program ID; the default build; a check that `idl/` matches that build; and the LiteSVM suite.
+- **Security lint:** fails on API keys or private keys in `programs/`, `ops/`, `scripts/` or `tests/`.
+- **Dependency audits:** `cargo audit` and `npm audit`, advisory only.
 
 ---
 
@@ -433,15 +322,6 @@ jobs:
 - Error variants are descriptive: `InvalidGroupStatus` not `Error1`
 - Every public function and struct has a doc comment
 - Constants for magic numbers: `const MAX_GROUP_SIZE: u8 = 10;` not inline `10`
-
-### TypeScript (Frontend)
-
-- Strict mode (`"strict": true` in tsconfig)
-- Functional components only, no class components
-- Hooks for all side effects and state
-- Named exports, no default exports (except pages for routing)
-- File naming: `PascalCase.tsx` for components, `camelCase.ts` for utilities
-- CSS: Tailwind utility classes only, no custom CSS files
 
 ### TypeScript (Tests)
 
@@ -470,23 +350,9 @@ cargo install --git https://github.com/coral-xyz/anchor avm
 avm install latest
 avm use latest
 
-# Node.js (for tests and frontend)
-nvm install 20
-nvm use 20
-```
-
-### Project Init
-
-```bash
-anchor init safenudge
-cd safenudge
-
-# Frontend
-npm create vite@latest app -- --template react-ts
-cd app && npm install
-npm install @solana/wallet-adapter-react @solana/wallet-adapter-react-ui \
-  @solana/wallet-adapter-wallets @solana/web3.js @coral-xyz/anchor \
-  @ramp-network/ramp-instant-sdk i18next react-i18next
+# Node.js 24 (for tests; CI pins it)
+nvm install 24
+nvm use 24
 ```
 
 ### Environment Variables
@@ -494,15 +360,9 @@ npm install @solana/wallet-adapter-react @solana/wallet-adapter-react-ui \
 ```bash
 # .env (program — never committed)
 ANCHOR_WALLET=~/.config/solana/id.json
-
-# app/.env (frontend — never committed)
-VITE_SOLANA_RPC_URL=https://api.devnet.solana.com
-VITE_PROGRAM_ID=<deployed_program_id>
-VITE_USDC_MINT=<devnet_usdc_mint>
-VITE_RAMP_API_KEY=<ramp_network_api_key>
 ```
 
-Both `.env` files MUST be in `.gitignore`.
+`.env` MUST be in `.gitignore`.
 
 ---
 
@@ -538,45 +398,11 @@ Decisions that affect security or architecture. Do not change without explicit d
 ## Reference
 
 - **CONCEPT.md** — Product rationale, user stories, roadmap
-- **ARCHITECTURE.md** — Account structures, instruction specs, PDA seeds, frontend architecture, task breakdown
+- **ARCHITECTURE.md** — Account structures, instruction specs, PDA seeds, deployment, security
 - **Anchor docs** — https://www.anchor-lang.com/docs
 - **Solana docs** — https://solana.com/docs
 - **anchor-escrow-2025** — https://github.com/mikemaccana/anchor-escrow-2025 (reference for CPI + PDA patterns)
 - **Drift post-mortem** — Search "Drift Protocol exploit April 2026" for full analysis of what went wrong and why
-
----
-
-## Design Context
-
-### Users
-Brazilian adults (25-45) who participate in informal savings groups (MOAIs, caixinhas, vaquinhas) but have no crypto experience. They use Pix daily and WhatsApp for group coordination. Their context: mobile-first, often on commutes or during breaks. The job to be done: save consistently with friends/family by turning social commitment into financial discipline. They need the interface to feel like a trusted financial partner, not a crypto app.
-
-### Brand Personality
-**Warm, Trustworthy, Encouraging.** The voice is "parceiro" — a supportive friend who keeps you accountable without lecturing. PT-BR copy should feel like talking to a financially savvy friend, not reading bank terms. Errors are collaborative ("Algo não deu certo. Vamos tentar de novo?"), not clinical ("Erro de sistema").
-
-### Aesthetic Direction
-**Design System:** "SafeNudge Bossa" — The Organic Trust Framework (see `docs/design-system.md` for full spec).
-- **Visual tone:** Editorial, warm, high-end stationery feel. NOT a crypto exchange, NOT a standard fintech template.
-- **North Star:** "The Human Ledger" — tactile, paper-like surfaces with tonal depth instead of borders.
-- **References:** Nubank's accessibility + high-end editorial magazines + Material Design 3 surface architecture.
-- **Anti-references:** Dark mode crypto dashboards, neon accents, boxy grid layouts, default Bootstrap/Tailwind shadows.
-- **Theme:** Light only. Warm paper-like backgrounds (#faf9f5). Deep teal (#006565) to spring green (#006d37) progression. Amber (#804f00) for nudges/warnings.
-- **Color tokens:** 40+ Material Design 3 tokens in `docs/design-tokens.json`.
-- **Typography:** Manrope (headlines) + Inter (body/UI). Dual-typeface editorial rhythm.
-- **Elevation:** Tonal surface layering, not borders. Teal-tinted ambient shadows, not gray.
-- **Accessibility:** WCAG AA contrast ratios. Keyboard navigation. No dark mode.
-
-### Design Principles
-
-1. **Tonal, Not Linear.** Define boundaries through background color shifts, never 1px borders. The "No-Line Rule" is absolute. Space is articulated through surface nesting (lighter cards on darker sections).
-
-2. **Nudge, Don't Nag.** The interface guides through hierarchy and subtle emphasis, not alerts and modals. Penalties are framed as accountability tools, not punishments. The "Nudge Toast" (glassmorphic, amber-accented, asymmetrically positioned) is the signature interaction.
-
-3. **Luxury of Space.** When a screen feels busy, add padding. Generous whitespace is the primary signal of quality. 4px/8px baseline grid, 24px card padding, 32px desktop gutters.
-
-4. **Brazilian-First, Crypto-Never.** All UI copy in PT-BR by default via i18n. The user should never see a Solana address, a raw token amount, or a wallet error. Financial amounts always formatted with locale separators (R$ 1.500,00). The blockchain is infrastructure, not interface.
-
-5. **Encode the System.** Every component must use design tokens from `docs/design-tokens.json`. No hex values in components. No `shadow-md` or `border-gray-200`. CTA gradients, tinted shadows, surface hierarchy — all enforced through Tailwind config and custom utilities.
 
 ---
 
@@ -595,12 +421,6 @@ anchor test -- --grep "create_group"
 # Deploy to devnet
 anchor deploy --provider.cluster devnet
 
-# Frontend dev server
-cd app && npm run dev
-
-# Frontend type check
-cd app && npx tsc --noEmit
-
-# Frontend production build
-cd app && npm run build
+# Copy the IDL after any change to the program interface (CI diffs it)
+cp target/idl/safenudge.json idl/ && cp target/types/safenudge.ts idl/safenudge-types.ts
 ```

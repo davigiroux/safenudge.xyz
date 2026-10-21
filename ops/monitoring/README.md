@@ -32,7 +32,7 @@ On a workstation with Docker:
 ops/monitoring/build.sh devnet /tmp/bundle
 ```
 
-The script clones Microscope at a pinned commit, builds the indexer for `linux/amd64` with `microscope.devnet.toml` and `app/src/idl/safenudge.json`, bundles the watchdog with esbuild, and downloads Alloy and Node with checksum checks. The bundle has no secrets.
+The script clones Microscope at a pinned commit, builds the indexer for `linux/amd64` with `microscope.devnet.toml` and `idl/safenudge.json`, bundles the watchdog with esbuild, and downloads Alloy and Node with checksum checks. The bundle has no secrets.
 
 First install only: copy each `env/*.env.example` to `/tmp/bundle/env/<name>.env` and fill it in. Then:
 

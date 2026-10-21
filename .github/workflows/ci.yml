@@ -102,40 +102,15 @@ jobs:
       # load the .so at the address `declare_id!()` declares.
       - run: anchor build --ignore-keys
 
+      # SafePool and the monitoring bundle copy idl/ from this repo, so it must
+      # be the IDL this commit builds.
+      - name: Committed IDL matches the build
+        run: |
+          diff -u idl/safenudge.json target/idl/safenudge.json
+          diff -u idl/safenudge-types.ts target/types/safenudge.ts
+
       - name: Run integration tests (LiteSVM, in-process)
         run: npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts
-
-  frontend:
-    name: Frontend tsc & build
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: ./app
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-      # `npm install` (not `npm ci`) so the runner can resolve Linux-only
-      # optional binary deps (`@emnapi/*`, etc.) that are absent from a
-      # macOS-generated lockfile.
-      - run: npm install --no-audit --no-fund
-      # `tsc -b`, not `tsc --noEmit`: the root tsconfig has `files: []` and only
-      # references the app and node projects, so `--noEmit` checks no file.
-      - run: npx tsc -b
-      - run: npm run lint
-      - name: Check i18n error map is in sync with the IDL
-        run: node ../scripts/sync-error-i18n.mjs
-      - name: Check every translation key used in the app exists in both locales
-        run: node ../scripts/check-i18n-keys.mjs
-      - run: npm run build
-        env:
-          # Build needs these set; values do not matter for type / build pass.
-          VITE_SOLANA_RPC_URL: https://api.devnet.solana.com
-          VITE_PROGRAM_ID: GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc
-          VITE_USDC_MINT: 4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
 
   security-lint:
     name: Security lint
@@ -143,24 +118,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check for hardcoded UI strings in frontend components
-        run: |
-          set -e
-          if grep -rn --include="*.tsx" --include="*.ts" \
-               -E '"(Depositar|Criar grupo|Entrar no grupo|Create group|Deposit now|Join group)"' \
-               app/src/components/ app/src/pages/ 2>/dev/null \
-             | grep -vE "(\.test\.|t\()"; then
-            echo "ERROR: Possible hardcoded UI string found. Route through i18next t()."
-            exit 1
-          fi
-          echo "No hardcoded UI string suspects."
-
       - name: Check for sensitive values in committed code
         run: |
           set -e
           if grep -rn --include="*.ts" --include="*.tsx" --include="*.rs" --include="*.toml" \
                -E 'ramp_live_|sk_live_|-----BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY-----' \
-               app/src/ programs/ 2>/dev/null; then
+               programs/ ops/ scripts/ tests/ 2>/dev/null; then
             echo "ERROR: Sensitive value detected in source code."
             exit 1
           fi
@@ -184,7 +147,6 @@ jobs:
         run: |
           cargo install cargo-audit --locked
           cargo audit
-      - name: npm audit (app)
+      - name: npm audit
         continue-on-error: true
-        working-directory: ./app
         run: npm audit --omit=dev

@@ -20,7 +20,7 @@ A few baseline expectations to make it more likely to be looked at:
 
 ## Why these expectations exist
 
-The protocol holds user funds. The standards in [`CLAUDE.md`](./CLAUDE.md) — derived in part from the Drift exploit post-mortem — are non-negotiable for any code that touches the program. The frontend has more room for stylistic variation, but the i18n and design-token rules apply.
+The protocol holds user funds. The standards in [`CLAUDE.md`](./CLAUDE.md) — derived in part from the Drift exploit post-mortem — are non-negotiable for any code that touches the program.
 
 ## Author
 

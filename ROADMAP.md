@@ -1,5 +1,7 @@
 # SafeNudge — Roadmap
 
+> **Historical.** This is the roadmap written for the hackathon proof of concept. The web app is retired, and simple groups no longer charge penalties or a protocol fee (ADR-0005). The current design is in [ARCHITECTURE.md](./ARCHITECTURE.md), and the program's client is SafePool.
+
 This file tracks what's done, what's in flight, and what's next. The product vision, market sizing, and revenue model live in [CONCEPT.md](./CONCEPT.md). The technical specification (account layouts, instruction interfaces, PDA seeds) lives in [ARCHITECTURE.md](./ARCHITECTURE.md). This file is the operational view.
 
 Status is updated at the start of each weekly review (see issue tracker, label `review`).

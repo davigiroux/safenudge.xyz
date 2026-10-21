@@ -31,7 +31,7 @@ git clone -q "$MICROSCOPE_REPO" "$WORK/microscope"
 git -C "$WORK/microscope" checkout -q "$MICROSCOPE_REF"
 cp "$CONFIG" "$WORK/microscope/microscope.toml"
 mkdir -p "$WORK/microscope/idl"
-cp "$REPO/app/src/idl/safenudge.json" "$WORK/microscope/idl/safenudge.json"
+cp "$REPO/idl/safenudge.json" "$WORK/microscope/idl/safenudge.json"
 docker buildx build -q --platform linux/amd64 -t safenudge-microscope-indexer:bundle --load "$WORK/microscope" >/dev/null
 cid=$(docker create --platform linux/amd64 safenudge-microscope-indexer:bundle)
 docker cp "$cid:/usr/local/bin/microscope-indexer" "$OUT/microscope-indexer"
@@ -46,7 +46,7 @@ fetch "$OUT/dl/node-linux-x64.tar.xz" \
   "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-x64.tar.xz" "$NODE_SHA256"
 
 cp "$CONFIG" "$OUT/microscope.toml"
-cp "$REPO/app/src/idl/safenudge.json" "$OUT/idl/safenudge.json"
+cp "$REPO/idl/safenudge.json" "$OUT/idl/safenudge.json"
 cp "$HERE/alloy.alloy" "$HERE/nft.conf" "$HERE/install.sh" "$OUT/"
 cp "$HERE"/units/* "$OUT/units/"
 git -C "$REPO" rev-parse HEAD > "$OUT/SOURCE_COMMIT"
