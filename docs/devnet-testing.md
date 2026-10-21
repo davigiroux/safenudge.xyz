@@ -1,6 +1,6 @@
 # Devnet Testing
 
-How to deploy SafeNudge to Solana devnet and run an end-to-end test with three Phantom wallets. This is the manual smoke test path — CI deploy automation is intentionally out of scope.
+How to deploy SafeNudge to Solana devnet and run an end-to-end rehearsal against it. CI deploy automation is intentionally out of scope.
 
 ## 1. Prerequisites
 
@@ -11,8 +11,6 @@ You need these installed locally (versions match the CI matrix; see [.github/wor
 - Anchor CLI `1.0.2` (`avm install 1.0.2 && avm use 1.0.2`). If `anchor --version` still reports an older version, a stale `~/.cargo/bin/anchor` may be shadowing avm — rename it and symlink `~/.avm/bin/anchor` onto your PATH.
 - Node 24
 - A funded local wallet at `~/.config/solana/id.json` (`solana-keygen new` if you don't have one)
-
-Three Phantom wallets in a browser — wallet A is the group creator, B and C are members.
 
 ## 2. Deploy the program to devnet
 
@@ -44,7 +42,7 @@ Anchor 1.0 auto-publishes the IDL during `deploy` (stored in a metadata account 
 solana program show GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc --url devnet
 ```
 
-Output should show `Last Deployed Slot` and the program data account. The program ID matches the one hardcoded in [app/src/utils/constants.ts](../app/src/utils/constants.ts) and [Anchor.toml](../Anchor.toml).
+Output should show `Last Deployed Slot` and the program data account. The program ID matches the one in [Anchor.toml](../Anchor.toml).
 
 **Before you upgrade a deployed program to a build that changes an account layout:** settle or cancel every live group first. The rule and the reason are in [ARCHITECTURE.md, "Upgrades that change an account layout"](../ARCHITECTURE.md#upgrades-that-change-an-account-layout). It applies to every cluster.
 
@@ -93,13 +91,13 @@ cp keys/safenudge-devnet.json target/deploy/safenudge-keypair.json
 keypair in `target/deploy/` on every build, which is what produces the
 `Program ID mismatch` error — resolve that with `anchor build --ignore-keys`,
 never with `anchor keys sync`, which rewrites `declare_id!` to the throwaway
-key and points the frontend, the tests and SafePool at a program that does
+key and points the tests and SafePool at a program that does
 not exist.
 
 ### Step 2 — put the new ID everywhere
 
 `solana-keygen pubkey keys/safenudge-devnet.json` prints the new address.
-It appears in nine places; missing one produces a
+It appears in seven places; missing one produces a
 `DeclaredProgramIdMismatch` at runtime rather than a build failure, so work
 the list:
 
@@ -107,22 +105,21 @@ the list:
 |---|---|
 | `programs/safenudge/src/lib.rs` | `declare_id!` in the `not(feature = "mainnet")` branch |
 | `Anchor.toml` | `[programs.devnet]` **and** `[programs.localnet]` — both, they are the same ID |
-| `app/src/utils/constants.ts` | `SAFENUDGE_DEVNET_PROGRAM_ID` fallback |
-| `app/.env.example` | `VITE_PROGRAM_ID` |
 | `.github/workflows/ci.yml` | program ID reference |
 | `docs/devnet-testing.md` | the verify command in section 2 |
 | `ROADMAP.md` | two references |
-| `app/src/idl/safenudge.json` | regenerated, see below |
-| `app/src/idl/safenudge-types.ts` | regenerated, see below |
+| `idl/safenudge.json` | regenerated, see below |
+| `idl/safenudge-types.ts` | regenerated, see below |
 
 The two IDL files are not hand-edited. Rebuild and copy:
 
 ```bash
 anchor build --ignore-keys
-cp target/idl/safenudge.json app/src/idl/safenudge.json
+cp target/idl/safenudge.json idl/safenudge.json
+cp target/types/safenudge.ts idl/safenudge-types.ts
 ```
 
-Check the result with `git diff app/src/idl/` — the only change should be
+Check the result with `git diff idl/` — the only change should be
 the `address` field. Anything else means the program interface moved, which
 is a separate review.
 
@@ -212,81 +209,7 @@ with real funds behind it.
 close` needs the upgrade authority. Devnet SOL, so ignore it. The program
 stays live and callable; it simply can never be upgraded.
 
-## 3. Vercel environment variables
-
-Production builds use `requireEnv` (see [app/src/utils/constants.ts](../app/src/utils/constants.ts)) which throws if any `VITE_*` var is missing. Set these in Vercel's project settings under `Environment Variables`, scoped to `Production`, `Preview`, and `Development`:
-
-| Name | Value |
-|------|-------|
-| `VITE_PROGRAM_ID` | `GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` |
-| `VITE_USDC_MINT` | `4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU` |
-| `VITE_SOLANA_RPC_URL` | `https://api.devnet.solana.com` (or a private RPC URL) |
-
-Redeploy after setting — Vercel doesn't auto-rebuild on env changes alone.
-
-## 4. Fund the test wallets
-
-Each Phantom wallet needs both SOL (for transaction fees) and USDC (for deposits).
-
-**Reference test wallets (devnet, Phantom):**
-
-| Role | Address |
-|------|---------|
-| A — group creator | `ExnGYk85VVEbsbcXa1kicwQBWWdCxzZ6JXjBNLvmWDh9` |
-| B — member | `CWivgpLaACkLXp5infuBFcSt1hXqa9FnfWnrKMARWNZ5` |
-| C — member | `BDuRxd1Szo4kDgYodrMGPDXnE52GBwevEhDGn723DvgW` |
-
-**SOL:** open https://faucet.solana.com, paste each wallet address, choose Devnet, request 2 SOL. Repeat for all three wallets.
-
-**USDC:** open https://faucet.circle.com, paste each wallet address, choose Solana Devnet, request 100 USDC. Circle's faucet has a per-wallet rate limit (~1 request per 6 hours); if you need more, see "Troubleshooting" below.
-
-Confirm balances in Phantom before starting the smoke test.
-
-## 5. Smoke test — 3-wallet, single cycle
-
-The full distribute path is already covered by 9 unit tests with on-chain clock manipulation, so this devnet smoke is about proving the deployed program + frontend + Phantom wiring work — not re-validating math. We use emergency cancel as the short path; the optional multi-day distribute test follows.
-
-### Quick path (~5 min) — cancel before cycle end
-
-1. **Open the Vercel preview** (or `npm run dev` locally with Phantom set to devnet)
-2. **Wallet A** → connect → `/criar` → create group:
-   - code: `smoke-001`
-   - frequency: weekly (program supports weekly / biweekly / monthly only — pick the shortest)
-   - periods: 4
-   - deposit: 5 USDC (Circle faucet caps at 20 USDC/wallet; 5 × 2 commitments leaves a buffer)
-   - penalty: 5% / period
-   - max members: 4
-   - Submit → Phantom signs → status `Aberto`
-3. Copy the invite link from `/grupo/smoke-001`. Open in two more browser profiles, connect Wallets B and C, each clicks **Entrar** → deposits 5 USDC. Wallet A must also click **Entrar** (creator ≠ member — `create_group` only sets up the group, you have to join separately to participate).
-4. Switch back to Wallet A → **Iniciar ciclo** → status flips to `Ativo`
-5. ~~Each of A, B, C deposits in period 0~~ — **skip this step.** `join_group` already marks `periods_deposited[0] = true` (see [join_group.rs](../programs/safenudge/src/instructions/join_group.rs)), so clicking Depositar again returns `AlreadyDeposited`. Joining is both registration and the period-0 deposit.
-6. Wallet A → scroll to footer → **Encerrar grupo antecipadamente** → review sheet → type `cancelar` → confirm → Phantom signs
-
-**Expected end state:**
-- Group status: `Cancelado`
-- All three wallets get exactly 5 USDC back (the single join deposit that doubles as period-0). Verify in Phantom.
-- Solscan shows vault account closed; no residual funds.
-- Treasury balance unchanged — cancel never charges the protocol fee.
-
-### Full distribute path (multi-week)
-
-Through the web app, the shortest frequency is weekly, so a 4-period cycle takes ~4 weeks end-to-end. The devnet build also accepts frequency 3 (300-second periods, a ~20-minute cycle), but `/criar` does not offer it; a group with that frequency must be created by a script calling `create_group` directly. Run this only when you actually need to validate the distribute UI on real devnet (unit tests already cover the math). To rehearse it through the web app in minutes first, see [5b](#5b-local-rehearsal-with-surfpool).
-
-1. Repeat steps 2–4 above with a new group code (e.g. `smoke-002`)
-2. Week 0: A, B, C all deposit
-3. Week 1: A and B deposit, C skips
-4. Week 2: A, B deposit, C skips again
-5. Week 3: A, B, C all deposit
-6. End of week 4 (cycle end): dashboard shows the distribute summary — click **Fechar e distribuir** → Phantom signs
-
-**Expected:**
-- Status flips to `Concluído`
-- A and B receive >10×4 = 40 USDC each (base + bonus from C's penalty pool)
-- C receives <40 USDC (penalty applied, capped at total deposited)
-- Treasury gets 5% of the penalty pool
-- Sum of all payouts + fee = sum of all deposits (conservation invariant)
-
-## 5a. Scripted rehearsal of an upgrade
+## 3. Scripted rehearsal of an upgrade
 
 `scripts/rehearse-devnet.ts` drives a devnet build through two paths in about 11 minutes, with
 no wallet app. First, a join signed for an empty group fails with `TermsMismatch` after the
@@ -305,128 +228,14 @@ Each check prints `ok`, and the last line is `rehearsal passed`. With `--url
 http://127.0.0.1:8899` it runs against `solana-test-validator`, after a
 `solana program deploy` of the same build.
 
-## 5b. Local rehearsal with Surfpool
+## 4. Troubleshooting
 
-[Surfpool](https://github.com/solana-foundation/surfpool) runs a local RPC
-that forks devnet on demand: accounts (the deployed program, the USDC mint,
-the treasury ATA) are fetched from devnet the first time they are read, and
-every write stays local. It adds two things devnet can't: a clock you can
-move forward, and token balances you can set without a faucet. That turns
-the multi-week web-app distribute path above into a few minutes, with groups
-created through `/criar` at a normal weekly frequency.
-
-It is a rehearsal, not a substitute. The mainnet gate in
-[ADR-0001](./adr/0001-defer-program-immutability-to-multisig.md) asks for
-sustained testing on devnet itself — real RPC latency, dropped transactions,
-real faucets. Nothing run here counts toward that.
-
-### Start it
-
-```bash
-curl -sL https://run.surfpool.run/ | VERSION=v1.6.1 bash    # one-time install
-surfpool start --network devnet --no-deploy
-```
-
-Use 1.6.1 or newer. In 1.6.0, `Clock.slot` holds the slot index for about
-two seconds after a time jump, and `getBlockTime` falls about a day behind
-the `Clock` sysvar per 7-day jump. 1.6.0 also prints the full datasource
-URL, API key included, in fetch errors.
-
-- `--network devnet` is required, not a preference. `useClusterCheck`
-  compares `getGenesisHash()` against devnet's hash; a forked Surfpool
-  returns the upstream hash, while `--offline` returns a local one and the
-  app shows the wrong-network banner.
-- `--no-deploy` keeps Surfpool from generating txtx runbooks in the repo and
-  deploying the local build. Without it you're testing whatever is in
-  `target/deploy/`, not the program on devnet. Real deploys go through the
-  steps in section 2, never through a Surfpool runbook.
-
-Restart Surfpool after any devnet redeploy. A running fork keeps the program
-bytes it fetched first, so it goes on running the old code.
-
-RPC is on `http://127.0.0.1:8899`, Studio (a local explorer) on
-`http://127.0.0.1:18488`. Surfpool writes logs to `.surfpool/` in the
-directory you start it from; that path is gitignored.
-
-If a transaction fails after 30 seconds with `Failed to fetch accounts from
-remote`, Surfpool deadlocked on its own connection pool: `sendTransaction`
-blocks the HTTP worker whose pooled connection the fetch needs. It happens
-when a simulation is followed by a send after the fork has been idle for
-about 90 seconds. Retry the transaction, and restart Surfpool if it fails
-again. The fix is
-[surfpool#849](https://github.com/solana-foundation/surfpool/pull/849), not
-in 1.6.1.
-
-### Point the app at it
-
-```bash
-cd app && VITE_SOLANA_RPC_URL=http://127.0.0.1:8899 npm run dev
-```
-
-Program ID and USDC mint stay at their devnet defaults. In Phantom, switch
-Developer Settings → network to Localnet so the balances it shows match.
-
-### Fund the wallets
-
-SOL and USDC come from cheatcodes, not faucets. USDC amounts are base units
-(6 decimals), so `100000000` is 100 USDC:
-
-```bash
-RPC=http://127.0.0.1:8899
-USDC=4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU
-
-for W in <wallet A> <wallet B> <wallet C>; do
-  solana airdrop 10 $W --url $RPC
-  curl -s $RPC -H 'Content-Type: application/json' -d '{
-    "jsonrpc":"2.0","id":1,"method":"surfnet_setTokenAccount",
-    "params":["'$W'","'$USDC'",{"amount":100000000}]
-  }'
-done
-```
-
-### Move the clock
-
-`surfnet_timeTravel` only moves forward, and `absoluteTimestamp` is in
-**milliseconds**, while `GroupConfig` timestamps are in seconds. To jump
-one week ahead of now:
-
-```bash
-curl -s $RPC -H 'Content-Type: application/json' -d '{
-  "jsonrpc":"2.0","id":1,"method":"surfnet_timeTravel",
-  "params":[{"absoluteTimestamp":'$(( ($(date +%s) + 7*86400) * 1000 ))'}]
-}'
-```
-
-For later weeks, compute from the previous jump, not from `date`: a second
-"now + 7 days" is behind the clock you already moved and gets rejected.
-
-Hard-refresh the dashboard after each jump. `useChainTimeOffset` reads the
-`Clock` sysvar only on mount, so an open tab keeps showing the old period.
-
-### Run the full distribute path
-
-Follow "Full distribute path" above, replacing each "week N" wait with one
-time-travel jump. The expected end state is the same, including the
-conservation invariant and the 5% fee to the treasury.
-
-Reference result (2026-10-11, Surfpool 1.6.1, fresh fork of the program
-deployed at slot 510067265, treasury ATA fetched from devnet, driven by a
-script with three keypairs rather than Phantom): 5 USDC deposit,
-fixed 1 USDC penalty, C misses periods 1 and 2. Status `Concluído`, vault
-closed, A and B receive 20.95 USDC each, C receives 8, treasury 0.10.
-Payouts plus fee equal the 50 USDC deposited.
-
-## 6. Troubleshooting
-
-- **Circle faucet rate-limited:** wait 6 hours, or swap to a self-controlled mint (see issue tracker).
+- **Faucet rate-limited:** the CLI faucet caps requests at 2 SOL and refuses busy IPs. Use https://faucet.solana.com with GitHub sign-in.
 - **`anchor deploy` fails with `insufficient funds`:** redeploys lock fresh ProgramData rent (~2.5 SOL for our 350KB program). `solana balance` and top up to ~5 SOL working balance.
-- **Frontend says "carteira está na rede errada":** open Phantom → Settings → Developer Settings → Change Network → Devnet.
-- **Vercel build fails with `Missing required env var VITE_*`:** the production-strict `requireEnv` is doing its job. Pin the var in Vercel's dashboard.
-- **`groupConfig.status` stuck:** check Solscan for the transaction; if it succeeded, hard-refresh the dashboard (state is cached in React hooks until the next refetch).
+- **`groupConfig.status` looks stuck:** check the transaction on an explorer. A client reading at `processed` commitment can show a state that never confirmed.
 
-## 7. What's not covered
+## 5. What's not covered
 
-- Mainnet deploy (intentionally — protocol has not been audited)
+- Mainnet deploys: see ARCHITECTURE.md, "Mainnet deploy"
 - CI deploy automation (planned post-audit; see [ROADMAP.md](../ROADMAP.md))
 - Stress testing with the max 10-member group (single-tx distribute may hit account-limit; per-member claim path is the fallback, currently un-implemented)
-- Real Pix on-ramp (the `pixComingSoon` copy is honest — devnet doesn't need it)

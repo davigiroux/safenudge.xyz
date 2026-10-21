@@ -2,16 +2,13 @@
 
 ## Overview
 
-SafeNudge is a Solana program (smart contract) with a React/TypeScript frontend. The program manages group savings vaults with commitment enforcement. The frontend provides the user interface for creating groups, joining, depositing, and viewing group status.
+SafeNudge is a Solana program (smart contract) that manages group savings vaults with commitment enforcement. SafePool is its client (see "Clients").
 
 **Stack:**
 - Program: Rust / Anchor framework
-- Frontend: React / TypeScript / Vite
-- Wallet: @solana/wallet-adapter (Phantom, Solflare)
-- On-ramp: Ramp Network SDK (@ramp-network/ramp-instant-sdk), planned and not yet a dependency of `app/`
-- Token: USDC (SPL Token) on Solana devnet
-- Hosting: Vercel
-- Deployment target: Solana devnet
+- Tests: TypeScript on LiteSVM
+- Token: any SPL Token or Token-2022 mint the mint rule accepts (USDC on devnet, BRS on mainnet)
+- Clusters: devnet and mainnet
 
 ---
 
@@ -867,97 +864,9 @@ pub enum SafeNudgeError {
 
 ---
 
-## Frontend Architecture
+## Clients
 
-### Tech Stack
-
-- React 19 + TypeScript
-- Vite (build tool)
-- @solana/wallet-adapter-react + @solana/wallet-adapter-react-ui
-- @coral-xyz/anchor (program client)
-- @ramp-network/ramp-instant-sdk (Pix on-ramp, planned)
-- Tailwind CSS
-- i18next (PT-BR / EN localization)
-
-### Pages
-
-**Landing / Home**
-- Connect wallet button (WalletMultiButton)
-- "Create Group" CTA
-- "Join Group" with code input
-- List of user's active groups (derived from MemberRecord accounts)
-
-**Create Group**
-- Form: group code, deposit amount, frequency, periods, max members, penalty config
-- Preview card showing the full cycle summary
-- "Create" button (triggers `create_group` instruction)
-
-**Group Dashboard** (`/grupo/:code`)
-- Group info card: parameters, status, member count
-- Member list with deposit streaks (green/red per period)
-- Current period indicator and countdown to next deadline
-- "Deposit" button (if active cycle and current period not yet deposited)
-- "Start Cycle" button (creator only, if status is Open)
-- "Emergency Cancel" button (creator only)
-- "Leave group" link (members only, if status is Open): confirmation sheet, then `leave_group`
-- "Add Funds" button (opens Ramp widget for Pix on-ramp)
-- Distribution summary (if cycle completed)
-
-**Join Group** (`/entrar/:code`)
-- Group preview (parameters, current members)
-- "Join & Deposit" button (triggers `join_group`)
-- If wallet has insufficient USDC, prompt Ramp widget first
-
-### Ramp Network Integration
-
-Not wired yet. `JoinGroup.tsx` shows a disabled "coming soon" button, and `app/package.json` does not list the SDK. The planned call:
-
-```typescript
-import { RampInstantSDK } from '@ramp-network/ramp-instant-sdk';
-
-const openRamp = (walletAddress: string) => {
-  new RampInstantSDK({
-    hostAppName: 'SafeNudge',
-    hostLogoUrl: 'https://safenudge.xyz/logo.png',
-    swapAsset: 'SOLANA_USDC',
-    userAddress: walletAddress,
-    hostApiKey: RAMP_API_KEY,
-    variant: 'auto',
-  })
-  .on('PURCHASE_SUCCESSFUL', (event) => {
-    // Refresh USDC balance in UI
-  })
-  .show();
-};
-```
-
-### Localization
-
-i18next with one namespace (`translation`), loaded from `app/src/i18n/pt-BR.json` and `app/src/i18n/en.json`. Keys are grouped by prefix (`common.`, `joinGroup.`, and so on).
-
-Default locale: `pt-BR`. Fallback: `pt-BR`. Language toggle in the header.
-
-All user-facing strings go through `t()`. No hardcoded Portuguese or English in components.
-
-### State Management
-
-Minimal — React state + Anchor program reads. No Redux or Zustand needed.
-
-- Wallet state: `@solana/wallet-adapter-react` hooks
-- Program data: `useQuery`-style pattern with `program.account.groupConfig.fetch()` and `program.account.memberRecord.fetch()`
-- UI state: React `useState` for forms, modals, loading states
-
-### Transaction Flow UX
-
-Every write operation follows this pattern:
-
-1. User clicks action button
-2. Button enters loading state ("Waiting for signature...")
-3. Wallet popup appears, user signs
-4. Button updates ("Confirming...")
-5. Transaction confirms (~400ms on devnet)
-6. UI refreshes with new state
-7. Toast notification: success or error with details
+The program's client is SafePool, a separate app in a private repository by the same author. It copies `idl/` at a pinned commit and checks for drift in its own CI. The hackathon web app that lived in `app/` and served safenudge.xyz was retired in October 2026; its code is in this repository's history.
 
 ---
 
@@ -1001,8 +910,6 @@ anchor deploy --provider.cluster devnet
 
 - Program ID: generated on first deploy, stored in `Anchor.toml` and `lib.rs`
 - USDC: use devnet USDC mint or create a test SPL token
-- Frontend: Vercel, connected to GitHub repo, auto-deploys from `main`
-- Environment variables: `VITE_SOLANA_RPC_URL`, `VITE_PROGRAM_ID`, `VITE_USDC_MINT`, `VITE_RAMP_API_KEY`
 
 ### Upgrades that change an account layout
 
@@ -1054,11 +961,6 @@ Every upgrade that changes the IDL, with or without a layout change, also needs 
 - `refund_vault_rent` and `close_member_record`: refund to the recorded rent payer only, rejection before settlement, repeat calls, the create-then-cancel drain, transaction size for a 10-member group, and lamport conservation for a rent payer across a whole group
 - Accounts in the previous layout: rejected by every instruction
 
-**Frontend:**
-- TypeScript type checking (`tsc --noEmit`)
-- Build validation (`vite build`)
-- Manual testing on devnet with Phantom wallet
-
 ---
 
 ## Project Structure
@@ -1090,18 +992,7 @@ safenudge/
 ├── tests/
 │   ├── fixtures/                   # test-only FEE_RECIPIENT keypair (public)
 │   └── safenudge.ts                # Anchor integration tests
-├── app/                            # React frontend
-│   ├── src/
-│   │   ├── components/
-│   │   ├── pages/
-│   │   ├── hooks/
-│   │   ├── i18n/
-│   │   │   ├── pt-BR.json
-│   │   │   └── en.json
-│   │   ├── utils/
-│   │   └── idl/                    # Auto-generated from anchor build
-│   ├── package.json
-│   └── vite.config.ts
+├── idl/                            # Committed IDL, checked against the build in CI
 ├── Anchor.toml
 ├── Cargo.toml
 ├── CONCEPT.md
@@ -1133,7 +1024,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Group code reuse after close | `close_group` requires a settled status and `current_members == 0`. `current_members` goes up only with a record created by `join_group` and down only with a record closed by `leave_group` or `close_member_record`, so it is never lower than the number of open records. At zero no record exists, and a new group at the same code, which gets the same `GroupConfig` and member record addresses, inherits none. Records closed before the decrement existed can only leave the count too high, which keeps that group open. The invariant is a convention, not a type: a new instruction that creates or closes a record must update the count (tested in `close_group`, "lets a new group reuse the code with no old member record"). |
 | Record closed before settlement | `close_member_record` requires Completed or Cancelled. Settlement needs every record, and both statuses are final. `leave_group` closes a record only while the group is Open and decrements `current_members` in the same instruction, so settlement still finds exactly `current_members` records. `close_member_record` decrements it after settlement, when no settlement can run again. |
 | Creator abandons an Open group | `start_cycle` and `emergency_cancel` need the creator. `leave_group` needs only the member: each member takes the first deposit back while the group is Open, and the record rent returns to its payer. What stays locked is the rent of `GroupConfig` and of the vault, which only a cancel by the creator releases. |
-| Frozen member token account blocks settlement in the app (accepted for v1) | `distribute` and `emergency_cancel` pay every member in one transaction. A transfer to a frozen token account fails, so that settlement transaction fails for the whole group. Any mint with a freeze authority makes this possible, and that includes USDC. A closed token account has the same effect, but anyone can create it again and the app does that before it settles. At program level a frozen account does not block the group: `validate_member_pair` accepts any token account that the member owns for the group mint, not only the canonical ATA. Anyone can create a new token account with that member as owner and pass it in place of the frozen one, and the settlement then succeeds (tested for both instructions). The app does not do this: it always passes each member's canonical ATA, so through the app the group stays blocked until the freeze authority thaws the account. Whether the app should pay a member's other account is an open product decision. The same freeze authority can also freeze the new account. A claim path, where settlement records each entitlement and a member whose transfer fails claims later, is planned with the v2 two-phase settlement (issue #56). In an Open group a frozen account blocks only its own member, and `leave_group` also accepts another token account of that member. |
+| Frozen member token account blocks settlement in a client (accepted for v1) | `distribute` and `emergency_cancel` pay every member in one transaction. A transfer to a frozen token account fails, so that settlement transaction fails for the whole group. Any mint with a freeze authority makes this possible, and that includes USDC. A closed token account has the same effect, but anyone can create it again and a client should do that before it settles. At program level a frozen account does not block the group: `validate_member_pair` accepts any token account that the member owns for the group mint, not only the canonical ATA. Anyone can create a new token account with that member as owner and pass it in place of the frozen one, and the settlement then succeeds (tested for both instructions). A client that always passes each member's canonical ATA keeps the group blocked until the freeze authority thaws the account. Whether a client should pay a member's other account is an open product decision. The same freeze authority can also freeze the new account. A claim path, where settlement records each entitlement and a member whose transfer fails claims later, is planned with the v2 two-phase settlement (issue #56). In an Open group a frozen account blocks only its own member, and `leave_group` also accepts another token account of that member. |
 | Tokens sent to the vault of a group with no members | A token account with a balance cannot close. `emergency_cancel` burns the balance when `current_members == 0`, then closes the vault. No token goes to an address that a caller chooses. The burn can touch only donated tokens: every deposit enters through `join_group` or `deposit`, both tied to a member record, and `leave_group` pays out exactly what its record holds. The cancel needs `mint` writable in that case (`MintNotWritable`). It cannot succeed while the freeze authority of the mint keeps the vault frozen. |
 | A wallet joins and leaves again and again (accepted) | `emergency_cancel` must list every member, so a join or a leave that lands first makes it fail with `MemberCountMismatch`. A leave that takes the group under 2 members makes `start_cycle` fail with `InsufficientMembers`. One wallet can repeat this for the price of the transaction fees. The creator retries with the current member list. No funds are at risk, and every other member can still leave alone. |
 | `start_cycle` lands after members left (accepted for v1) | `start_cycle` takes no expected member count. If two or more members remain, the cycle starts for them, even if the creator signed when the group was larger. Members who want out must leave before the start. |
@@ -1258,44 +1149,6 @@ For development iterations, keep upgrade authority until final deployment. Docum
 - **No third-party audit has been performed or scheduled.** CI runs `cargo audit` and `npm audit` as advisory dependency scans; neither reviews this program's logic.
 
 Locking immutability on an unaudited program that real money moves through is a tradeoff, not a formality. A multisig removes the single-key risk without removing the patch path; immutability removes both. Take them in that order.
-
----
-
-## Task Breakdown
-
-### Phase 1 — Program Core (6-8 hours)
-
-1. **Scaffold project** — `anchor init safenudge`, configure `Anchor.toml` for devnet
-2. **Define state** — `GroupConfig` and `MemberRecord` structs with `InitSpace`
-3. **`create_group`** — PDA creation, validation, vault init
-4. **`join_group`** — member PDA creation, initial deposit CPI
-5. **`start_cycle`** — status transition, timestamp capture
-6. **`deposit`** — period calculation, deposit tracking, CPI transfer
-7. **Tests for Phase 1** — all instructions above with happy path + error cases
-
-### Phase 2 — Distribution & Cancel (4-6 hours)
-
-8. **`distribute`** — penalty calculation, redistribution logic, vault drain, PDA signer
-9. **`emergency_cancel`** — pro-rata refund, vault drain
-10. **Distribution tests** — all penalty scenarios: fixed/percentage, partial compliance, all compliant, all missed, cap at total deposited
-11. **Edge case tests** — 2-member groups, 10-member groups, single-period cycles
-
-### Phase 3 — Frontend (6-8 hours)
-
-12. **Scaffold frontend** — Vite + React + TypeScript, wallet-adapter setup, Anchor client init
-13. **Create Group page** — form, validation, instruction call
-14. **Join Group page** — group preview, join + deposit flow
-15. **Group Dashboard** — member list, streak visualization, deposit/start/cancel actions
-16. **Ramp integration** — "Add funds" button with Ramp widget
-17. **i18n setup** — PT-BR + EN translations, language toggle
-
-### Phase 4 — Polish & Deploy (2-3 hours)
-
-18. **Devnet deployment** — program deploy, frontend env vars, Vercel setup
-19. **End-to-end testing** — full flow with real wallets on devnet
-20. **README** — setup instructions, demo link, architecture overview
-
-**Total estimated: 18-25 hours**
 
 ---
 

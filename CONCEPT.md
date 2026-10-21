@@ -1,5 +1,7 @@
 # SafeNudge — Concept Document
 
+> **Historical.** This is the product concept written for the hackathon proof of concept. The web app is retired, and simple groups no longer charge penalties or a protocol fee (ADR-0005). The current design is in [ARCHITECTURE.md](./ARCHITECTURE.md), and the program's client is SafePool.
+
 ## The Problem
 
 Brazil has a savings crisis disguised as a culture of resourcefulness.
