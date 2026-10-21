@@ -158,6 +158,8 @@ UNIT TESTS (program logic):
 │   ├── members missed periods -> each still gets exactly what they deposited
 │   ├── tokens sent to the vault from outside -> last member gets them, vault closes
 │   ├── distribute before cycle ends -> CycleNotEnded error
+│   ├── vault holds less than the deposits -> VaultShortfall error, nothing moves
+│   ├── record from another group, or token account of another mint -> InvalidMemberRecord / InvalidMint
 │   └── vault empty after distribution -> 0 balance remaining
 ├── emergency_cancel
 │   ├── creator cancels during open -> full refund
