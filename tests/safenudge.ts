@@ -72,6 +72,8 @@ describe("safenudge", () => {
       banksClient: {
         getClock: () => client.getClock(),
         getAccount: (addr: PublicKey) => client.getAccount(addr),
+        // Writes account state directly, to build states no instruction can reach.
+        setAccount: (addr: PublicKey, account: Parameters<typeof client.setAccount>[1]) => client.setAccount(addr, account),
       },
       setClock: (clock: Clock) => client.setClock(clock),
     };
@@ -2029,6 +2031,22 @@ describe("safenudge", () => {
       return sum;
     }
 
+    it("test_leave_refunds_the_recorded_total_deposited_not_the_group_deposit_amount", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("leave-recorded", OPEN);
+      const member = await joinNewMember(gPda, vPda, 10_000_000);
+      // In an Open group the two amounts are always equal, so write a record where they differ.
+      const account = context.banksClient.getAccount(member.recordPda);
+      const record = program.coder.accounts.decode("memberRecord", Buffer.from(account.data));
+      const data = await program.coder.accounts.encode("memberRecord", { ...record, totalDeposited: new BN(7_000_000) });
+      context.banksClient.setAccount(member.recordPda, { ...account, data });
+      const before = await getTokenBalanceOrZero(member.tokenAccount);
+
+      await leaveCall(member, gPda, vPda);
+
+      assert.equal(await getTokenBalanceOrZero(member.tokenAccount) - before, 7_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 3_000_000n);
+    });
+
     it("returns the deposit, closes the record and frees the seat", async () => {
       const { gPda, vPda } = await createWeeklyGroup("leave-ok", OPEN);
       const m1 = await joinNewMember(gPda, vPda, 25_000_000);
@@ -2946,6 +2964,57 @@ describe("safenudge", () => {
         distributeCall(gPda, vPda, [{ ...m1, tokenAccount: attackerAta }, m2]), "InvalidTokenAccountOwner",
       );
       assert.equal(await getTokenBalanceOrZero(attackerAta), 0n);
+    });
+
+    it("test_distribute_vault_holding_less_than_the_deposits_fails_with_vault_shortfall_and_moves_nothing", async () => {
+      const { gPda, vPda, members, cycleStart } = await activeGroup(
+        "dist-shortfall", { depositAmount: 10_000_000, totalPeriods: 1 },
+      );
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      // No instruction can lower a vault below its members' deposits, so write the state directly.
+      const vault = context.banksClient.getAccount(vPda);
+      const token = AccountLayout.decode(vault.data);
+      const data = Buffer.alloc(AccountLayout.span);
+      AccountLayout.encode({ ...token, amount: token.amount - 1n }, data);
+      context.banksClient.setAccount(vPda, { ...vault, data });
+      const balancesBefore = await balancesOf(members);
+
+      await expectError(distributeCall(gPda, vPda, members), "VaultShortfall");
+
+      assert.deepEqual(await balancesOf(members), balancesBefore);
+      assert.equal(await getTokenBalanceOrZero(vPda), 19_999_999n);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).status, 1);
+    });
+
+    it("test_distribute_with_a_real_member_record_from_another_group_fails_with_invalid_member_record", async () => {
+      const a = await activeGroup("dist-other-a", { depositAmount: 10_000_000, totalPeriods: 1 });
+      const b = await activeGroup("dist-other-b", { depositAmount: 10_000_000, totalPeriods: 1 });
+      setUnixTime(a.cycleStart + BigInt(WEEK_SECS));
+
+      await expectError(distributeCall(a.gPda, a.vPda, [a.members[0], b.members[0]]), "InvalidMemberRecord");
+      await expectError(cancelCall(a.gPda, a.vPda, [a.members[0], b.members[0]]), "InvalidMemberRecord");
+
+      assert.equal(await getTokenBalanceOrZero(a.vPda), 20_000_000n);
+      assert.equal(await getTokenBalanceOrZero(b.vPda), 20_000_000n);
+    });
+
+    it("test_distribute_to_a_member_token_account_of_another_mint_fails_with_invalid_mint", async () => {
+      const { gPda, vPda, members: [m1, m2], cycleStart } = await activeGroup(
+        "dist-other-mint", { depositAmount: 10_000_000, totalPeriods: 1 },
+      );
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      const otherMint = await createMint(TOKEN_PROGRAM_ID);
+      const otherAta = getAssociatedTokenAddressSync(otherMint, m2.keypair.publicKey);
+      await provider.sendAndConfirm(
+        new Transaction().add(
+          createAssociatedTokenAccountInstruction(payer.publicKey, otherAta, m2.keypair.publicKey, otherMint),
+        ),
+        [payer],
+      );
+
+      await expectError(distributeCall(gPda, vPda, [m1, { ...m2, tokenAccount: otherAta }]), "InvalidMint");
+
+      assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
     });
 
     it("fails when the same member_record is passed more than once (lockout attempt)", async () => {
