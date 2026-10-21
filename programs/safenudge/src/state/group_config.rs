@@ -6,7 +6,7 @@ use crate::errors::SafeNudgeError;
 ///
 /// Every fixed-size field comes before `group_code`, the only variable-length one, so each field
 /// above it sits at the same byte offset in every group and clients can `memcmp`-filter on it.
-#[account(discriminator = b"snGroup4")]
+#[account(discriminator = b"snGroup5")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
     /// Offset 8. Group creator wallet: can start_cycle and emergency_cancel.
@@ -206,7 +206,7 @@ mod tests {
         let mut bytes = Vec::new();
         group.try_serialize(&mut bytes).unwrap();
 
-        assert_eq!(&bytes[0..8], b"snGroup4");
+        assert_eq!(&bytes[0..8], b"snGroup5");
         assert_eq!(&bytes[8..40], &[1; 32]);
         assert_eq!(&bytes[40..72], &[2; 32]);
         assert_eq!(&bytes[72..104], &[3; 32]);

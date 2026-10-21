@@ -128,7 +128,7 @@ async function lifecycle(mint: PublicKey, suffix: string) {
   await createGroup(code, mint, 10 * USDC);
 
   const groupInfo = await connection.getAccountInfo(group);
-  check(groupInfo?.data.length === 244 && groupInfo.data.subarray(0, 8).toString() === "snGroup4", "GroupConfig is 244 bytes, snGroup4");
+  check(groupInfo?.data.length === 244 && groupInfo.data.subarray(0, 8).toString() === "snGroup5", "GroupConfig is 244 bytes, snGroup5");
 
   const members = [await newMember(mint, 100 * USDC), await newMember(mint, 100 * USDC), await newMember(mint, 100 * USDC)];
   const terms = await termsOf(group);

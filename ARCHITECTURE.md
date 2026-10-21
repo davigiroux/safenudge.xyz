@@ -27,7 +27,7 @@ Stores the group's parameters and state. Created once per group. `close_group` c
 Every fixed-size field comes before `group_code`, the only variable-length field. Each field above `group_code` therefore sits at the same byte offset in every group, and clients can `memcmp`-filter on it.
 
 ```rust
-#[account(discriminator = b"snGroup4")]
+#[account(discriminator = b"snGroup5")]
 #[derive(InitSpace)]
 pub struct GroupConfig {
     pub creator: Pubkey,           // offset 8,   32 bytes. Can start_cycle and emergency_cancel
@@ -130,7 +130,7 @@ An authority must also bind each approval to the group instance it was made for,
 
 #### Accounts in the previous layout
 
-Both accounts use explicit discriminators (`snGroup4`, `snMembr3`). A `GroupConfig` written before `reserved` existed carries `snGroup3` and is 180 bytes, and a `MemberRecord` carries `snMembr2` and is 166 bytes; every instruction rejects them with `AccountDiscriminatorMismatch`. A `GroupConfig` written before `vault_bump` existed carries `snGroup2` and is 179 bytes; every instruction rejects it with `AccountDiscriminatorMismatch`. An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. See "Upgrades that change an account layout" under Deployment.
+Both accounts use explicit discriminators (`snGroup5`, `snMembr3`). `snGroup4` belonged to an intermediate build that kept the penalty fields; it was never deployed to a cluster, and every instruction rejects it. A `GroupConfig` written before `reserved` existed carries `snGroup3` and is 180 bytes, and a `MemberRecord` carries `snMembr2` and is 166 bytes; every instruction rejects them with `AccountDiscriminatorMismatch`. A `GroupConfig` written before `vault_bump` existed carries `snGroup2` and is 179 bytes; every instruction rejects it with `AccountDiscriminatorMismatch`. An account written before `rent_payer` existed carries Anchor's default discriminator and a different field order. Every instruction rejects it with `AccountDiscriminatorMismatch` (`InvalidMemberRecord` for a member record passed to settlement), and the TypeScript client's `.all()` skips it. There is no migration instruction. See "Upgrades that change an account layout" under Deployment.
 
 #### GroupVault
 
@@ -783,7 +783,7 @@ The stored vault bump (issue #92) is a layout change of `GroupConfig`: a new fie
 
 The refund-only upgrade (ADR-0005) removes penalties and the protocol fee, and adds the reserved padding and the join terms. It is a layout change of both accounts and an interface change, landed together so clients change once:
 
-- `GroupConfig` loses `penalty_value` and `penalty_type`. Every field from `cycle_start` on moves: `cycle_start` 112, `settled_at` 120, `frequency` 128, `total_periods` 129, `max_members` 130, `current_members` 131, `status` 132, `bump` 133, `vault_bump` 134. It gains 73 zero bytes at offset 135, `group_code` moves to offset 208, size 244 bytes, discriminator `snGroup4`.
+- `GroupConfig` loses `penalty_value` and `penalty_type`. Every field from `cycle_start` on moves: `cycle_start` 112, `settled_at` 120, `frequency` 128, `total_periods` 129, `max_members` 130, `current_members` 131, `status` 132, `bump` 133, `vault_bump` 134. It gains 73 zero bytes at offset 135, `group_code` moves to offset 208, size 244 bytes, discriminator `snGroup5`.
 - `MemberRecord` gains 32 zero bytes at offset 166, size 198 bytes, discriminator `snMembr3`.
 - Every live group must be settled or cancelled with the previous binary before the upgrade, as above.
 - `create_group` loses its `penalty_type` and `penalty_value` arguments. `join_group` takes `expected_terms: GroupTerms` (`creator`, `deposit_amount`, `frequency`, `total_periods`) as its first argument, before `expected_joins`. A client on the previous IDL fails with `InstructionDidNotDeserialize`.
