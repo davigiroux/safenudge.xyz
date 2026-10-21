@@ -224,6 +224,22 @@ mod tests {
     }
 
     #[test]
+    fn a_zero_penalty_refunds_every_deposit_and_charges_no_fee() {
+        let s = settle(
+            Pubkey::default(),
+            &terms(0, 0),
+            &[member(4), member(2), member(1)],
+            500,
+        )
+        .unwrap();
+        assert_eq!(s.protocol_fee, 0);
+        for m in &s.members {
+            assert_eq!(m.penalty, 0);
+            assert_eq!(m.payout, m.deposited);
+        }
+    }
+
+    #[test]
     fn with_no_compliant_member_everyone_is_refunded_without_a_fee() {
         let s = settle(
             Pubkey::default(),
