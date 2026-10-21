@@ -760,7 +760,9 @@ anchor deploy --provider.cluster devnet
 
 This rule applies to every cluster, not only devnet.
 
-Before you upgrade a deployed program to a build that changes the layout or the discriminator of `GroupConfig` or `MemberRecord`, settle or cancel every live group with the binary that is deployed now. After the upgrade, every instruction rejects an account in the previous layout with `AccountDiscriminatorMismatch`. The tokens in the vault of such a group cannot be withdrawn, and its group code stays taken. There is no migration instruction.
+Before you upgrade a deployed program to a build that changes the layout or the discriminator of `GroupConfig` or `MemberRecord`, close every group the deployed binary created, with the binary that is deployed now: settle or cancel it, then `refund_vault_rent`, `close_member_record` for every record (after the retention period: 30 days, or 300 seconds in a devnet build), `close_group`, and `close_join_tally` for every tally. Settling alone is not enough. After the upgrade, every instruction rejects an account in the previous layout with `AccountDiscriminatorMismatch`, so the tokens in an unsettled vault and the rent in every unclosed account stay locked, and the group code stays taken. `close_join_tally` also needs the group closed first. There is no migration instruction. When closing everything is impractical, deploy the new build under a new program ID instead and leave the old program on its binary.
+
+Check a cluster with `getProgramAccounts` on the program ID, `dataSlice: {offset: 0, length: 8}`: count the accounts by their first 8 bytes. Every count other than the new layout's discriminators must be zero. On 2026-10-21 the mainnet program owned no account, and the devnet program owned 65 `snGroup2` groups, 152 `snMembr2` records, 35 join gates, 5 join tallies and 4 accounts with older discriminators.
 
 The `rent_payer` change is such an upgrade. It also changes the interface that every client compiles against, so each client must repin the IDL and change its calls in the same release window:
 
@@ -785,12 +787,12 @@ The refund-only upgrade (ADR-0005) removes penalties and the protocol fee, and a
 
 - `GroupConfig` loses `penalty_value` and `penalty_type`. Every field from `cycle_start` on moves: `cycle_start` 112, `settled_at` 120, `frequency` 128, `total_periods` 129, `max_members` 130, `current_members` 131, `status` 132, `bump` 133, `vault_bump` 134. It gains 73 zero bytes at offset 135, `group_code` moves to offset 208, size 244 bytes, discriminator `snGroup5`.
 - `MemberRecord` gains 32 zero bytes at offset 166, size 198 bytes, discriminator `snMembr3`.
-- Every live group must be settled or cancelled with the previous binary before the upgrade, as above.
+- Every account the previous binary created must be closed before the upgrade, as above.
 - `create_group` loses its `penalty_type` and `penalty_value` arguments. `join_group` takes `expected_terms: GroupTerms` (`creator`, `deposit_amount`, `frequency`, `total_periods`) as its first argument, before `expected_joins`. A client on the previous IDL fails with `InstructionDidNotDeserialize`.
 - `distribute` loses `treasury_authority` and `treasury_token_account`, so its account list is `payer`, `group_config`, `vault`, `mint`, `token_program`. `init_treasury` and `withdraw_fees` are gone.
 - `MemberSettled` loses `penalty`, `GroupSettled` loses `compliant_count`, `total_penalties` and `protocol_fee`, and `FeesWithdrawn` is gone.
 - Error codes are renumbered: `InvalidPenaltyConfig`, `UnauthorizedRecipient`, `NoFeesToWithdraw` and `TreasuryNotInitialized` are gone, and `TermsMismatch` and `VaultShortfall` are new. A client that maps codes to names from the IDL needs no other change; one that hard-codes numbers must repin them.
-- The account sizes rise, so a sponsor's rent budget rises by 487,680 lamports for a gated create (Kora's `max_allowed_lamports`). The watchdog in `ops/watchdog/core.ts` reads the new offsets.
+- The account sizes rise, so a sponsor's rent budget for a gated create rises by 487,680 lamports. Kora's `max_allowed_lamports` is now 8,249,920, which also counts the join tally that the creator's first join creates (the earlier figure left it out). The watchdog in `ops/watchdog/core.ts` reads the new offsets.
 
 Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
 

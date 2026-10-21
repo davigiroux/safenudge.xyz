@@ -52,7 +52,7 @@ jobs:
           cargo clippy -p safenudge --features devnet
           cargo clippy -p safenudge --features mainnet
 
-      # Pins the mainnet program ID, fee recipient and timing constants
+      # Pins the mainnet program ID and timing constants
       # (`mainnet_build_tests` in lib.rs).
       - name: Mainnet build unit tests
         run: cargo test -p safenudge --lib --features mainnet
