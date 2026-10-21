@@ -18,34 +18,30 @@ pub struct GroupConfig {
     pub mint: Pubkey,
     /// Offset 104. Fixed deposit amount per period (token smallest unit).
     pub deposit_amount: u64,
-    /// Offset 112. Penalty value: fixed amount in token units, or basis points (500 = 5%).
-    pub penalty_value: u64,
-    /// Offset 120. Unix timestamp when the cycle started; 0 while Open.
+    /// Offset 112. Unix timestamp when the cycle started; 0 while Open.
     pub cycle_start: i64,
-    /// Offset 128. Unix timestamp of distribute or emergency_cancel; 0 until then.
+    /// Offset 120. Unix timestamp of distribute or emergency_cancel; 0 until then.
     pub settled_at: i64,
-    /// Offset 136. 0 = weekly, 1 = biweekly, 2 = monthly.
+    /// Offset 128. 0 = weekly, 1 = biweekly, 2 = monthly.
     pub frequency: u8,
-    /// Offset 137. Number of deposit periods in the cycle (1-52).
+    /// Offset 129. Number of deposit periods in the cycle (1-52).
     pub total_periods: u8,
-    /// Offset 138. Max group size (2-10).
+    /// Offset 130. Max group size (2-10).
     pub max_members: u8,
-    /// Offset 139. Open MemberRecords of this group: join_group adds one, leave_group and
+    /// Offset 131. Open MemberRecords of this group: join_group adds one, leave_group and
     /// close_member_record subtract one. Zero proves no record exists, so `close_group` can
     /// free the group code without a later group inheriting a record.
     pub current_members: u8,
-    /// Offset 140. 0 = fixed amount, 1 = percentage (basis points).
-    pub penalty_type: u8,
-    /// Offset 141. 0 = Open, 1 = Active, 2 = Completed, 3 = Cancelled.
+    /// Offset 132. 0 = Open, 1 = Active, 2 = Completed, 3 = Cancelled.
     pub status: u8,
-    /// Offset 142. PDA bump for group_config.
+    /// Offset 133. PDA bump for group_config.
     pub bump: u8,
-    /// Offset 143. Canonical PDA bump for the vault, stored by create_group so the instructions
+    /// Offset 134. Canonical PDA bump for the vault, stored by create_group so the instructions
     /// that take the vault derive it once instead of searching for it.
     pub vault_bump: u8,
-    /// Offset 144. Zero. Room for fixed-size fields added later, so a new field does not move
+    /// Offset 135. Zero. Room for fixed-size fields added later, so a new field does not move
     /// `group_code` or force every live group to settle before the upgrade.
-    pub reserved: [u8; 64],
+    pub reserved: [u8; 73],
     /// Offset 208. Human-readable group code, used as PDA seed.
     #[max_len(32)]
     pub group_code: String,
@@ -62,8 +58,6 @@ pub struct GroupTerms {
     pub deposit_amount: u64,
     pub frequency: u8,
     pub total_periods: u8,
-    pub penalty_type: u8,
-    pub penalty_value: u64,
 }
 
 impl GroupConfig {
@@ -73,8 +67,6 @@ impl GroupConfig {
             deposit_amount: self.deposit_amount,
             frequency: self.frequency,
             total_periods: self.total_periods,
-            penalty_type: self.penalty_type,
-            penalty_value: self.penalty_value,
         }
     }
 
@@ -151,18 +143,16 @@ mod tests {
             rent_payer: Pubkey::default(),
             mint: Pubkey::default(),
             deposit_amount: 0,
-            penalty_value: 0,
             cycle_start: 1_000,
             settled_at: 0,
             frequency: 0,
             total_periods: 4,
             max_members: 0,
             current_members: 0,
-            penalty_type: 0,
             status: 0,
             bump: 0,
             vault_bump: 0,
-            reserved: [0; 64],
+            reserved: [0; 73],
             group_code: String::new(),
         };
         assert_eq!(group.cycle_end().unwrap(), 1_000 + 4 * 604_800);
@@ -201,18 +191,16 @@ mod tests {
             rent_payer: Pubkey::new_from_array([2; 32]),
             mint: Pubkey::new_from_array([3; 32]),
             deposit_amount: 0x0404_0404_0404_0404,
-            penalty_value: 0x0505_0505_0505_0505,
             cycle_start: 0x0606_0606_0606_0606,
             settled_at: 0x0707_0707_0707_0707,
             frequency: 8,
             total_periods: 9,
             max_members: 10,
             current_members: 11,
-            penalty_type: 12,
             status: 13,
             bump: 14,
             vault_bump: 15,
-            reserved: [0; 64],
+            reserved: [0; 73],
             group_code: "abc".to_string(),
         };
         let mut bytes = Vec::new();
@@ -223,11 +211,10 @@ mod tests {
         assert_eq!(&bytes[40..72], &[2; 32]);
         assert_eq!(&bytes[72..104], &[3; 32]);
         assert_eq!(&bytes[104..112], &[4; 8]);
-        assert_eq!(&bytes[112..120], &[5; 8]);
-        assert_eq!(&bytes[120..128], &[6; 8]);
-        assert_eq!(&bytes[128..136], &[7; 8]);
-        assert_eq!(&bytes[136..144], &[8, 9, 10, 11, 12, 13, 14, 15]);
-        assert_eq!(&bytes[144..208], &[0; 64]);
+        assert_eq!(&bytes[112..120], &[6; 8]);
+        assert_eq!(&bytes[120..128], &[7; 8]);
+        assert_eq!(&bytes[128..135], &[8, 9, 10, 11, 13, 14, 15]);
+        assert_eq!(&bytes[135..208], &[0; 73]);
         assert_eq!(&bytes[208..212], &3u32.to_le_bytes());
         assert_eq!(&bytes[212..], b"abc");
     }
@@ -239,18 +226,16 @@ mod tests {
             rent_payer: Pubkey::default(),
             mint: Pubkey::default(),
             deposit_amount: 0,
-            penalty_value: 0,
             cycle_start: 0,
             settled_at: 0,
             frequency: 0,
             total_periods: 0,
             max_members: 0,
             current_members: 0,
-            penalty_type: 0,
             status: 0,
             bump: 0,
             vault_bump: 0,
-            reserved: [0; 64],
+            reserved: [0; 73],
             group_code: "a".repeat(32),
         };
         let mut bytes = Vec::new();

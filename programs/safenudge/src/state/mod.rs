@@ -3,7 +3,6 @@ pub mod join_gate;
 pub mod join_tally;
 pub mod member_record;
 pub mod member_validation;
-pub mod settlement;
 pub mod supported_mint;
 
 pub use group_config::*;

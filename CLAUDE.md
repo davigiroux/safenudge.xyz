@@ -2,7 +2,7 @@
 
 ## Project Identity
 
-SafeNudge is a group accountability savings protocol on Solana. Users form savings groups, commit to regular deposits, and face penalties for missed commitments. Penalties are redistributed to consistent members. The protocol targets Brazilian users familiar with informal savings groups (caixinhas).
+SafeNudge is a group accountability savings protocol on Solana. Users form savings groups and commit to regular deposits into a shared vault. The program records who kept every deposit, and at the end of the cycle every member gets back exactly what they deposited: a missed deposit costs no principal (ADR-0005). The protocol targets Brazilian users familiar with informal savings groups (caixinhas).
 
 **Stack:** Anchor/Rust program. Its client is SafePool (private repo, same author). The hackathon web app that lived in `app/` and at safenudge.xyz is retired.
 
@@ -19,13 +19,13 @@ safenudge/
 ├── ops/                        # Watchdog and monitoring bundle
 ├── infra/kora/                 # Fee relay config used by SafePool
 ├── scripts/                    # measure-join.ts, rehearse-devnet.ts
-├── CONCEPT.md                  # Product concept (read-only reference)
+├── CONCEPT.md                  # Hackathon product concept (historical)
 ├── ARCHITECTURE.md             # Technical architecture (read-only reference)
 ├── CLAUDE.md                   # This file
 └── Anchor.toml
 ```
 
-Read CONCEPT.md for the product rationale and ARCHITECTURE.md for the full technical spec before making any code changes.
+Read ARCHITECTURE.md for the full technical spec and docs/adr/ for the decisions behind it before making any code changes. CONCEPT.md and ROADMAP.md describe the hackathon proof of concept and are historical.
 
 ---
 
@@ -44,7 +44,7 @@ For SafeNudge, the attack surface is smaller (no oracles, no governance council,
 1. **No admin backdoors.** The program has no upgrade authority instruction, no admin withdrawal, no owner override. The creator can emergency cancel (returns funds pro-rata), but cannot redirect funds.
 2. **PDA authority only.** No human wallet is ever the authority on the vault token account. Only the program's PDA can move funds.
 3. **All state transitions are explicit.** Status moves Open -> Active -> Completed/Cancelled. No instruction can skip a state or revert to a prior state.
-4. **Penalty math is capped.** A member can never lose more than they deposited. `penalty = min(penalty, member.total_deposited)`.
+4. **Deposits always come back.** A simple group charges no penalty and no fee: `distribute` and `emergency_cancel` pay each member their recorded `total_deposited`. A group type with other rules, such as a yield group, gets its own account type and instructions (ADR-0003) and may never take principal (ADR-0005).
 5. **Distribution is permissionless.** Anyone can trigger distribution after the cycle ends. No single party can hold funds hostage.
 
 ### The Drift Checklist
@@ -56,7 +56,7 @@ Before any instruction is considered complete, verify against these questions de
 - [ ] Is there any admin/authority key that, if compromised, could drain the vault? (Must be NO — creator can only cancel, which returns funds to members)
 - [ ] Can the program accept arbitrary tokens or accounts that could be spoofed? (Must validate mint matches group config)
 - [ ] Are all account ownership and PDA derivation checks enforced by Anchor constraints? (Must be YES)
-- [ ] Can penalty math overflow or underflow? (Must use checked arithmetic)
+- [ ] Can settlement math overflow or underflow? (Must use checked arithmetic)
 
 ---
 
@@ -121,8 +121,8 @@ group_config.some_field = x;         // Must check status first
 
 **Rules:**
 - Every instruction MUST have at least one happy path and one failure test
-- Penalty calculation tests MUST cover: all members compliant, all members missed, partial compliance, single member, max members (10)
-- Distribution tests MUST verify: total out equals total in (conservation of funds), no funds left in vault after distribution, penalty cap at total deposited
+- Distribution tests MUST cover: all members compliant, members who missed periods, all members missed, max members (10)
+- Distribution tests MUST verify: each member receives exactly what they deposited, total out equals total in (conservation of funds), no funds left in vault after distribution
 - Time-dependent tests MUST use `Clock` manipulation to simulate period advancement
 - Tests MUST use separate keypairs for each actor (creator, member1, member2, etc.). Never reuse the provider wallet for member actions
 - Test names MUST describe the scenario: `test_deposit_fails_when_cycle_not_started`, not `test_deposit_2`
@@ -135,7 +135,6 @@ UNIT TESTS (program logic):
 │   ├── valid params -> group created with correct state
 │   ├── invalid frequency -> InvalidFrequency error
 │   ├── invalid group size -> InvalidGroupSize error
-│   ├── invalid penalty config -> InvalidPenaltyConfig error
 │   └── group code too long -> InvalidGroupCode error
 ├── join_group
 │   ├── valid join -> member record created, deposit transferred
@@ -156,12 +155,9 @@ UNIT TESTS (program logic):
 │   └── deposit when cycle not active -> InvalidGroupStatus error
 ├── distribute
 │   ├── all compliant -> each gets exact deposit back
-│   ├── one member missed 3 of 4 -> correct penalty calc (fixed)
-│   ├── one member missed 3 of 4 -> correct penalty calc (percentage)
-│   ├── all missed equally -> penalties cancel out, equal distribution
-│   ├── penalty capped at total deposited -> no negative balances
+│   ├── members missed periods -> each still gets exactly what they deposited
+│   ├── tokens sent to the vault from outside -> last member gets them, vault closes
 │   ├── distribute before cycle ends -> CycleNotEnded error
-│   ├── payouts plus fee equal deposits less under one unit of dust per compliant member (unit tests in state/settlement.rs)
 │   └── vault empty after distribution -> 0 balance remaining
 ├── emergency_cancel
 │   ├── creator cancels during open -> full refund
@@ -232,8 +228,8 @@ ARITHMETIC:
 [ ] No raw +, -, *, / on u64/i64/u128 types
 [ ] Checked arithmetic used everywhere (checked_add, checked_sub, checked_mul, checked_div)
 [ ] Division before multiplication avoided (or explicitly justified)
-[ ] Penalty capped at member's total_deposited
-[ ] Distribution sum equals vault balance (no rounding dust left behind)
+[ ] Every payout equals the member's recorded total_deposited
+[ ] Distribution sum equals vault balance (nothing left behind)
 
 STATE MACHINE:
 [ ] Status transitions are one-directional (Open->Active->Completed/Cancelled)
@@ -270,7 +266,7 @@ ACCESS CONTROL:
 feat/create-group-instruction
 feat/join-group-instruction
 feat/close-group-instruction
-fix/penalty-calculation-overflow
+fix/settlement-overflow
 test/distribution-edge-cases
 security/account-validation-audit
 ```
@@ -280,7 +276,7 @@ security/account-validation-audit
 feat(program): add create_group instruction with validation
 feat(program): add join_group with initial deposit CPI
 feat(program): add close_group instruction
-fix(program): use checked_mul in penalty calculation
+fix(program): use checked_add in settlement totals
 test(program): distribution with partial compliance scenarios
 security(program): add mint validation to deposit instruction
 docs: update ARCHITECTURE.md with revised PDA seeds
@@ -374,15 +370,15 @@ Decisions that affect security or architecture. Do not change without explicit d
 |----------|-----------|------|
 | No upgrade authority | Eliminates admin key compromise vector (Drift-style attack) | Apr 2026 |
 | PDA-only vault authority | No human can sign vault transfers | Apr 2026 |
-| Penalties settled at distribution, not mid-cycle | Simpler program logic, fewer transactions, no mid-cycle fund movement | Apr 2026 |
-| Penalty capped at total_deposited | Members cannot owe more than they put in; prevents negative balances | Apr 2026 |
+| *Superseded Oct 2026 (refund-only row below).* Penalties settled at distribution, not mid-cycle | Simpler program logic, fewer transactions, no mid-cycle fund movement | Apr 2026 |
+| *Superseded Oct 2026 (refund-only row below).* Penalty capped at total_deposited | Members cannot owe more than they put in; prevents negative balances | Apr 2026 |
 | Group code as PDA seed (on-chain invite) | Zero backend infrastructure; code is public but acceptable for friend groups | Apr 2026 |
 | `[bool; 52]` for period tracking over bitmask | Clarity over gas optimization for MVP; max 52 periods covers weekly for a year | Apr 2026 |
 | `transfer_checked` over `transfer` | Validates mint and decimals at CPI level; prevents token confusion attacks | Apr 2026 |
 | Distribution via remaining accounts (single tx) | Atomic settlement; no partial distribution state. May need per-member claims if 10-member groups hit account limits | Apr 2026 |
 | Simplified 30-day months | Acceptable for MVP; real calendar math adds complexity without proportional value | Apr 2026 |
-| 5% protocol fee on penalty pool, compile-time `FEE_RECIPIENT`, PDA-controlled treasury, no admin override | v1 revenue without runtime admin surface; per-cluster recipient via cargo features, multisig migration tracked in issue #20 | May 2026 |
-| Treasury ATA created only via one-shot `init_treasury` (fee recipient signs and pays); fee skipped, not burned, under placeholder `FEE_RECIPIENT`; fixed penalty bounded at `deposit_amount` with u128 settlement math | Permissionless distribute callers can't be rent-griefed into funding the treasury (issue #44 H-3); placeholder-recipient builds redistribute the would-be fee instead of trapping it (H-4); no penalty configuration can brick settlement via overflow (H-1) | Jul 2026 |
+| *Superseded Oct 2026 (refund-only row below).* 5% protocol fee on penalty pool, compile-time `FEE_RECIPIENT`, PDA-controlled treasury, no admin override | v1 revenue without runtime admin surface; per-cluster recipient via cargo features, multisig migration tracked in issue #20 | May 2026 |
+| *Superseded Oct 2026 (refund-only row below).* Treasury ATA created only via one-shot `init_treasury` (fee recipient signs and pays); fee skipped, not burned, under placeholder `FEE_RECIPIENT`; fixed penalty bounded at `deposit_amount` with u128 settlement math | Permissionless distribute callers can't be rent-griefed into funding the treasury (issue #44 H-3); placeholder-recipient builds redistribute the would-be fee instead of trapping it (H-4); no penalty configuration can brick settlement via overflow (H-1) | Jul 2026 |
 | SafePool (private repo, same author) is a second consumer of this program, reused unchanged; `set-upgrade-authority --final` is deferred to an explicit decision under issue #20 rather than treated as a deploy step | The program surface now has a caller outside this repo, and SafePool's mainnet cutover moves real BRL-stablecoin funds through it; no third-party audit exists (CI audits are dependency scans only), so permanent immutability is a tradeoff to choose knowingly. Supersedes the timing, not the intent, of the Apr 2026 "No upgrade authority" row: authority goes to a 2-of-3 Squads multisig first, `--final` only after issue #20, an external review, and a mainnet soak — see [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md) | Sep 2026 |
 | Rent returns to the wallet that paid it: `rent_payer` signer on `create_group` and `join_group`, recorded in both accounts; settlement closes the vault into the never-closed `GroupConfig`, and permissionless `refund_vault_rent` and `close_member_record` (after a retention period) pay only the recorded payer; fixed-offset layouts with explicit discriminators | A wallet with no SOL can create or join when another wallet pays rent, and that wallet cannot be drained through refunds: before this, vault rent went to the creator, so create-then-cancel moved it from the payer to the creator. `distribute` and `emergency_cancel` credit no address outside the program. `GroupConfig` stays open because closing it would free the group code and let old member records validate against a new group. `creator` at offset 8 lets clients filter groups with `memcmp`. Member records stay open for 30 days after settlement (300 seconds in devnet builds) because clients read them to show the result. Known limit: a rent rate about 1.95 times higher at settlement than at creation blocks settlement until any wallet tops up `GroupConfig`. This change breaks the interface for the second consumer named in the row above: a new required signer on `create_group` and `join_group`, `creator` removed from `distribute` so account positions shift, new layouts and discriminators for both accounts. That consumer must repin the IDL and change its calls in the same window, and no live group may exist on any cluster at upgrade (ARCHITECTURE.md, "Upgrades that change an account layout") | Oct 2026 |
 | `leave_group` lets a member exit an Open group with no creator action; record rent returns to the recorded rent payer, never to the member. `emergency_cancel` of a group with no members burns any balance in the vault. `leave_group` pays any token account the member owns for the mint, as settlement does. A frozen member token account still blocks settlement through the app in v1 | An abandoned Open group no longer locks first deposits (issue #70 case 1). Burn was chosen over a transfer to the treasury because the treasury account needs `init_treasury` by another party, and over leaving the vault open because the vault rent would stay locked (case 3). The frozen-account case needs a per-member claim path, which is designed with the v2 two-phase settlement in issue #56 (case 2) | Oct 2026 |
@@ -391,7 +387,7 @@ Decisions that affect security or architecture. Do not change without explicit d
 | Optional join gate: `JoinGate` at `["join", group_config]`, created once by `set_join_authority` (creator and recorded rent payer, Open, no member), required by `join_group` when it exists, closed by `close_group`. One account type per group type: a yield group gets its own account and instructions, never a mode field in `GroupConfig` | A code alone let anyone join, and a backend co-sign alone did not stop a wallet that pays its own rent. A separate account adds the gate with no layout change, so no live group has to settle. Group data, such as emails or approvals, stays off chain; the program only checks a signature. Per-type accounts keep the simple instructions and the "vault funds go only to members" rule unchanged when yield arrives. Accepted: a gate sent apart from `create_group` can lose a race to a join, and no instruction revokes an authority. See [ADR-0003](./docs/adr/0003-join-gate-and-group-types.md) | Oct 2026 |
 | `GroupConfig` stores the vault's canonical bump (`vault_bump`, offset 143, `group_code` moves to 144, 180 bytes, discriminator `snGroup3`); the five instructions that take the vault check it with `bump = group_config.vault_bump` and settlement signs with it | Saves the bump search, about 1,500 compute units per call on average: 1,500 for a vault at bump 254, 3,000 at 253 (issue #92). A layout change on its own costs the settle-every-group upgrade, so it lands with the mainnet deploy, where no group exists yet. The stored value comes from the vault's `init` constraint, so it is canonical; a wrong one would fail the seeds check and move nothing. Devnet groups in the `snGroup2` layout must be settled or cancelled before devnet takes this build | Oct 2026 |
 | Mainnet build pins program ID `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` and the Squad vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` as `FEE_RECIPIENT`; `mainnet` with `devnet` does not compile; built with `anchor build --ignore-keys -- --features mainnet`, deployed from a single-use deployer key whose upgrade authority moves to the same vault in the next transaction | The loader needs the authority to sign the first deploy, and the vault is a PDA. One vault holds both the upgrade authority and the fees, so no single key controls either (ADR-0001). The program keypair is backed up off-machine and never enters the repo. `devnet` shortens periods and record retention, so a build with both features would ship devnet timing to mainnet. `anchor keys sync` would rewrite `declare_id!` to a local key, so it is never run for mainnet. Settlement with a penalty needs `init_treasury` for the group mint first, run as a Squads proposal | Oct 2026 |
-| `GroupConfig` gains 64 reserved zero bytes at offset 144 (`group_code` moves to 208, 244 bytes, `snGroup4`) and `MemberRecord` 32 at offset 166 (198 bytes, `snMembr3`); `join_group` takes `expected_terms: GroupTerms` (creator, deposit amount, frequency, periods, penalty type and value) and fails with `TermsMismatch` unless the group has them; `distribute` checks that payouts plus fee equal deposits less dust (`SettlementImbalance`) and that the vault holds the deposits (`VaultShortfall`); the percentage penalty multiplies before it divides; settlement derives member records from their stored bump | A creator could cancel and close an empty group and create the same code on other terms before a member's signed join landed, and an ungated join could be held over a durable nonce: the member would join on terms they never saw. Padding lets a later fixed-size field land without the settle-every-group upgrade; it lands now because no mainnet group exists yet, so this is the last cheap layout change. The settlement check turns a math bug into a failed transaction instead of a short payout for the last member, who used to absorb any mismatch silently. Rounding once moves under one token unit per missed period. The stored bump saves the bump search, 1,500 compute units for each bump tried below 255 per member, about 15,000 expected for 10 members. Clients repin the IDL and pass the terms they showed; Kora's rent budget rises to 7,376,160 lamports | Oct 2026 |
+| Simple groups return every deposit: `distribute` pays each member `total_deposited`, with no penalty and no protocol fee. `penalty_type`, `penalty_value`, `init_treasury`, `withdraw_fees`, `FEE_RECIPIENT` and `PROTOCOL_FEE_BPS` are removed. Supersedes the Apr 2026 penalty rows, the May 2026 fee row, the Jul 2026 treasury row, and the `FEE_RECIPIENT` part of the mainnet row. In the same upgrade: `GroupConfig` gets 73 reserved zero bytes at offset 135 (`group_code` at 208, 244 bytes, `snGroup4`) and `MemberRecord` 32 at offset 166 (198 bytes, `snMembr3`); `join_group` takes `expected_terms: GroupTerms` (creator, deposit amount, frequency, periods) and fails with `TermsMismatch` unless the group has them; `distribute` fails with `VaultShortfall` unless the vault holds the deposits; settlement derives member records from their stored bump | No one should leave a group having lost money for failing it, and SafePool, the only client, already created every group with a penalty of 0; the program now guarantees it instead of one client. The penalty and fee paths were most of `distribute` and the source of several audit findings (issue #44), so the instruction that pays out every vault becomes a refund. Other rules, such as Dux's yield forfeit, get their own group type (ADR-0003), so no door closes. The fee could only come out of penalties, and revenue now comes from outside the program (the BRS float share and the Dux spread, which the Squad vault can receive directly). The treasury account the Squad created for BRS keeps about 0.002 SOL of rent locked. A creator could cancel and close an empty group and recreate the code on other terms before a signed join landed; the terms check stops that. Padding lets a later fixed-size field land without the settle-every-group upgrade; this lands before any mainnet group exists, the last cheap layout change. See [ADR-0005](./docs/adr/0005-deposits-always-returned.md) | Oct 2026 |
 
 ---
 

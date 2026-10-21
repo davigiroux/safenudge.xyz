@@ -88,7 +88,7 @@ const PERIOD_SECS: Record<Cluster, Record<number, bigint>> = {
 };
 
 export const GROUP_DISCRIMINATOR = Buffer.from("snGroup4");
-export const STATUS_OFFSET = 141;
+export const STATUS_OFFSET = 132;
 export const STATUS_ACTIVE = 1;
 
 export interface Group {
@@ -108,9 +108,9 @@ export function decodeGroup(address: string, data: Buffer): Group {
   const codeLen = data.readUInt32LE(208);
   return {
     address,
-    cycleStart: data.readBigInt64LE(120),
-    frequency: data.readUInt8(136),
-    totalPeriods: data.readUInt8(137),
+    cycleStart: data.readBigInt64LE(112),
+    frequency: data.readUInt8(128),
+    totalPeriods: data.readUInt8(129),
     status: data.readUInt8(STATUS_OFFSET),
     code: data.subarray(212, 212 + codeLen).toString("utf8"),
   };

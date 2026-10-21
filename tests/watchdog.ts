@@ -1,9 +1,13 @@
+import { BorshAccountsCoder, type Idl } from "@coral-xyz/anchor";
+import { PublicKey } from "@solana/web3.js";
+import BN from "bn.js";
 import { expect } from "chai";
 import {
   CheckResult,
   EMPTY_STATE,
   Group,
   STATE_RESET_RESULT,
+  STATUS_OFFSET,
   State,
   decodeGroup,
   evaluateAuthority,
@@ -14,6 +18,7 @@ import {
   step,
 } from "../ops/watchdog/core";
 import { configAlert, parseConfig } from "../ops/watchdog/config";
+import IDL from "../target/idl/safenudge.json" with { type: "json" };
 
 const SQUAD = "So11111111111111111111111111111111111111112";
 const OTHER = "11111111111111111111111111111111";
@@ -73,15 +78,17 @@ describe("watchdog", () => {
   });
 
   describe("unsettled groups", () => {
-    it("test_decode_group_reads_fixed_offsets", () => {
-      const data = Buffer.alloc(244);
-      data.write("snGroup4", 0);
-      data.writeBigInt64LE(1_700_000_000n, 120);
-      data.writeUInt8(3, 136);
-      data.writeUInt8(12, 137);
-      data.writeUInt8(1, 141);
-      data.writeUInt32LE(6, 208);
-      data.write("amigos", 212);
+    // Encoded by the program's own IDL, so a layout change in the program fails this test.
+    it("test_decode_group_reads_the_fields_the_program_writes", async () => {
+      const key = new PublicKey(OTHER);
+      const encoded = await new BorshAccountsCoder(IDL as Idl).encode("GroupConfig", {
+        creator: key, rent_payer: key, mint: key, deposit_amount: new BN(10_000_000),
+        cycle_start: new BN(1_700_000_000), settled_at: new BN(0), frequency: 3, total_periods: 12,
+        max_members: 10, current_members: 2, status: 1, bump: 255, vault_bump: 254,
+        reserved: new Array(73).fill(0), group_code: "amigos",
+      });
+      const data = Buffer.concat([encoded, Buffer.alloc(244 - encoded.length)]);
+      expect(data.readUInt8(STATUS_OFFSET)).to.equal(1);
       expect(decodeGroup(GROUP_A, data)).to.deep.equal({
         address: GROUP_A,
         cycleStart: 1_700_000_000n,

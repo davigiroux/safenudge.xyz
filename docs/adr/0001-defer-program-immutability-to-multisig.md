@@ -5,6 +5,11 @@ date: 2026-09-17
 
 # Multisig upgrade authority now, immutability later
 
+> **Status note, 2026-10-21:** the protocol fee, `FEE_RECIPIENT` and
+> `PROTOCOL_FEE_BPS` are removed (ADR-0005), so `--final` no longer
+> freezes a fee recipient or a fee rate. The reasoning about the upgrade
+> authority below is unchanged.
+>
 > **Status note, 2026-10-19:** the placeholder `FEE_RECIPIENT` and the
 > ungated `declare_id!` described below are resolved. The mainnet build
 > pins program ID `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` and the

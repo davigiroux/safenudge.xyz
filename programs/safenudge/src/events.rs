@@ -68,9 +68,8 @@ pub struct MemberSettled {
     pub group: Pubkey,
     pub member: Pubkey,
     pub deposited: u64,
-    /// Penalty charged. Zero when no member was compliant, because all deposits then return.
-    pub penalty: u64,
-    /// Tokens sent to the member. The last member also gets the rounding remainder.
+    /// Tokens sent to the member: `deposited`, plus, for the last member, any tokens sent to the
+    /// vault from outside the program.
     pub payout: u64,
 }
 
@@ -79,12 +78,7 @@ pub struct MemberSettled {
 pub struct GroupSettled {
     pub group: Pubkey,
     pub members: u8,
-    pub compliant_count: u8,
-    /// Sum of `MemberSettled.penalty`.
-    pub total_penalties: u64,
-    pub protocol_fee: u64,
-    /// Sum of `MemberSettled.payout`. Plus `protocol_fee`, equals the vault balance before
-    /// settlement.
+    /// Sum of `MemberSettled.payout`, equal to the vault balance before settlement.
     pub total_paid: u64,
 }
 
@@ -98,14 +92,6 @@ pub struct GroupCancelled {
     pub refunded_total: u64,
     /// Tokens burned from the vault of a group with no members. Zero otherwise.
     pub burned: u64,
-}
-
-/// The fee recipient withdrew the treasury balance of one mint.
-#[event]
-pub struct FeesWithdrawn {
-    pub recipient: Pubkey,
-    pub mint: Pubkey,
-    pub amount: u64,
 }
 
 /// The creator required a join authority signature on every later join.

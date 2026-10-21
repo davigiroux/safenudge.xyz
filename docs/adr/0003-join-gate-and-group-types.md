@@ -32,7 +32,7 @@ such as a yield group, gets its own account type with its own discriminator
 and its own instructions. It does not get a mode field in `GroupConfig`.
 Every instruction takes `Account<GroupConfig>` or the other type, so a
 simple instruction rejects a yield group by discriminator, and the reverse.
-Logic that both use, such as penalty math and member checks, moves into
+Logic that both use, such as member checks, moves into
 plain functions, as `validate_member_pair` is today.
 
 **Optional features of a simple group live in their own account at a fixed
