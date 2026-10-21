@@ -1,49 +1,17 @@
 # SafeNudge
 
-**Group accountability savings on Solana — built for Brazilian caixinhas, MOAIs, and vaquinhas.**
+**A group savings program on Solana, for Brazilian caixinhas, MOAIs and vaquinhas.**
 
 [![CI](https://github.com/davigiroux/safenudge.xyz/actions/workflows/ci.yml/badge.svg)](https://github.com/davigiroux/safenudge.xyz/actions/workflows/ci.yml)
-[![Solana](https://img.shields.io/badge/Solana-devnet-14F195)](https://explorer.solana.com/?cluster=devnet)
 [![Anchor](https://img.shields.io/badge/Anchor-1.0.2-blueviolet)](https://www.anchor-lang.com/)
 
-SafeNudge is a digital MOAI with better rules: friends commit to recurring deposits in a shared on-chain vault, missed deposits trigger penalties, and those penalties get redistributed to the members who stayed consistent. No administrator, no trust required, no 15–20% consórcio fees. The blockchain handles the rules. The group handles the motivation.
+Friends agree to deposit a fixed amount every period into a shared vault that no person controls. The program records who made each deposit. When the cycle ends, every member gets back exactly what they deposited. A missed deposit costs no principal; it is simply visible to the group ([ADR-0005](./docs/adr/0005-deposits-always-returned.md)).
+
+This repository holds the program. Its client is **SafePool**, an app in a private repository by the same author. The hackathon web app that once lived here and at safenudge.xyz is retired; [`CONCEPT.md`](./CONCEPT.md) and [`ROADMAP.md`](./ROADMAP.md) describe that proof of concept and are kept as history.
 
 ---
 
-## The Concept
-
-### The problem
-
-Brazilians don't have a savings problem. They have an **enforcement problem**. Millions already save in informal groups — MOAIs, caixinhas, vaquinhas — because group commitment achieves what individual willpower cannot. But these groups break in predictable ways: someone holds the money and disappears, deposits get missed without consequence, and the formalised version (consórcios) charges 15–20% in administrator fees.
-
-### The solution
-
-SafeNudge replaces the trust layer of a savings group with a smart contract. A creator sets the rules (deposit amount, frequency, penalty for misses). Members join with an invite code, lock in their first deposit, and the cycle begins. Missed deposits trigger penalties at distribution time, split equally among the members who never missed. Everyone gets their money back at the end — adjusted for what they earned or owed.
-
-### Why it's better than a traditional MOAI
-
-- **No trust required.** Code enforces the rules, not a person.
-- **No administrator fees.** A flat 5% protocol fee on the *penalty pool* — never on principal.
-- **Positive incentives.** Consistent savers earn more than just their money back.
-- **Transparent.** Every deposit, every miss, every penalty is on-chain and auditable.
-- **Portable.** Join from a shareable link — not limited to people you know in person.
-
-→ Read the full story in [`CONCEPT.md`](./CONCEPT.md).
-
----
-
-## How It Works
-
-A group moves through six lifecycle moments. The creator sets the rules; everything else is permissionless.
-
-1. **Create** — Creator picks deposit amount, frequency, total periods, max members, and penalty config.
-2. **Join** — Members join via a shareable code and make their first deposit (skin in the game). Until the cycle starts, a member can leave and take that deposit back.
-3. **Start** — Creator locks the group; cycle begins, no new members.
-4. **Deposit** — Each period, members deposit the fixed amount. The program tracks who shows up and who doesn't.
-5. **Distribute** — After the final period, anyone can trigger settlement. Penalties redistribute to compliant members; protocol takes 5% of the penalty pool; vault closes.
-6. **Emergency cancel** — At any time before completion, the creator can return every member's deposits in full, no penalties applied.
-
-### Group lifecycle
+## How a group works
 
 ```mermaid
 stateDiagram-v2
@@ -56,44 +24,22 @@ stateDiagram-v2
     Cancelled --> [*]
 ```
 
-`join_group` and `leave_group` happen repeatedly while the group is `Open`; `deposit` happens repeatedly while the group is `Active`. They keep the group in its current state, so they're not drawn as transitions. `leave_group` is the one exit from `Open` that does not need the creator: it returns the member's deposit and frees the seat, and the group stays `Open` even with no members left. `distribute` can only fire once the cycle's full duration has elapsed.
+1. **Create.** The creator sets the deposit amount, the frequency (weekly, biweekly or monthly), the number of periods and the maximum group size.
+2. **Join.** Members join with the group code and make their first deposit. A join names the terms the member was shown, and fails if the group no longer has them. Until the cycle starts, a member can leave and take that deposit back.
+3. **Start.** The creator starts the cycle; no one can join after that.
+4. **Deposit.** Each period, each member deposits the fixed amount.
+5. **Distribute.** After the last period, anyone can settle the group. Every member gets back what they deposited, and the vault closes.
+6. **Emergency cancel.** At any point before settlement, the creator can return every member's deposits.
 
-### Penalty mechanics
+Afterwards, permissionless instructions return each account's rent to the wallet that paid it, and `close_group` frees the group code.
 
-Penalties are the behavioural core. They're configurable per group as either a **fixed amount** (e.g., 2 USDC per missed period) or a **percentage** of the deposit (basis points). Three guarantees:
-
-- **Capped.** A member can never lose more than they deposited (`penalty = min(penalty, total_deposited)`).
-- **Settled at the end.** No mid-cycle fund movement; cleaner program logic, lower transaction count.
-- **Redistributed.** Collected penalties are split equally among members with zero misses, after a 5% protocol fee.
-
----
-
-## Architecture
-
-### System
-
-```mermaid
-flowchart LR
-    User([User]) --> Wallet[Phantom / Solflare]
-    Wallet --> Frontend[React + Vite frontend<br/>safenudge.xyz]
-    Frontend -->|Anchor client| Program[SafeNudge program<br/>Solana devnet]
-    Frontend -.->|Pix → USDC| Ramp[Ramp Network widget]
-    Ramp -.->|USDC| Wallet
-    Program --> GroupConfig[(GroupConfig PDA)]
-    Program --> MemberRecord[(MemberRecord PDAs)]
-    Program --> Vault[(Vault SPL token account<br/>self-as-authority PDA)]
-    Program --> Treasury[(Treasury PDA<br/>protocol fees)]
-```
-
-### Accounts and PDAs
+## Accounts
 
 ```mermaid
 flowchart TB
     GC[GroupConfig<br/>seeds: 'group', group_code]
     MR[MemberRecord<br/>seeds: 'member', group, member]
-    V[Vault SPL token account<br/>seeds: 'vault', group<br/>token::authority = self]
-    TA[TreasuryAuthority<br/>seeds: 'treasury']
-    TT[Treasury ATA<br/>ATA of mint × TreasuryAuthority]
+    V[Vault token account<br/>seeds: 'vault', group<br/>token::authority = self]
     JG[JoinGate, optional<br/>seeds: 'join', group]
     JT[JoinTally<br/>seeds: 'tally', group, member]
 
@@ -101,259 +47,89 @@ flowchart TB
     GC -->|0 or 1| JG
     GC -.->|1 : N, outlives close_group| JT
     GC -->|1 : 1| V
-    TA -->|owns| TT
-    V -.->|5% on distribute| TT
 ```
 
-GroupConfig is the hub. Every MemberRecord points back to it via `has_one`. A JoinGate makes every join need a join authority's signature. A JoinTally counts one member's joins at a group address, across leaves and rejoins, and stays open after `close_group` until `close_join_tally` closes it. The vault is a single SPL token account whose **address and authority are the same PDA** — no human key is ever the authority on the vault. The Treasury is a singleton, shared across every group on the cluster, drained only by the compile-time `FEE_RECIPIENT`.
+The vault's address and authority are the same PDA, so no human key can ever sign a transfer out of it. A JoinGate makes every join need a join authority's signature. A JoinTally counts one member's joins at a group address across leaves and rejoins.
 
-### Instruction set
+## Instructions
 
 | Instruction | Who can call | Fund movement | Required status |
 |---|---|---|---|
-| `create_group` | Anyone (`rent_payer` signs and pays rent; may be the creator). Rejects unsupported mints | None | — |
-| `join_group` | Anyone (becomes member; `rent_payer` signs and pays rent, may be the member). A gated group also needs its join authority's signature and the member's expected join count. Creates the member's join tally at the first join and adds one at every join | Member → Vault | Open |
-| `leave_group` | The member only | Vault → that member (the first deposit back). Member record rent (SOL) → the wallet that paid it | Open |
-| `start_cycle` | Creator only | None | Open |
-| `deposit` | Members only | Member → Vault | Active |
-| `distribute` | Anyone (permissionless) | Vault → Members + Treasury | Active (cycle ended) |
-| `emergency_cancel` | Creator only | Vault → Members (each gets their deposits back). With no members, a balance someone sent to the vault is burned | Open or Active |
-| `withdraw_fees` | Compile-time `FEE_RECIPIENT` only | Treasury → Recipient | — |
-| `refund_vault_rent` | Anyone (permissionless) | Vault rent (SOL) → the wallet that paid it | Completed or Cancelled |
-| `close_member_record` | Anyone (permissionless) | Member record rent (SOL) → the wallet that paid it | Completed or Cancelled, 30 days after settlement |
-| `close_group` | Anyone (permissionless) | Group account and join gate rent (SOL) → the wallet that paid it | Completed or Cancelled, every member record closed |
-| `set_join_authority` | Creator only (the group's `rent_payer` signs and pays rent) | None | Open, no member yet |
-| `close_join_tally` | Anyone (permissionless) | Join tally rent (SOL) → the wallet that paid it | No live group at the tally's group address (after `close_group`) |
+| `create_group` | Anyone (`rent_payer` signs and pays rent). Rejects unsupported mints | None | — |
+| `join_group` | Anyone. A gated group also needs its join authority's signature | Member → Vault | Open |
+| `leave_group` | The member | Vault → that member | Open |
+| `start_cycle` | Creator | None | Open |
+| `deposit` | Members | Member → Vault | Active |
+| `distribute` | Anyone, after the cycle ends | Vault → every member, exactly what each deposited | Active |
+| `emergency_cancel` | Creator | Vault → every member, exactly what each deposited | Open or Active |
+| `refund_vault_rent` | Anyone | Vault rent (SOL) → the wallet that paid it | Completed or Cancelled |
+| `close_member_record` | Anyone | Record rent (SOL) → the wallet that paid it | 30 days after settlement |
+| `close_group` | Anyone | Group and gate rent (SOL) → the wallet that paid it | Settled, every record closed |
+| `set_join_authority` | Creator | None | Open, no member yet |
+| `close_join_tally` | Anyone | Tally rent (SOL) → the wallet that paid it | After `close_group` |
 
-Account rent has one rule: it returns to the wallet that paid it. A wallet other than the creator or the member can pay the rent in `create_group` and `join_group`, so a member with no SOL can join when another wallet signs as `rent_payer`. A member who leaves an open group gets tokens only; the record rent goes back to its payer. Settlement closes the vault into the group account, and `refund_vault_rent` pays that rent to the recorded payer. Once every member record is closed, `close_group` returns the group account rent to its payer too. The group code is then free for a new group. Join tallies stay open, and `close_join_tally` returns each tally's rent to its payer.
+Full specs are in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
-### Tech stack
+## Security model
 
-| Layer | Choice | Version / Notes |
-|---|---|---|
-| Program | Rust + Anchor | Anchor 1.0.2, `overflow-checks = true` in release profile |
-| Token | USDC (SPL Token) | Devnet mint configurable via `VITE_USDC_MINT` |
-| Frontend | React + TypeScript + Vite | Strict TS, Tailwind, react-router-dom |
-| Wallet | `@solana/wallet-adapter-react` | Phantom + Solflare |
-| Anchor client | `@coral-xyz/anchor` | 0.32.x in workspace |
-| Localisation | `i18next` + `react-i18next` | PT-BR default and fallback, EN toggle |
-| On-ramp | `@ramp-network/ramp-instant-sdk` | Pix → USDC, in progress |
-| Tests | LiteSVM (in-process) + ts-mocha | No live RPC needed |
-| CI | GitHub Actions | Anchor build/test, tsc, build, security-lint, audits |
-| Hosting | Vercel | Auto-deploy from `main` |
+1. **No admin path to funds.** The program has no owner, no admin role and no fee. Vault tokens go only to the members recorded in the group. The creator can start or cancel, and a cancel returns each member's deposits.
+2. **PDA-only vault authority.** No wallet can sign a transfer out of a vault.
+3. **One-directional state machine.** `Open → Active → Completed/Cancelled`. Every instruction checks status first.
+4. **Deposits always come back.** `distribute` pays each member their recorded `total_deposited`, and fails unless the vault holds the sum. All arithmetic is checked, and CI denies raw arithmetic and lossy casts.
+5. **Permissionless settlement.** Anyone can settle a finished cycle.
+6. **`transfer_checked` everywhere,** and a mint allowlist: `create_group` rejects wrapped SOL and any Token-2022 mint with an extension outside metadata and interest-bearing.
 
-### Downstream consumers
+**Known limit.** Settlement pays every member in one transaction, so a frozen member token account blocks it until the account is thawed or the caller passes another token account of that member. A claim path is planned in [issue #56](https://github.com/davigiroux/safenudge.xyz/issues/56).
 
-This repository's frontend is not the program's only consumer. **SafePool** (private repository, same author) is a second product built on the same deployed program, reused unchanged — same instruction set, same PDA seeds, same IDL. Its mainnet cutover depends on [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20) and on the upgrade-authority decision in [`ARCHITECTURE.md`](./ARCHITECTURE.md#no-upgrade-authority), so changes to the program surface here have a second caller to account for.
+**Upgrade authority.** On mainnet the upgrade authority is a 2-of-3 Squads multisig. Making the program immutable waits on an external review and a mainnet soak; see [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md). Until then, read the guarantees above as "no single party can move your money", not "the rules can never change".
 
-The `rent_payer` change (issue #55) breaks that interface. `create_group` and `join_group` take a new required signer, `distribute` loses its `creator` account so account positions shift, and both account layouts and discriminators change. A consumer that pins an older IDL fails against the upgraded program until it repins and changes its calls. No live group may exist on any cluster when the upgrade is deployed. The full list is in [`ARCHITECTURE.md`](./ARCHITECTURE.md#upgrades-that-change-an-account-layout).
+Threat model and instruction matrix: [`ARCHITECTURE.md`](./ARCHITECTURE.md#security-architecture). Engineering rules: [`CLAUDE.md`](./CLAUDE.md#security-principles).
 
-→ Read the full architecture in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+## Build and test
 
----
+| Tool | Version |
+|---|---|
+| Rust | stable |
+| Solana CLI | v3.1.10 |
+| Anchor CLI | 1.0.2 (`cargo install --git https://github.com/coral-xyz/anchor --tag v1.0.2 anchor-cli --locked`) |
+| Node.js | 24 (Node 20 and 22 crash the LiteSVM suite) |
 
-## Security Model
+```bash
+npm install
+anchor build --ignore-keys
+npx ts-mocha -p ./tsconfig.json -t 1000000 'tests/**/*.ts'
+```
 
-SafeNudge holds user funds. The security posture is structural, not bolted on. Six non-negotiables:
+Per-cluster builds:
 
-1. **No admin path to user funds.** The program has no owner and no admin role. No instruction moves vault funds to an arbitrary address. The one privileged instruction, `withdraw_fees`, can only move accumulated protocol fees out of the treasury PDA to a compile-time `FEE_RECIPIENT` — it cannot touch a group vault. The creator's only powers are `start_cycle` and `emergency_cancel`, and cancel returns each member exactly what they deposited.
-2. **PDA-only authority on the vault.** No human wallet can ever sign a transfer out of the vault.
-3. **One-directional state machine.** Status moves `Open → Active → Completed/Cancelled`. Every instruction validates status as its first check; nothing can revert.
-4. **Capped penalty math.** A member can never owe more than they deposited. All numeric ops use `checked_add/sub/mul/div` — raw arithmetic on `u64` is forbidden and CI-enforced.
-5. **Permissionless distribution.** Anyone can settle a finished cycle. No single party can hold funds hostage.
-6. **`transfer_checked` everywhere.** Mint and decimals are validated at the CPI level — no token-confusion attacks.
+```bash
+anchor build --ignore-keys                          # local and tests
+anchor build -- --features devnet                   # five-minute periods for testing
+anchor build --ignore-keys -- --features mainnet    # mainnet program ID; never `anchor keys sync`
+```
 
-### Known limit: one frozen token account holds a whole group in the app
+After a change to the program interface, copy the IDL into `idl/` (CI checks it matches the build):
 
-Guarantee 5 has an exception in v1. `distribute` and `emergency_cancel` pay every member in one transaction. If one member's token account is frozen, that transfer fails and the whole settlement transaction fails.
+```bash
+cp target/idl/safenudge.json idl/ && cp target/types/safenudge.ts idl/safenudge-types.ts
+```
 
-- Any mint with a freeze authority makes this possible. USDC has one.
-- A closed token account has the same effect, but anyone can create it again, and the app does so before it settles.
-- Through the app, the group cannot fix a frozen account: the app always pays each member's standard token account. Until the freeze authority of the mint thaws it, every member's funds stay in the vault. Nobody can take them.
-- The program itself is less strict. `distribute` and `emergency_cancel` accept any token account that the member owns for the group's mint. A caller who builds the transaction by hand can create a new token account for that member, pass it in place of the frozen one, and the settlement goes through. The app does not do this today.
-- A claim path, where a member whose transfer fails claims later and the others are paid at once, is planned with the v2 settlement redesign ([issue #56](https://github.com/davigiroux/safenudge.xyz/issues/56)).
+Deploying and rehearsing on devnet: [`docs/devnet-testing.md`](./docs/devnet-testing.md). Monitoring: [`docs/monitoring.md`](./docs/monitoring.md).
 
-Before a cycle starts no member depends on another: `leave_group` returns a member's deposit while the group is `Open`, with no action from the creator, to any token account that member owns. The creator can cancel a group with no members even if someone sent tokens to its vault: that balance is burned, never paid out. One condition remains for every group: the issuer of a token with a freeze authority can freeze the vault itself, and then nothing moves until it is thawed.
-
-### Which tokens a group can use
-
-A group's accounting assumes that a transfer delivers exactly what it sends and that nobody outside the program can move or block vault tokens. `create_group` rejects every mint that breaks this: wrapped SOL, and any Token-2022 mint with an extension outside a short allowlist (metadata and interest-bearing). Transfer fees, transfer hooks, permanent delegates, default-frozen accounts, and the rest are refused with `UnsupportedMint`. Classic SPL tokens such as USDC pass.
-
-### Upgrade authority — the honest caveat
-
-The six guarantees above describe the deployed bytecode. They hold only as long as that bytecode cannot be replaced, and today it can: the devnet deployment still has a live upgrade authority. Whoever holds that key can ship a different program at the same address, and the constraints above would not apply to it.
-
-The destination is `set-upgrade-authority --final`, which sets the authority to `None` and makes the program permanently unpatchable. Before that, upgrade authority moves to a 2-of-3 Squads multisig, so no single key can replace the program. `--final` follows once the mainnet configuration is settled, an external review of `distribute` and `emergency_cancel` has landed, and the program has run on mainnet with real funds without needing a patch. The full reasoning, including what `--final` would freeze permanently, is in [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md).
-
-Until that sequence completes, read the guarantees above as "no single party can move your money", not "the rules can never change".
-
-The Drift Protocol exploit of April 2026 ($285M, 12 minutes) didn't exploit a code bug — it abused an admin key, durable nonces, and oracle manipulation. SafeNudge's attack surface is smaller: no oracles, no governance, no admin role inside the program. The upgrade key is the one place the same class of risk still applies, which is why it goes to a multisig before real funds arrive. The *principle* is the same either way: correctness lives in the constraints, not just the code paths.
-
-→ Threat model, instruction matrix, and constraint templates in [`ARCHITECTURE.md`](./ARCHITECTURE.md#security-architecture). Engineering rules and forbidden patterns in [`CLAUDE.md`](./CLAUDE.md#security-principles).
-
----
-
-## Project Structure
+## Repository
 
 ```
 safenudge.xyz/
-├── programs/safenudge/src/
-│   ├── lib.rs                    # Program entry, instruction routing, FEE_RECIPIENT consts
-│   ├── instructions/             # One file per instruction
-│   │   ├── create_group.rs
-│   │   ├── join_group.rs
-│   │   ├── start_cycle.rs
-│   │   ├── deposit.rs
-│   │   ├── distribute.rs
-│   │   ├── emergency_cancel.rs
-│   │   └── withdraw_fees.rs
-│   ├── state/                    # Account struct definitions
-│   │   ├── group_config.rs
-│   │   └── member_record.rs
-│   └── errors.rs                 # SafeNudgeError enum
-├── tests/safenudge.ts            # LiteSVM integration tests (TypeScript)
-├── app/                          # React frontend
-│   ├── src/
-│   │   ├── pages/                # Landing, ComoFunciona, CreateGroup, JoinGroup, GroupDashboard, MyGroups
-│   │   ├── components/           # Button, Card, NudgeToast, WalletProvider, …
-│   │   ├── hooks/                # useAnchorProgram, useGroupConfig, useMemberRecord, …
-│   │   ├── i18n/                 # PT-BR + EN translations
-│   │   ├── idl/                  # Auto-generated from `anchor build`
-│   │   └── utils/
-│   ├── package.json
-│   └── vite.config.ts
-├── docs/
-│   ├── design-system.md          # SafeNudge Bossa — Organic Trust Framework
-│   ├── design-tokens.json        # Material Design 3 tokens
-│   └── screens/                  # Reference designs
-├── .github/workflows/ci.yml
-├── Anchor.toml
-├── Cargo.toml
-├── CONCEPT.md                    # Product rationale, market, revenue
-├── ARCHITECTURE.md               # Account layouts, instructions, security
-├── ROADMAP.md                    # Operational view: shipped / in flight / next
-├── CLAUDE.md                     # Engineering rules and agent-role discipline
-└── README.md                     # You are here
+├── programs/safenudge/src/   # Anchor program: lib.rs, instructions/, state/, errors.rs, events.rs
+├── tests/                    # LiteSVM integration tests
+├── idl/                      # Committed IDL; SafePool and monitoring copy it
+├── ops/                      # Watchdog and monitoring bundle
+├── infra/kora/               # Fee relay config used by SafePool
+├── scripts/                  # measure-join.ts, rehearse-devnet.ts
+├── docs/                     # ADRs, devnet guide, monitoring
+├── ARCHITECTURE.md           # Account layouts, instructions, security
+└── CLAUDE.md                 # Engineering rules and review checklists
 ```
-
-One instruction per file in `programs/safenudge/src/instructions/`. One page per file in `app/src/pages/`. One state struct per file in `state/`.
-
----
-
-## Quickstart
-
-### Prerequisites
-
-| Tool | Version | Install |
-|---|---|---|
-| Rust | stable | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh` |
-| Solana CLI | v3.1.10 | `sh -c "$(curl -sSfL https://release.anza.xyz/v3.1.10/install)"` |
-| Anchor CLI | 1.0.2 | `cargo install --git https://github.com/coral-xyz/anchor --tag v1.0.2 anchor-cli --locked` |
-| Node.js | 24 | `nvm install 24 && nvm use 24` |
-
-Node 24 is required: Node 20 and 22 ship a V8 build with a pretenuring-handler bug that crashes the LiteSVM test suite mid-run.
-
-### Build and test the program
-
-```bash
-anchor build
-anchor test
-# or, equivalently, the LiteSVM in-process runner:
-npx ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts
-```
-
-Per-cluster builds for the protocol fee recipient:
-
-```bash
-anchor build                              # local / test fallback recipient
-anchor build -- --features devnet         # devnet recipient
-anchor build --ignore-keys -- --features mainnet   # mainnet program ID and Squads fee recipient; never `anchor keys sync`
-```
-
-The mainnet build embeds the mainnet program ID `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` and, as `FEE_RECIPIENT`, the Squads vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` (2-of-3), which also holds the upgrade authority ([ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md)). Both are compile-time constants, set in [issue #20](https://github.com/davigiroux/safenudge.xyz/issues/20). Until they were set, a `compile_error!` refused the build, so no artifact pointed at placeholder values could exist.
-
-### Run the frontend
-
-```bash
-cd app
-npm install
-npm run dev
-```
-
-Type-check and production build:
-
-```bash
-cd app
-npx tsc --noEmit
-npm run build
-```
-
-### Frontend environment
-
-Create `app/.env` (never committed):
-
-| Variable | Purpose |
-|---|---|
-| `VITE_SOLANA_RPC_URL` | RPC endpoint (devnet: `https://api.devnet.solana.com`) |
-| `VITE_PROGRAM_ID` | Deployed program ID — defaults to the `declare_id!` value |
-| `VITE_USDC_MINT` | USDC mint on the target cluster |
-| `VITE_RAMP_API_KEY` | Ramp Network API key for the Pix on-ramp |
-
----
-
-## Development and CI
-
-### Agent-role discipline
-
-The codebase is developed under four explicit agent roles, each with its own scope, rules, and pre-commit checklist:
-
-- **Program Engineer** — `programs/safenudge/src/` and `tests/`
-- **Frontend Engineer** — `app/src/`
-- **Test Engineer** — `tests/`
-- **Security Reviewer** — final gate on every PR touching the program
-
-Full rules, forbidden patterns, and the Drift-derived security checklist live in [`CLAUDE.md`](./CLAUDE.md#agent-roles).
-
-### CI pipeline
-
-[`.github/workflows/ci.yml`](./.github/workflows/ci.yml) runs four jobs on every push and PR:
-
-| Job | What it checks |
-|---|---|
-| `program` | `anchor build --ignore-keys` then the LiteSVM test suite (in-process, no RPC) |
-| `frontend` | `tsc --noEmit` and `vite build` against the `app/` workspace |
-| `security-lint` | Greps for raw arithmetic in program code, hardcoded UI strings, and committed secrets |
-| `audit` | `cargo audit` and `npm audit` (advisory — failures don't block merges) |
-
-### Branch and commit conventions
-
-Branch names: `feat/<scope>`, `fix/<scope>`, `test/<scope>`, `security/<scope>`. Commit subjects use `feat(program): …`, `feat(frontend): …`, `fix(program): …`, etc. Every PR carries a security-impact note and a completed checklist for the relevant agent role. Full conventions in [`CLAUDE.md`](./CLAUDE.md#git-workflow).
-
----
-
-## Roadmap Snapshot
-
-| Phase | Status | What ships |
-|---|---|---|
-| **MVP** (May 2026) | in flight | Core program, React frontend, PT-BR/EN i18n, devnet deploy, Ramp on-ramp |
-| **v1.1** — Protocol fee | in flight | 5% fee on penalty pool, treasury PDA, `withdraw_fees` |
-| **v2** — Yield integration | planned | Kamino K-Lend during active cycles, performance fee, premium tier |
-| **v3** — Mainstream onboarding | planned | Embedded wallets, full Pix on/off-ramp, WhatsApp notifications |
-| **v4** — Game modes | planned | Consórcio mode, challenge mode, streak bonuses, B2B white-label |
-
-→ Full task breakdown and shipped/in-flight detail in [`ROADMAP.md`](./ROADMAP.md).
-
----
-
-## Documentation
-
-- [`CONCEPT.md`](./CONCEPT.md) — Product rationale, target user, market sizing, revenue model, GTM
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md) — Account layouts, instruction specs, PDA derivation, security architecture
-- [`ROADMAP.md`](./ROADMAP.md) — Operational view: what's shipped, what's in flight, what's next
-- [`CLAUDE.md`](./CLAUDE.md) — Engineering rules, agent-role discipline, forbidden patterns, CI contract
-- [`docs/monitoring.md`](./docs/monitoring.md) — On-chain monitoring with Solana Microscope, alert rules, program events
-- [`docs/design-system.md`](./docs/design-system.md) — SafeNudge Bossa: the Organic Trust Framework
-- [`docs/design-tokens.json`](./docs/design-tokens.json) — Material Design 3 tokens (colour, type, elevation)
 
 ---
 

@@ -9,7 +9,7 @@ poll_interval_seconds = 5
 replay_window_slots = 300
 
 [dashboard]
-event_fields = ["name", "instruction", "signature", "slot", "failed", "data.group", "data.member", "data.amount", "data.payout", "data.protocol_fee"]
+event_fields = ["name", "instruction", "signature", "slot", "failed", "data.group", "data.member", "data.amount", "data.payout", "data.total_paid"]
 
 [alerting]
 lookback_window_seconds = 60
@@ -27,19 +27,6 @@ channels = ["telegram"]
 kind = "instruction"
 name = "emergency_cancel"
 conditions = [{ field = "failed", operator = "eq", value = false }]
-severity = "warning"
-channels = ["telegram"]
-
-[[alerts]]
-kind = "instruction"
-name = "withdraw_fees"
-conditions = [{ field = "failed", operator = "eq", value = false }]
-severity = "warning"
-channels = ["telegram"]
-
-[[alerts]]
-kind = "instruction"
-name = "init_treasury"
 severity = "warning"
 channels = ["telegram"]
 

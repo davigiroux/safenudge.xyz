@@ -32,30 +32,28 @@ Every fixed-size field comes before `group_code`, the only variable-length field
 pub struct GroupConfig {
     pub creator: Pubkey,           // offset 8,   32 bytes. Can start_cycle and emergency_cancel
     pub rent_payer: Pubkey,        // offset 40,  32 bytes. Paid the rent of this account and of the vault
-    pub mint: Pubkey,              // offset 72,  32 bytes. USDC mint address
+    pub mint: Pubkey,              // offset 72,  32 bytes. Group mint
     pub deposit_amount: u64,       // offset 104, 8 bytes.  Fixed deposit per period (token smallest unit)
-    pub penalty_value: u64,        // offset 112, 8 bytes.  Fixed amount in token units, or basis points (500 = 5%)
-    pub cycle_start: i64,          // offset 120, 8 bytes.  Unix timestamp of start_cycle. 0 while Open
-    pub settled_at: i64,           // offset 128, 8 bytes.  Unix timestamp of distribute or emergency_cancel. 0 until then
-    pub frequency: u8,             // offset 136. 0 = weekly, 1 = biweekly, 2 = monthly (3 = 5min, devnet builds)
-    pub total_periods: u8,         // offset 137. Number of deposit periods in the cycle
-    pub max_members: u8,           // offset 138. Max group size (2-10)
-    pub current_members: u8,       // offset 139. Open member records: +1 join_group, -1 leave_group and close_member_record
-    pub penalty_type: u8,          // offset 140. 0 = fixed amount, 1 = percentage
-    pub status: u8,                // offset 141. 0 = open, 1 = active, 2 = completed, 3 = cancelled
-    pub bump: u8,                  // offset 142. PDA bump
-    pub vault_bump: u8,            // offset 143. Canonical bump of the vault PDA, stored by create_group
-    pub reserved: [u8; 64],        // offset 144, 64 bytes. Zero. Room for later fixed-size fields
+    pub cycle_start: i64,          // offset 112, 8 bytes.  Unix timestamp of start_cycle. 0 while Open
+    pub settled_at: i64,           // offset 120, 8 bytes.  Unix timestamp of distribute or emergency_cancel. 0 until then
+    pub frequency: u8,             // offset 128. 0 = weekly, 1 = biweekly, 2 = monthly (3 = 5min, devnet builds)
+    pub total_periods: u8,         // offset 129. Number of deposit periods in the cycle
+    pub max_members: u8,           // offset 130. Max group size (2-10)
+    pub current_members: u8,       // offset 131. Open member records: +1 join_group, -1 leave_group and close_member_record
+    pub status: u8,                // offset 132. 0 = open, 1 = active, 2 = completed, 3 = cancelled
+    pub bump: u8,                  // offset 133. PDA bump
+    pub vault_bump: u8,            // offset 134. Canonical bump of the vault PDA, stored by create_group
+    pub reserved: [u8; 73],        // offset 135, 73 bytes. Zero. Room for later fixed-size fields
     #[max_len(32)]
     pub group_code: String,        // offset 208, 4 + up to 32 bytes. Group code, used as PDA seed
 }
 // Seeds: [b"group", group_code.as_bytes()]
-// Space: 8 (discriminator) + 32 * 3 + 8 * 4 + 1 * 8 + 64 + (4 + 32) = 244
+// Space: 8 (discriminator) + 32 * 3 + 8 * 3 + 1 * 7 + 73 + (4 + 32) = 244
 ```
 
 The size is pinned at compile time (`const _: () = assert!(8 + GroupConfig::INIT_SPACE == 244)`), and a unit test in `state/group_config.rs` serializes a `GroupConfig` and checks each offset above.
 
-`reserved` is padding for fields added later. A new fixed-size field takes bytes from the front of it, so `group_code` and every offset above stay where they are, and a group written by the earlier binary reads the new field as zero. A field added that way needs no settlement of live groups, as long as zero is a valid value for it. The padding costs 325,120 lamports of rent per group at 5,080 lamports per byte, and `close_group` returns it.
+`reserved` is padding for fields added later. A new fixed-size field takes bytes from the front of it, so `group_code` and every offset above stay where they are, and a group written by the earlier binary reads the new field as zero. A field added that way needs no settlement of live groups, as long as zero is a valid value for it. The padding costs 370,840 lamports of rent per group at 5,080 lamports per byte, and `close_group` returns it. It is 73 bytes, not a round number, because the penalty fields it replaced kept `group_code` at offset 208 and the account at 244 bytes.
 
 `vault_bump` is the only stored bump that is not the account's own. `create_group` takes it from the `init` constraint on the vault, which finds the canonical bump, so it is canonical by construction. `join_group`, `leave_group`, `deposit`, `distribute` and `emergency_cancel` check the vault with `bump = group_config.vault_bump`: one derivation instead of a search from 255 that costs 1,500 compute units per bump tried. `leave_group`, `distribute` and `emergency_cancel` also sign vault transfers with it. A wrong value would fail the seeds check and move no funds, and the tests compare the stored value with `findProgramAddressSync` and settle a group whose vault bump is below 255 on every path (issue #92).
 
@@ -178,20 +176,15 @@ Creates a new savings group.
 **Args:**
 - `group_code: String` — human-readable code (max 32 chars, used as PDA seed)
 - `deposit_amount: u64` — amount per period
-- `frequency: u8` — 0/1/2 for weekly/biweekly/monthly. Devnet builds also accept 3, a five-minute period, so a full lifecycle can be driven through the app in one sitting; the arm is compiled out of every other build
+- `frequency: u8` — 0/1/2 for weekly/biweekly/monthly. Devnet builds also accept 3, a five-minute period, so a full lifecycle can be driven in one sitting; the arm is compiled out of every other build
 - `total_periods: u8` — number of periods (1-52)
 - `max_members: u8` — max size (2-10)
-- `penalty_type: u8` — 0 = fixed, 1 = percentage
-- `penalty_value: u64` — amount or basis points
 
 **Validation:**
 - `deposit_amount > 0`
 - `frequency` in [0, 1, 2], or [0, 1, 2, 3] under `--features devnet` (see `MAX_FREQUENCY`)
 - `total_periods` in [1, 52]
 - `max_members` in [2, 10]
-- `penalty_type` in [0, 1]
-- If fixed, `penalty_value <= deposit_amount` (per missed period; an unbounded value used to allow groups whose settlement math overflowed — issue #44 H-1)
-- If percentage, `penalty_value <= 5000` (max 50%)
 - `group_code` length 1-32 chars, alphanumeric + hyphens only
 - `mint` passes the mint rule (`UnsupportedMint`)
 
@@ -219,7 +212,7 @@ A member joins the group and makes their initial deposit.
 - `group_config` (mut) — increments member count
 - `member_record` (init, payer = `rent_payer`) — PDA for this member in this group
 - `member_token_account` (mut) — member's canonical ATA for the group mint (source). Enforced via `associated_token::` constraints. Settlement pays any token account the member owns for the mint
-- `vault` (mut) — group's USDC vault (destination)
+- `vault` (mut) — the group's vault (destination)
 - `mint`
 - `token_program`
 - `system_program`
@@ -229,7 +222,7 @@ A member joins the group and makes their initial deposit.
 - `join_tally` (mut, `init_if_needed`, payer = `rent_payer`). Seeds `["tally", group_config, member]`. The last account, so earlier positions do not move
 
 **Args:**
-- `expected_terms: GroupTerms` — `{ creator, deposit_amount, frequency, total_periods, penalty_type, penalty_value }`, the terms the client showed the member. The deposit amount the program moves still comes from `group_config.deposit_amount`
+- `expected_terms: GroupTerms` — `{ creator, deposit_amount, frequency, total_periods }`, the terms the client showed the member. The deposit amount the program moves still comes from `group_config.deposit_amount`
 - `expected_joins: Option<u32>`. When given, the member's tally count before this join, 0 for a first join
 
 **Validation:**
@@ -251,7 +244,7 @@ A member joins the group and makes their initial deposit.
 - Creates `JoinTally` at the first join, with `rent_payer` = the `rent_payer` signer. The handler sets `rent_payer` only when `joins == 0`, which holds only for a tally created in this instruction, so a rejoin keeps the first payer
 - Increments `join_tally.joins`
 
-The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,656,080 lamports of the record (1,493,520 before the 32 reserved bytes). A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,268,960. The tally adds 7,745 compute units to a join when its canonical bump is found at the first try, and 1,500 more for each further try. Over 256 member keys, 223 joins added at most 10,776, 250 added at most 13,745, and 6 added more than 15,000, at most 16,745. The search cannot be skipped with a bump passed by the client: a non-canonical bump gives a second tally address at 0. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 880 bytes, under the 1,232-byte limit (829 before `expected_terms` added 51 bytes).
+The tally costs a sponsor 873,760 lamports at a member's first join at a group address, on top of the 1,656,080 lamports of the record (1,493,520 before the 32 reserved bytes). A rejoin pays the record rent only. The figures come from `getMinimumBalanceForRentExemption` on devnet and mainnet on 2026-10-13. LiteSVM's default rent gives 1,197,120 and 2,268,960. The tally adds 7,745 compute units to a join when its canonical bump is found at the first try, and 1,500 more for each further try. Over 256 member keys, 223 joins added at most 10,776, 250 added at most 13,745, and 6 added more than 15,000, at most 16,745. The search cannot be skipped with a bump passed by the client: a non-canonical bump gives a second tally address at 0. A gated create transaction (`create_group`, `set_join_authority` and `join_group`) with a 32-character code is 862 bytes, under the 1,232-byte limit (829 before `expected_terms` added 33 bytes).
 
 ---
 
@@ -319,15 +312,13 @@ current_period = min(elapsed / period_duration, total_periods - 1)
 
 #### 5. `distribute`
 
-Settles the cycle. Calculates penalties and distributes funds. Anyone can trigger this.
+Settles the cycle: every member gets back exactly what they deposited. Anyone can trigger it. A member who missed a period loses nothing; the missed deposits are recorded in `periods_deposited` and `deposits_made`, which clients read to show who kept the commitment (ADR-0005).
 
 **Accounts:**
 - `payer` (signer) — pays for transaction fees only, never rent
 - `group_config` (mut) — also receives the vault's rent when the vault closes
-- `vault` (mut) — source of all distributions; signs its own transfers (self-as-authority)
+- `vault` (mut) — source of all payouts; signs its own transfers (self-as-authority)
 - `mint`
-- `treasury_authority` (PDA, seeds `[b"treasury"]`)
-- `treasury_token_account` (mut, **optional**) — canonical ATA of `(mint, treasury_authority)`, pinned by `associated_token::` constraints when passed. Required only when a protocol fee is due this settlement; created ahead of time via `init_treasury`, never here (issue #44 H-3: `init_if_needed` let permissionless callers be rent-griefed)
 - `token_program`
 - Plus: remaining accounts are pairs of `[member_record, member_token_account]` for each member
 
@@ -336,77 +327,39 @@ Settles the cycle. Calculates penalties and distributes funds. Anyone can trigge
 **Validation:**
 - `group_config.status == Active (1)`
 - Cycle has ended: `Clock::get().unix_timestamp >= cycle_start + (total_periods * period_duration)`
-- All member records are passed in remaining accounts
-- Number of member records matches `group_config.current_members`
+- Number of member pairs matches `group_config.current_members`
 - Each `member_record` account is owned by this program and matches the canonical `["member", group, member]` PDA, derived with the record's stored bump
 - No `member_record` is passed twice
 - Each paired `member_token_account` is owned by `member_record.member` and uses `group_config.mint`
-- The computed payouts plus the protocol fee equal the members' `total_deposited`, less rounding dust smaller than the number of compliant members (`SettlementImbalance`). The vault holds at least that total (`VaultShortfall`)
-- If `protocol_fee > 0`, `treasury_token_account` must be passed and initialized (`TreasuryNotInitialized` otherwise — settlement is blocked, not bricked, until `FEE_RECIPIENT` runs `init_treasury`; funds stay in the vault and the call is retriable). The fee cannot be dodged by omitting the account.
+- The vault holds at least the sum of every member's `total_deposited` (`VaultShortfall`)
 
-**Distribution logic:**
+**Logic:**
 ```
+for each member pair (validated):
+    payout = member.total_deposited
+require vault.amount >= sum(payout)
+
+status = Completed; settled_at = now
 for each member:
-    missed = total_periods - member.deposits_made
-    // Penalty math is computed in u128 so no admissible input can overflow
-    // before the cap clamps it (issue #44 H-1); the narrowing back to u64
-    // is infallible because the result is <= total_deposited.
-    if penalty_type == Fixed:
-        penalty = missed * penalty_value
-    else: // Percentage, multiplied before divided, so it rounds once
-        penalty = missed * deposit_amount * penalty_value / 10000
-    
-    // Cap penalty at total deposited (can't lose more than you put in)
-    penalty = min(penalty, member.total_deposited)
-    member_payout = member.total_deposited - penalty
-    total_penalties += penalty
-
-// Protocol fee: 5% of the penalty pool. Skipped (0) when no one is
-// compliant (pro-rata refund branch) or when FEE_RECIPIENT is
-// Pubkey::default() (fee_recipient_configured() == false) — the
-// full pool is then redistributed, nothing accumulates or is burned
-// (issue #44 H-4).
-compliant_count = members where deposits_made == total_periods
-protocol_fee = (compliant_count == 0 || !fee_recipient_configured())
-    ? 0
-    : total_penalties * PROTOCOL_FEE_BPS / 10_000
-redistributable = total_penalties - protocol_fee
-
-// Split remaining penalties among fully compliant members
-if compliant_count > 0:
-    bonus_per_compliant = redistributable / compliant_count
-
-// Fee CPI first (if protocol_fee > 0), so the last-member dust path sees
-// the post-fee vault balance.
-transfer_checked(vault -> treasury_token_account, protocol_fee)
-
-for each member:
-    if compliant_count == 0:
-        payout = member.total_deposited   // full refund, no penalties
-    else:
-        payout = member_payout
-        if member.deposits_made == total_periods:
-            payout += bonus_per_compliant
-    // The last member in remaining-accounts order gets the vault balance
-    // (vault.reload()) in place of `payout`: their payout plus the rounding
-    // dust and any tokens sent to the vault outside the program. The caller
-    // picks the order, so the caller picks who gets the dust, under one
-    // token unit per compliant member. See "Frontrunning distribution".
-    
-    // Transfer payout from vault to member via CPI with PDA signer seeds
+    // The last member in remaining-accounts order gets the whole vault balance:
+    // their own deposits plus any tokens sent to the vault from outside the
+    // program, so the vault empties and can close.
     transfer_checked(vault -> member_token_account, payout)
+close vault into group_config
 ```
 
 **Effects:**
-- Transfers calculated amounts from vault to each member
+- Transfers each member's `total_deposited` from the vault to their token account
 - Sets `group_config.status = Completed (2)` and `group_config.settled_at` to the clock time
 - Closes the vault account into `group_config`. `refund_vault_rent` then pays that rent to `group_config.rent_payer`
+
+`distribute` and `emergency_cancel` now move the same amounts. They differ in who may call them and when: `distribute` is permissionless after the cycle ends, `emergency_cancel` is the creator's at any point before settlement.
 
 ---
 
 #### 6. `emergency_cancel`
 
-Creator cancels the cycle. All deposits returned without penalties.
+Creator cancels the cycle. All deposits returned.
 
 **Accounts:**
 - `creator` (signer) — must match `group_config.creator`. Receives nothing
@@ -435,61 +388,10 @@ The same canonical-PDA + ATA-owner + uniqueness validations as `distribute` appl
 - A client that cancels a group with no members should always mark `mint` writable. A writable `mint` with an empty vault burns nothing, and a donation that lands just before the cancel then cannot make it fail.
 - With one or more members nothing is burned and `mint` stays read-only: the last-listed member receives the vault balance, as before.
 - The burn cannot run on a vault that the freeze authority of the mint froze. No instruction moves tokens out of a frozen vault, for a group of any size.
-- Sending the balance to the treasury token account was rejected. That account exists only after `FEE_RECIPIENT` runs `init_treasury` for the mint, so the creator's cancel would depend on another party.
 
 ---
 
-#### 7. `withdraw_fees`
-
-Drains the protocol treasury to the configured `FEE_RECIPIENT`. Only `FEE_RECIPIENT` can call it, because the `recipient` signer must equal that compile-time key.
-
-**Accounts:**
-- `recipient` (signer) — must equal compile-time `FEE_RECIPIENT`
-- `treasury_authority` (PDA, seeds `[b"treasury"]`)
-- `treasury_token_account` — must be owned by `treasury_authority` and use the configured mint
-- `recipient_token_account` — must be owned by `FEE_RECIPIENT` and use the same mint
-- `mint`
-- `token_program`
-
-**Args:** None
-
-**Validation:**
-- `recipient.key() == FEE_RECIPIENT`
-- `treasury_token_account.owner == treasury_authority.key()`
-- `recipient_token_account.owner == FEE_RECIPIENT`
-- Both token accounts use `mint`
-
-**Effects:**
-- Transfers `treasury_token_account.amount` to `recipient_token_account` via CPI signed by the treasury PDA
-- Fails with `NoFeesToWithdraw` when the treasury balance is zero (issue #44 L-6: a silent no-op made the recipient pay a tx fee to learn nothing)
-- Treasury account stays open across withdrawals (cheaper than re-init each cycle)
-
----
-
-#### 8. `init_treasury`
-
-One-shot, per-mint creation of the protocol treasury ATA. Signed and paid for by the compile-time `FEE_RECIPIENT`, so a permissionless `distribute` caller can never be forced to fund rent for an account only the fee recipient controls (issue #44 H-3).
-
-**Accounts:**
-- `fee_recipient` (signer, mut) — must equal compile-time `FEE_RECIPIENT`; pays the ATA rent
-- `treasury_authority` (PDA, seeds `[b"treasury"]`)
-- `treasury_token_account` (init) — canonical ATA of `(mint, treasury_authority)`; plain `init`, so a second call for the same mint fails
-- `mint` — any mint; groups are per-mint while the treasury authority PDA is global, so the protocol holds one ATA per supported mint
-- `token_program`, `associated_token_program`, `system_program`
-
-**Args:** None
-
-**Validation:**
-- `fee_recipient.key() == FEE_RECIPIENT` (`UnauthorizedRecipient`)
-
-**Effects:**
-- Creates the treasury ATA for the given mint (all work happens in account constraints)
-
-**Ops runbook:** before the first fee-charging settlement on a cluster, `FEE_RECIPIENT` must run `init_treasury` for each supported mint (USDC at minimum). Until then, fee-charging `distribute` calls fail with `TreasuryNotInitialized` (retriable); fee-free settlements are unaffected. On mainnet `FEE_RECIPIENT` is the Squads vault, so `init_treasury` is a multisig proposal, and it must execute for BRS (`BRSxQRUaGswjLs7ewcH7uXj3r7SgmfKSSLLXyCKHZtUo`) before the first mainnet group with a missed deposit settles.
-
----
-
-#### 9. `refund_vault_rent`
+#### 7. `refund_vault_rent`
 
 Pays the vault rent that settlement left in `GroupConfig` to the wallet that paid it. Anyone can call it.
 
@@ -515,7 +417,7 @@ The amount follows the rent rate at the time of the call. If the rate is lower t
 
 ---
 
-#### 10. `close_member_record`
+#### 8. `close_member_record`
 
 Closes one `MemberRecord` of a settled group and returns its rent to the wallet that paid it. Anyone can call it, once the retention period after settlement has passed. One record per instruction: a client puts up to 10 of them, plus `refund_vault_rent`, in one transaction (1,023 bytes with 10 different rent payers).
 
@@ -542,7 +444,7 @@ Settlement reads every member record, so a record cannot close while the group i
 
 ---
 
-#### 11. `leave_group`
+#### 9. `leave_group`
 
 A member leaves a group that has not started. The member gets the first deposit back, the member record closes, and the seat is free again. This is the member's exit when the creator of an Open group never starts or cancels it.
 
@@ -586,7 +488,7 @@ A leave pays exactly the recorded deposit. Tokens that someone sent to the vault
 
 ---
 
-#### 12. `close_group`
+#### 10. `close_group`
 
 Closes the `GroupConfig` of a settled group that has no member record left, and pays every lamport in it to the wallet that paid its rent. Anyone can call it.
 
@@ -621,7 +523,7 @@ A new group at a freed code inherits no member record and no join gate. It does 
 
 ---
 
-#### 13. `set_join_authority`
+#### 11. `set_join_authority`
 
 Gates an Open group with no member: from then on every `join_group` needs the signature of `authority`. Once per group.
 
@@ -653,7 +555,7 @@ A backend that holds the authority checks every message it co-signs. See "Co-sig
 
 ---
 
-#### 14. `close_join_tally`
+#### 12. `close_join_tally`
 
 Closes one member's `JoinTally` once no group lives at its group address, and pays its rent to the wallet that paid it. Anyone can call it.
 
@@ -676,63 +578,13 @@ The handler does nothing. Every check is a constraint, and Anchor's `close` move
 
 ---
 
-### Treasury (protocol fee accumulator)
+### Cluster builds
 
-**Pattern:** PDA-controlled SPL token account, no admin authority.
+The program has no protocol fee and no treasury since October 2026 (ADR-0005). Earlier builds took 5% of the penalty pool into a treasury token account, through `init_treasury` and `withdraw_fees`; both instructions are gone. On mainnet the Squads vault ran `init_treasury` for BRS before the change, so a treasury token account for BRS exists under the old treasury PDA with about 0.002 SOL of rent locked in it. Nothing can pay into it or out of it any more.
 
-```rust
-// Authority — holds no data, only seeds
-// Seeds: [b"treasury"]
-pub treasury_authority: SystemAccount<'info>
+Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor build --ignore-keys -- --features mainnet`. The features select the program ID (`mainnet`) and the shortened devnet timing (`devnet`: a five-minute frequency and a five-minute record retention). A mainnet build also runs `mainnet_build_tests` under `cargo test --features mainnet`, and `mainnet` with `devnet` does not compile.
 
-// Token account — canonical ATA of (mint, treasury_authority)
-// Created once per mint via `init_treasury` (fee recipient signs and pays);
-// `distribute` only ever transfers into it, never creates it.
-pub treasury_token_account: InterfaceAccount<'info, TokenAccount>
-```
-
-**Fee math (in `distribute` after Pass 1):**
-
-```rust
-let protocol_fee = if compliant_count == 0 || !fee_recipient_configured() {
-    // Pro-rata refund branch has no penalty pool to skim from; a
-    // default FEE_RECIPIENT (no cluster uses one now) disables the
-    // fee entirely so nothing accumulates in an unwithdrawable treasury.
-    0
-} else {
-    total_penalties.checked_mul(PROTOCOL_FEE_BPS)?.checked_div(10_000)?
-};
-let redistributable = total_penalties.checked_sub(protocol_fee)?;
-let bonus_per_compliant = if compliant_count > 0 {
-    redistributable.checked_div(compliant_count)?
-} else {
-    0
-};
-```
-
-The fee CPI runs **before** any member-payout CPIs so the "last member gets vault remainder" dust path naturally sees the post-fee balance via `vault.reload()`.
-
-**Recipient is compile-time, per cluster.** No instruction can change `FEE_RECIPIENT` at runtime — preserves the no-admin-backdoor invariant. Cluster gating mirrors how Anchor handles per-cluster `declare_id!`:
-
-```rust
-#[cfg(feature = "mainnet")]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("3M4JicDn..."); // Squads v4 vault, 2-of-3
-
-#[cfg(all(feature = "devnet", not(feature = "mainnet")))]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("2jwEs8aP...");
-
-// Test-only fallback: matching private key is committed at
-// tests/fixtures/fee-recipient.json so CI exercises init_treasury and the
-// withdraw_fees happy path. Treat it as public.
-#[cfg(not(any(feature = "mainnet", feature = "devnet")))]
-pub const FEE_RECIPIENT: Pubkey = pubkey!("A3xewgQH...");
-```
-
-**Default recipient:** if `FEE_RECIPIENT` were `Pubkey::default()`, `fee_recipient_configured()` would be false: `distribute` would skip the protocol fee (the full penalty pool redistributed, nothing accumulating in a treasury no one could withdraw from) and `init_treasury` / `withdraw_fees` would be uncallable. Every cluster sets a real recipient now; on mainnet it is the Squads vault, so `init_treasury` and `withdraw_fees` each run as a multisig proposal.
-
-Build per cluster: `anchor build`, `anchor build -- --features devnet`, `anchor build --ignore-keys -- --features mainnet`. **Devnet deploys MUST build with `--features devnet`** — a plain build embeds the test fixture key (whose private half is public in this repo) as the fee recipient. The mainnet program ID and recipient were set in issue #20; a mainnet build also runs `mainnet_build_tests` under `cargo test --features mainnet`, and `mainnet` with `devnet` does not compile.
-
-**Mainnet deploy.** Build with `anchor build --ignore-keys -- --features mainnet`: without `--ignore-keys`, anchor compares `declare_id!` with the local `target/deploy` keypair and fails. Never run `anchor keys sync`, which rewrites `declare_id!` to that local key. Before deploying, check that `target/idl/safenudge.json` has `address` `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc`. Deploy with `solana program deploy --program-id <mainnet program keypair>` from a single-use deployer key, then move the upgrade authority to the Squad vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` in the next transaction (`--skip-new-upgrade-authority-signer-check`). Before the first mainnet group settles with a penalty, the vault runs `init_treasury` for the group mint.
+**Mainnet deploy.** Build with `anchor build --ignore-keys -- --features mainnet`: without `--ignore-keys`, anchor compares `declare_id!` with the local `target/deploy` keypair and fails. Never run `anchor keys sync`, which rewrites `declare_id!` to that local key. Before deploying, check that `target/idl/safenudge.json` has `address` `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc`. Deploy with `solana program deploy --program-id <mainnet program keypair>` from a single-use deployer key, then move the upgrade authority to the Squad vault `3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX` in the next transaction (`--skip-new-upgrade-authority-signer-check`).
 
 **Mainnet deployment record (2026-10-19).**
 
@@ -763,14 +615,13 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | `MemberLeft` | `leave_group` | `group`, `member`, `refund`, `current_members` (after the leave) |
 | `CycleStarted` | `start_cycle` | `group`, `members`, `cycle_start`, `cycle_end` (`GroupConfig::cycle_end`, the time `distribute` checks) |
 | `DepositMade` | `deposit` | `group`, `member`, `period` (zero-based), `amount`, `deposits_made` |
-| `MemberSettled` | `distribute`, once per member | `group`, `member`, `deposited`, `penalty` (charged; 0 when no member is compliant), `payout` (sent; the last member's includes the rounding remainder) |
-| `GroupSettled` | `distribute`, after every `MemberSettled` | `group`, `members`, `compliant_count`, `total_penalties`, `protocol_fee`, `total_paid`. `total_paid + protocol_fee` equals the vault balance before settlement |
+| `MemberSettled` | `distribute`, once per member | `group`, `member`, `deposited`, `payout` (sent; equals `deposited`, except that the last member's also includes any tokens sent to the vault from outside the program) |
+| `GroupSettled` | `distribute`, after every `MemberSettled` | `group`, `members`, `total_paid` (equals the vault balance before settlement) |
 | `GroupCancelled` | `emergency_cancel` | `group`, `creator`, `members`, `refunded_total`, `burned` (non-zero only for a group with no members) |
-| `FeesWithdrawn` | `withdraw_fees` | `recipient`, `mint`, `amount` |
 | `JoinAuthoritySet` | `set_join_authority` | `group`, `creator`, `authority` |
 | `GroupClosed` | `close_group` | `group`, `rent_payer`, `lamports` (`GroupConfig` balance, the vault rent included when `refund_vault_rent` never ran), `join_gate_lamports` (0 without a gate) |
 
-`init_treasury`, `refund_vault_rent`, `close_member_record` and `close_join_tally` emit nothing. `close_group` emits before Anchor closes `GroupConfig` at the end of the instruction, so `lamports` is the amount that close pays.
+`refund_vault_rent`, `close_member_record` and `close_join_tally` emit nothing. `close_group` emits before Anchor closes `GroupConfig` at the end of the instruction, so `lamports` is the amount that close pays.
 
 ### PDA Derivation Summary
 
@@ -781,8 +632,6 @@ Handlers write events with `emit!` (`programs/safenudge/src/events.rs`) as their
 | JoinGate | `["join", group_config_key]` | Join authority of a gated group. Created by `set_join_authority`, closed by `close_group` |
 | JoinTally | `["tally", group_config_key, member_key]` | Joins of one member at one group address. Created by the first `join_group`, closed by `close_join_tally` after `close_group` |
 | Vault | `["vault", group_config_key]` | SPL Token account; address and authority both derived at these seeds (self-as-authority). Its bump is stored in `group_config.vault_bump` |
-| TreasuryAuthority | `["treasury"]` | Authority over the protocol-fee ATA; holds no data |
-| TreasuryATA | canonical ATA of `(mint, TreasuryAuthority)` | Accumulates 5% of every penalty pool until `withdraw_fees` is called; created once per mint via `init_treasury` (fee recipient signs and pays) |
 
 ### Error Codes
 
@@ -805,8 +654,6 @@ pub enum SafeNudgeError {
     CycleEnded,
     #[msg("Invalid group code format")]
     InvalidGroupCode,
-    #[msg("Invalid penalty configuration")]
-    InvalidPenaltyConfig,
     #[msg("Invalid frequency value")]
     InvalidFrequency,
     #[msg("Invalid group size")]
@@ -829,12 +676,6 @@ pub enum SafeNudgeError {
     InvalidTokenAccountOwner,
     #[msg("The same member record was passed more than once")]
     DuplicateMemberRecord,
-    #[msg("Recipient is not the configured FEE_RECIPIENT")]
-    UnauthorizedRecipient,
-    #[msg("Treasury has no fees to withdraw")]
-    NoFeesToWithdraw,
-    #[msg("Protocol treasury token account for this mint has not been initialized")]
-    TreasuryNotInitialized,
     #[msg("Rent refund destination does not match the recorded rent payer")]
     InvalidRentPayer,
     #[msg("Member records stay open for the retention period after settlement")]
@@ -859,6 +700,10 @@ pub enum SafeNudgeError {
     JoinCountMismatch,
     #[msg("A gated join must name the member's expected join count")]
     ExpectedJoinsRequired,
+    #[msg("The group's terms changed since the join was signed")]
+    TermsMismatch,
+    #[msg("The vault holds less than the members deposited")]
+    VaultShortfall,
 }
 ```
 
@@ -884,7 +729,7 @@ A yield group's own instruction `deploy_to_yield` would:
 At distribution time (the yield group's own distribute):
 1. Withdraw kUSDC back to USDC via Kamino CPI
 2. Calculate yield earned (total withdrawn - total originally deposited)
-3. Distribute yield proportionally to compliant members as a bonus
+3. Return every deposit and split the yield by the yield group's own rule. SafePool's ADR-0005 proposes that each missed deposit forfeits 10% of that member's yield, up to 40%, with the forfeited yield split in proportion to deposits. No principal is ever taken
 
 ### Why Kamino K-Lend
 
@@ -895,7 +740,7 @@ At distribution time (the yield group's own distribute):
 
 ### MVP Constraint
 
-The PDA authority can sign CPIs to any program, so a yield vault can move funds into a yield protocol. That transfer is an exception to the rule that vault funds go only to members, and it lives only in the yield group's instructions, which pay one fixed, validated destination. Penalty math and member checks are shared as plain functions. Simple groups keep their instructions and their audit surface unchanged.
+The PDA authority can sign CPIs to any program, so a yield vault can move funds into a yield protocol. That transfer is an exception to the rule that vault funds go only to members, and it lives only in the yield group's instructions, which pay one fixed, validated destination. Member checks are shared as plain functions, as `validate_member_pair` is today. Simple groups keep their instructions and their audit surface unchanged.
 
 ---
 
@@ -936,7 +781,16 @@ The join tally changes no layout of an existing account. `JoinTally` is a new ac
 
 The stored vault bump (issue #92) is a layout change of `GroupConfig`: a new field at offset 143, `group_code` moved to offset 144, size 180 bytes, discriminator `snGroup3`. Every live group must be settled or cancelled with the previous binary before the upgrade, as above. No instruction's accounts or arguments change, so a client changes only its IDL and any hard-coded offset at or after 143 (the group code's length prefix and bytes).
 
-The reserved padding and the join terms are a layout change of both accounts and an interface change, and land together so clients change once. `GroupConfig` gains 64 zero bytes at offset 144, `group_code` moves to offset 208, size 244 bytes, discriminator `snGroup4`. `MemberRecord` gains 32 zero bytes at offset 166, size 198 bytes, discriminator `snMembr3`. Every live group must be settled or cancelled with the previous binary before the upgrade, as above. For a client: `join_group` takes `expected_terms: GroupTerms` as its first argument, before `expected_joins`, and a client on the previous IDL fails with `InstructionDidNotDeserialize`; any hard-coded offset at or after 144 in `GroupConfig` changes, and the account sizes change, so a sponsor's rent budget rises by 487,680 lamports for a gated create (Kora's `max_allowed_lamports`); and `TermsMismatch` (6035), `SettlementImbalance` (6036) and `VaultShortfall` (6037) are new error codes. The watchdog in `ops/watchdog/core.ts` reads the code at 208.
+The refund-only upgrade (ADR-0005) removes penalties and the protocol fee, and adds the reserved padding and the join terms. It is a layout change of both accounts and an interface change, landed together so clients change once:
+
+- `GroupConfig` loses `penalty_value` and `penalty_type`. Every field from `cycle_start` on moves: `cycle_start` 112, `settled_at` 120, `frequency` 128, `total_periods` 129, `max_members` 130, `current_members` 131, `status` 132, `bump` 133, `vault_bump` 134. It gains 73 zero bytes at offset 135, `group_code` moves to offset 208, size 244 bytes, discriminator `snGroup4`.
+- `MemberRecord` gains 32 zero bytes at offset 166, size 198 bytes, discriminator `snMembr3`.
+- Every live group must be settled or cancelled with the previous binary before the upgrade, as above.
+- `create_group` loses its `penalty_type` and `penalty_value` arguments. `join_group` takes `expected_terms: GroupTerms` (`creator`, `deposit_amount`, `frequency`, `total_periods`) as its first argument, before `expected_joins`. A client on the previous IDL fails with `InstructionDidNotDeserialize`.
+- `distribute` loses `treasury_authority` and `treasury_token_account`, so its account list is `payer`, `group_config`, `vault`, `mint`, `token_program`. `init_treasury` and `withdraw_fees` are gone.
+- `MemberSettled` loses `penalty`, `GroupSettled` loses `compliant_count`, `total_penalties` and `protocol_fee`, and `FeesWithdrawn` is gone.
+- Error codes are renumbered: `InvalidPenaltyConfig`, `UnauthorizedRecipient`, `NoFeesToWithdraw` and `TreasuryNotInitialized` are gone, and `TermsMismatch` and `VaultShortfall` are new. A client that maps codes to names from the IDL needs no other change; one that hard-codes numbers must repin them.
+- The account sizes rise, so a sponsor's rent budget rises by 487,680 lamports for a gated create (Kora's `max_allowed_lamports`). The watchdog in `ops/watchdog/core.ts` reads the new offsets.
 
 Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
 
@@ -952,7 +806,7 @@ Every upgrade that changes the IDL, with or without a layout change, also needs 
 - `join_group`: join with deposit, join when full, join when cycle already started
 - `start_cycle`: creator-only, minimum 2 members, status validation
 - `deposit`: on-time deposit, duplicate deposit (same period), deposit after cycle ends
-- `distribute`: correct penalty calculation (fixed + percentage), redistribution to compliant members, edge cases (all miss, none miss, partial)
+- `distribute`: every member gets back exactly what they deposited, whether or not they missed a period; conservation of funds; a donated balance goes to the last member and the vault still closes
 - `emergency_cancel`: creator-only, full refund verification, status transitions
 - `leave_group`: deposit and rent returned to the right wallets, the join-leave loop with a sponsor, every status, every wrong account, the freed seat, and the vault balance after each leave
 - `emergency_cancel` of a group with no members: a balance in the vault is burned under SPL Token and Token-2022, and nothing is burned when the group has members
@@ -979,8 +833,6 @@ safenudge/
 │           │   ├── deposit.rs
 │           │   ├── distribute.rs
 │           │   ├── emergency_cancel.rs
-│           │   ├── withdraw_fees.rs
-│           │   ├── init_treasury.rs
 │           │   ├── refund_vault_rent.rs
 │           │   └── close_member_record.rs
 │           ├── state/
@@ -990,7 +842,6 @@ safenudge/
 │           │   └── member_validation.rs   # shared remaining-accounts check
 │           └── errors.rs
 ├── tests/
-│   ├── fixtures/                   # test-only FEE_RECIPIENT keypair (public)
 │   └── safenudge.ts                # Anchor integration tests
 ├── idl/                            # Committed IDL, checked against the build in CI
 ├── Anchor.toml
@@ -1012,12 +863,12 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Threat | Mitigation |
 |--------|------------|
 | Admin key compromise (Drift-style) | No admin keys. No upgrade authority. Creator can only emergency_cancel (returns funds to members, never to an arbitrary address). |
-| Vault drain via unauthorized transfer | Vault authority is a PDA. Only the program can sign transfers. Every vault transfer goes to a token account owned by the wallet in a validated MemberRecord PDA, or to the canonical treasury ATA. |
+| Vault drain via unauthorized transfer | Vault authority is a PDA. Only the program can sign transfers. Every vault transfer goes to a token account owned by the wallet in a validated MemberRecord PDA |
 | Token confusion (deposit wrong token) | `transfer_checked` validates mint and decimals at CPI level. GroupConfig stores expected mint; all instructions verify against it. |
-| Penalty manipulation (overpay/underpay) | Penalty math uses checked arithmetic. Penalty capped at `total_deposited`. Distribution verified: sum of payouts equals vault balance. |
+| Payout manipulation (overpay/underpay) | Simple groups charge no penalty: `distribute` pays each member their recorded `total_deposited`, and fails with `VaultShortfall` unless the vault holds the sum. The amounts come only from member records the program wrote. |
 | State machine bypass | Status enum enforces one-directional transitions. Every instruction validates current status as first check. |
 | Fake member injection | MemberRecord PDA derived from `["member", group_config_key, member_key]`. Anchor's `init` constraint prevents duplicates. `deposit` checks `member_record.group` and the seeds; `distribute` and `emergency_cancel` run `validate_member_pair` (program owner, group, canonical PDA, no duplicates). |
-| Frontrunning distribution | Distribution is permissionless, and every computed payout depends only on on-chain state. The caller does choose the order of the remaining-account pairs, and the last-listed member gets the vault balance in place of a computed payout. In `distribute` that balance exceeds the computed payout by `redistributable % compliant_count`, at most `compliant_count - 1` base units: 9 in a 10-member group (0.000009 USDC at 6 decimals). In `emergency_cancel` the computed refunds sum to the vault balance, so the excess is 0. In both, tokens that someone transfers into the vault outside the program also go to the last-listed member. |
+| Frontrunning distribution | Distribution is permissionless, and every computed payout depends only on on-chain state. The caller does choose the order of the remaining-account pairs, and the last-listed member gets the vault balance in place of a computed payout. In `distribute` and `emergency_cancel` the computed payouts sum to the vault balance, so the excess is 0. Tokens that someone transfers into the vault outside the program also go to the last-listed member. |
 | Durable nonce pre-signing | No time-sensitive admin actions. `start_cycle` captures `Clock::get()` at execution time, not from arguments. Period calculation uses on-chain clock. |
 | Rent refund redirected | Every rent refund goes to the `rent_payer` key stored in the account at `create_group` or `join_group`, where that wallet signed. `refund_vault_rent`, `close_member_record` and `close_join_tally` take no destination argument and reject any other account with `InvalidRentPayer`. |
 | Rent payer drained by the creator | `emergency_cancel` and `distribute` pay no lamports to the creator or the caller. The vault rent goes to `GroupConfig` and from there only to `group_config.rent_payer`. `close_group` returns the `GroupConfig` rent to the same wallet once every record is closed. |
@@ -1043,7 +894,7 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | Co-signed join widened by the client | The authority signs the whole message, so a client could add joins for other wallets. The backend that holds the authority checks that a message holds exactly one join for the approved member, that its `expected_joins` argument is `Some` of the count stored at approval, and that the instruction has exactly the accounts of the current IDL. It signs over a recent blockhash only. Without the argument check, a client picks the count that the program compares. |
 | One approval co-signed twice | Two co-signed messages for one approval could both land, with a leave between them. A gated join must name `expected_joins`, and the program refuses it unless the tally holds that count (`ExpectedJoinsRequired`, `JoinCountMismatch`). The first join raises the count, so a second message signed for the same count fails. |
 | Approval replayed in a later group at the same code | Nothing in a join names the group instance, so a held approval could join a later group at the same code that uses the same authority. `join_group` rejects a gated join whose transaction starts with `AdvanceNonceAccount` (`DurableNonceNotAllowed`), so an approval lives at most about 150 slots. Within that time a replay needs the creator to cancel an empty group, close it and create the same code again: the creator's own group. `expected_terms` (below) also makes the replay fail unless the new group has the same terms. |
-| Join signed for one group lands in another | A creator shows an Open, empty group, then cancels it, closes it and creates the same code on other terms, such as a larger deposit or a harsher penalty, before a member's signed join lands. Since anyone can create a freed code, another wallet can also recreate it on the same money terms, so the terms name the creator too. An ungated join may also be held over a durable nonce. `join_group` takes the terms the member was shown as `expected_terms` and fails with `TermsMismatch` unless the group has them, so the member never joins on terms they did not see. |
+| Join signed for one group lands in another | A creator shows an Open, empty group, then cancels it, closes it and creates the same code on other terms, such as a larger deposit or a longer cycle, before a member's signed join lands. Since anyone can create a freed code, another wallet can also recreate it on the same money terms, so the terms name the creator too. An ungated join may also be held over a durable nonce. `join_group` takes the terms the member was shown as `expected_terms` and fails with `TermsMismatch` unless the group has them, so the member never joins on terms they did not see. |
 | Rent rate increase blocks settlement | The runtime rejects a transaction that adds lamports to an account and leaves it below the rent-exempt minimum. Settlement adds the vault rent to `GroupConfig`. If the rent rate rose so far after `create_group` that `GroupConfig` rent plus vault rent is below the new minimum for 180 bytes (about 1.95 times the old rate), `distribute` and `emergency_cancel` fail with `InsufficientFundsForRent`. Any wallet can fix it: transfer the missing lamports to the `GroupConfig` address, then settle. `refund_vault_rent` later pays the surplus to the rent payer. |
 | Rounding dust in distribution | Final member receives vault remainder (`vault_balance - sum_of_previous_payouts`) instead of calculated amount, ensuring zero residual. |
 
@@ -1055,10 +906,8 @@ SafeNudge holds user funds in a PDA-controlled vault. The primary threats are:
 | `join_group` | Anyone (becomes member; `rent_payer` signs and pays the record rent, and the tally rent at the first join) | Member -> Vault | Open | Group not full, valid mint, member's canonical ATA, tally seeds |
 | `start_cycle` | Creator only | None | Open | `creator == signer`, members >= 2 |
 | `deposit` | Members only | Member -> Vault | Active | Valid MemberRecord, correct period, not already deposited |
-| `distribute` | Anyone | Vault -> All Members + Treasury. Vault rent -> GroupConfig | Active (cycle ended) | All member records present, cycle time elapsed |
+| `distribute` | Anyone | Vault -> All Members. Vault rent -> GroupConfig | Active (cycle ended) | All member records present, cycle time elapsed |
 | `emergency_cancel` | Creator only | Vault -> All Members (each gets `total_deposited` back). Vault rent -> GroupConfig. With no members: vault balance burned | Open or Active | `creator == signer` |
-| `withdraw_fees` | `FEE_RECIPIENT` only | Treasury -> Recipient | N/A (no group) | `recipient == FEE_RECIPIENT`, treasury balance > 0 |
-| `init_treasury` | `FEE_RECIPIENT` only | None (signer pays ATA rent) | N/A (no group) | `fee_recipient == FEE_RECIPIENT` |
 | `refund_vault_rent` | Anyone | Lamports only: GroupConfig surplus -> `group_config.rent_payer` | Completed or Cancelled | `rent_payer == group_config.rent_payer` |
 | `close_member_record` | Anyone | Lamports only: MemberRecord rent -> `member_record.rent_payer` | Completed or Cancelled, and 30 days since `settled_at` | Canonical record PDA for the group, `rent_payer == member_record.rent_payer` |
 | `leave_group` | The member only | Vault -> a token account the member owns (`total_deposited`). MemberRecord rent -> `member_record.rent_payer` | Open | Member signs, canonical record PDA for the group and the signer, destination owned by the signer, `rent_payer == member_record.rent_payer` |
@@ -1120,17 +969,12 @@ pub struct ExampleInstruction<'info> {
 
 ```rust
 // REQUIRED: all numeric operations
-let penalty = missed_periods
-    .checked_mul(penalty_per_period)
-    .ok_or(SafeNudgeError::ArithmeticOverflow)?;
-
-let payout = total_deposited
-    .checked_sub(penalty)
+let total_deposited = total_deposited
+    .checked_add(record.total_deposited)
     .ok_or(SafeNudgeError::ArithmeticOverflow)?;
 
 // FORBIDDEN: raw operators
-let penalty = missed_periods * penalty_per_period;  // NEVER
-let payout = total_deposited - penalty;              // NEVER
+let total_deposited = total_deposited + record.total_deposited;  // NEVER
 ```
 
 ### No Upgrade Authority

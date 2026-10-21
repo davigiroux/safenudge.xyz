@@ -104,14 +104,14 @@ function fundedMember(env: Env, keypair: Keypair, lamports: number): Member {
   return { keypair, tokenAccount };
 }
 
-const GROUP_TERMS = { depositAmount: new BN(DEPOSIT), frequency: 0, totalPeriods: 4, penaltyType: 0, penaltyValue: new BN(0) };
+const GROUP_TERMS = { depositAmount: new BN(DEPOSIT), frequency: 0, totalPeriods: 4 };
 const termsFor = (creator: PublicKey) => ({ creator, ...GROUP_TERMS });
 
 async function createGroupIx(env: Env, code: string, creator: PublicKey, rentPayer: PublicKey) {
   const groupConfig = pda(env.program, [Buffer.from("group"), Buffer.from(code)]);
   const t = GROUP_TERMS;
   return env.program.methods
-    .createGroup(code, t.depositAmount, t.frequency, t.totalPeriods, 5, t.penaltyType, t.penaltyValue)
+    .createGroup(code, t.depositAmount, t.frequency, t.totalPeriods, 5)
     .accounts({
       creator, rentPayer, groupConfig, vault: pda(env.program, [Buffer.from("vault"), groupConfig.toBuffer()]),
       mint: env.mint, tokenProgram: TOKEN_PROGRAM_ID, systemProgram: SystemProgram.programId,

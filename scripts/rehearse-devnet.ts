@@ -3,14 +3,13 @@
 //   1. a join signed for an empty group fails with TermsMismatch after the creator cancels,
 //      closes and recreates the code on other terms;
 //   2. three members join, two deposit every 5-minute period, one misses, and distribute pays
-//      out exactly what went in, protocol fee included.
+//      each member back exactly what they deposited and closes the vault.
 // It takes about 11 minutes, most of it waiting for the two periods to pass.
 //
 // Usage:
 //   npx ts-node -P tsconfig.json scripts/rehearse-devnet.ts \
 //     --url <rpc> --payer <keypair.json> [--idl target/idl/safenudge.json]
-// The payer needs about 0.2 SOL. FEE_RECIPIENT's key is not needed: the treasury token account
-// is an ATA, so the payer creates it.
+// The payer needs about 0.2 SOL.
 
 import fs from "node:fs";
 import { AnchorProvider, Program, Wallet } from "@coral-xyz/anchor";
@@ -19,8 +18,7 @@ import {
   Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, sendAndConfirmTransaction,
 } from "@solana/web3.js";
 import {
-  TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotent, createMint, getAccount, getAssociatedTokenAddressSync,
-  getOrCreateAssociatedTokenAccount, mintTo,
+  TOKEN_PROGRAM_ID, createMint, getAccount, getOrCreateAssociatedTokenAccount, mintTo,
 } from "@solana/spl-token";
 
 const USDC = 1_000_000;
@@ -83,19 +81,16 @@ async function newMember(mint: PublicKey, tokens: number): Promise<Member> {
   return { keypair, ata };
 }
 
-function createGroup(code: string, mint: PublicKey, deposit: number, penalty: number) {
+function createGroup(code: string, mint: PublicKey, deposit: number) {
   return program.methods
-    .createGroup(code, new BN(deposit), 3, 2, 5, 0, new BN(penalty))
+    .createGroup(code, new BN(deposit), 3, 2, 5)
     .accountsPartial({ creator: payer.publicKey, rentPayer: payer.publicKey, mint, tokenProgram: TOKEN_PROGRAM_ID })
     .rpc();
 }
 
 async function termsOf(group: PublicKey) {
   const g = await accounts.groupConfig.fetch(group);
-  return {
-    creator: g.creator, depositAmount: g.depositAmount, frequency: g.frequency, totalPeriods: g.totalPeriods,
-    penaltyType: g.penaltyType, penaltyValue: g.penaltyValue,
-  };
+  return { creator: g.creator, depositAmount: g.depositAmount, frequency: g.frequency, totalPeriods: g.totalPeriods };
 }
 
 function join(member: Member, group: PublicKey, mint: PublicKey, terms: unknown) {
@@ -111,7 +106,7 @@ function join(member: Member, group: PublicKey, mint: PublicKey, terms: unknown)
 async function baitAndSwitch(mint: PublicKey, suffix: string) {
   const code = `bait-${suffix}`;
   const group = groupPda(code);
-  await createGroup(code, mint, 10 * USDC, USDC);
+  await createGroup(code, mint, 10 * USDC);
   const victim = await newMember(mint, 100 * USDC);
   const signedTerms = await termsOf(group);
 
@@ -119,7 +114,7 @@ async function baitAndSwitch(mint: PublicKey, suffix: string) {
     .accountsPartial({ creator: payer.publicKey, groupConfig: group, mint, tokenProgram: TOKEN_PROGRAM_ID })
     .rpc();
   await program.methods.closeGroup().accountsPartial({ groupConfig: group, rentPayer: payer.publicKey }).rpc();
-  await createGroup(code, mint, 90 * USDC, 90 * USDC);
+  await createGroup(code, mint, 90 * USDC);
 
   const error = await errorOf(join(victim, group, mint, signedTerms));
   check(error.includes("TermsMismatch"), "a join signed before the switch fails with TermsMismatch");
@@ -130,7 +125,7 @@ async function lifecycle(mint: PublicKey, suffix: string) {
   const code = `life-${suffix}`;
   const group = groupPda(code);
   const vault = vaultPda(group);
-  await createGroup(code, mint, 10 * USDC, 5 * USDC);
+  await createGroup(code, mint, 10 * USDC);
 
   const groupInfo = await connection.getAccountInfo(group);
   check(groupInfo?.data.length === 244 && groupInfo.data.subarray(0, 8).toString() === "snGroup4", "GroupConfig is 244 bytes, snGroup4");
@@ -154,17 +149,10 @@ async function lifecycle(mint: PublicKey, suffix: string) {
       .rpc();
   }
 
-  const treasuryAuthority = pda(Buffer.from("treasury"));
-  const treasury = await createAssociatedTokenAccountIdempotent(connection, payer, mint, treasuryAuthority, {}, TOKEN_PROGRAM_ID, undefined, true);
-  check(treasury.equals(getAssociatedTokenAddressSync(mint, treasuryAuthority, true)), "anyone can create the treasury ATA");
-
   await waitUntil(cycleStart + 2 * PERIOD_SECS);
   const before = await Promise.all(members.map(async (m) => (await getAccount(connection, m.ata)).amount));
   const signature = await program.methods.distribute()
-    .accountsPartial({
-      payer: payer.publicKey, groupConfig: group, mint, treasuryAuthority, treasuryTokenAccount: treasury,
-      tokenProgram: TOKEN_PROGRAM_ID,
-    })
+    .accountsPartial({ payer: payer.publicKey, groupConfig: group, mint, tokenProgram: TOKEN_PROGRAM_ID })
     .remainingAccounts(members.flatMap((m) => [
       { pubkey: memberPda(group, m.keypair.publicKey), isWritable: false, isSigner: false },
       { pubkey: m.ata, isWritable: true, isSigner: false },
@@ -172,11 +160,9 @@ async function lifecycle(mint: PublicKey, suffix: string) {
     .rpc();
 
   const paid = await Promise.all(members.map(async (m, i) => (await getAccount(connection, m.ata)).amount - before[i]));
-  const fee = (await getAccount(connection, treasury)).amount;
-  // Member 3 missed one period: 5 USDC penalty, 0.25 USDC of it to the fee, 2.375 USDC to each other member.
-  check(paid[0] === 22_375_000n && paid[1] === 22_375_000n && paid[2] === 5_000_000n, `payouts ${paid.join(", ")}`);
-  check(fee === 250_000n, `protocol fee ${fee}`);
-  check(paid.reduce((a, b) => a + b, 0n) + fee === BigInt(50 * USDC), "payouts plus fee equal the 50 USDC deposited");
+  // Member 3 missed one period and gets back the 10 USDC they deposited; a miss costs no principal.
+  check(paid[0] === 20_000_000n && paid[1] === 20_000_000n && paid[2] === 10_000_000n, `payouts ${paid.join(", ")}`);
+  check(paid.reduce((a, b) => a + b, 0n) === BigInt(50 * USDC), "payouts equal the 50 USDC deposited");
   check((await connection.getAccountInfo(vault)) === null, "the vault is closed");
   const tx = await connection.getTransaction(signature, { commitment: "confirmed", maxSupportedTransactionVersion: 0 });
   console.log(`     distribute used ${tx?.meta?.computeUnitsConsumed} compute units`);

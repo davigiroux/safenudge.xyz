@@ -329,14 +329,6 @@ export type Safenudge = {
         {
           "name": "maxMembers",
           "type": "u8"
-        },
-        {
-          "name": "penaltyType",
-          "type": "u8"
-        },
-        {
-          "name": "penaltyValue",
-          "type": "u64"
         }
       ]
     },
@@ -444,6 +436,9 @@ export type Safenudge = {
     },
     {
       "name": "distribute",
+      "docs": [
+        "Returns every member's deposits once the cycle has ended and closes the vault."
+      ],
       "discriminator": [
         191,
         44,
@@ -458,8 +453,7 @@ export type Safenudge = {
         {
           "name": "payer",
           "docs": [
-            "Permissionless caller triggering settlement. Pays only the transaction",
-            "fee — never rent (the treasury ATA is pre-created via `init_treasury`)."
+            "Permissionless caller triggering settlement. Pays only the transaction fee, never rent."
           ],
           "writable": true,
           "signer": true
@@ -511,97 +505,6 @@ export type Safenudge = {
         },
         {
           "name": "mint"
-        },
-        {
-          "name": "treasuryAuthority",
-          "docs": [
-            "PDA that owns the protocol treasury ATA. Holds no data; SystemAccount",
-            "validates ownership and gives Anchor the seed/bump derivation it needs",
-            "to sign the withdraw_fees CPI later."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasuryTokenAccount",
-          "docs": [
-            "Treasury ATA for this mint, created ahead of time by FEE_RECIPIENT via",
-            "`init_treasury` — never initialized here, so a permissionless caller",
-            "can't be griefed into paying its rent. Optional: required only when a",
-            "protocol fee is due this settlement (enforced in the handler); when",
-            "passed, the associated_token constraints pin it to the canonical ATA of",
-            "(mint, treasury_authority), so no other destination can receive the fee."
-          ],
-          "writable": true,
-          "optional": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "treasuryAuthority"
-              },
-              {
-                "kind": "account",
-                "path": "tokenProgram"
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
         },
         {
           "name": "tokenProgram"
@@ -684,129 +587,6 @@ export type Safenudge = {
         },
         {
           "name": "tokenProgram"
-        }
-      ],
-      "args": []
-    },
-    {
-      "name": "initTreasury",
-      "discriminator": [
-        105,
-        152,
-        173,
-        51,
-        158,
-        151,
-        49,
-        14
-      ],
-      "accounts": [
-        {
-          "name": "feeRecipient",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "treasuryAuthority",
-          "docs": [
-            "PDA with authority over all treasury token accounts. Holds no data."
-          ],
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasuryTokenAccount",
-          "docs": [
-            "Canonical ATA of (mint, treasury_authority). `init` (not",
-            "`init_if_needed`): calling twice fails, which is fine for a one-shot."
-          ],
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "account",
-                "path": "treasuryAuthority"
-              },
-              {
-                "kind": "account",
-                "path": "tokenProgram"
-              },
-              {
-                "kind": "account",
-                "path": "mint"
-              }
-            ],
-            "program": {
-              "kind": "const",
-              "value": [
-                140,
-                151,
-                37,
-                143,
-                78,
-                36,
-                137,
-                241,
-                187,
-                61,
-                16,
-                41,
-                20,
-                142,
-                13,
-                131,
-                11,
-                90,
-                19,
-                153,
-                218,
-                255,
-                16,
-                132,
-                4,
-                142,
-                123,
-                216,
-                219,
-                233,
-                248,
-                89
-              ]
-            }
-          }
-        },
-        {
-          "name": "mint",
-          "docs": [
-            "Any mint — groups are per-mint (`group_config.mint`) while the treasury",
-            "authority PDA is global, so the protocol holds one ATA per supported mint."
-          ]
-        },
-        {
-          "name": "tokenProgram"
-        },
-        {
-          "name": "associatedTokenProgram",
-          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
-        },
-        {
-          "name": "systemProgram",
-          "address": "11111111111111111111111111111111"
         }
       ],
       "args": []
@@ -1362,61 +1142,6 @@ export type Safenudge = {
         }
       ],
       "args": []
-    },
-    {
-      "name": "withdrawFees",
-      "discriminator": [
-        198,
-        212,
-        171,
-        109,
-        144,
-        215,
-        174,
-        89
-      ],
-      "accounts": [
-        {
-          "name": "recipient",
-          "writable": true,
-          "signer": true
-        },
-        {
-          "name": "treasuryAuthority",
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  116,
-                  114,
-                  101,
-                  97,
-                  115,
-                  117,
-                  114,
-                  121
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "name": "treasuryTokenAccount",
-          "writable": true
-        },
-        {
-          "name": "recipientTokenAccount",
-          "writable": true
-        },
-        {
-          "name": "mint"
-        },
-        {
-          "name": "tokenProgram"
-        }
-      ],
-      "args": []
     }
   ],
   "accounts": [
@@ -1498,19 +1223,6 @@ export type Safenudge = {
         203,
         155,
         199
-      ]
-    },
-    {
-      "name": "feesWithdrawn",
-      "discriminator": [
-        234,
-        15,
-        0,
-        119,
-        148,
-        241,
-        40,
-        21
       ]
     },
     {
@@ -1661,151 +1373,126 @@ export type Safenudge = {
     },
     {
       "code": 6008,
-      "name": "invalidPenaltyConfig",
-      "msg": "Invalid penalty configuration"
-    },
-    {
-      "code": 6009,
       "name": "invalidFrequency",
       "msg": "Invalid frequency value"
     },
     {
-      "code": 6010,
+      "code": 6009,
       "name": "invalidGroupSize",
       "msg": "Invalid group size"
     },
     {
-      "code": 6011,
+      "code": 6010,
       "name": "invalidPeriodCount",
       "msg": "Invalid period count"
     },
     {
-      "code": 6012,
+      "code": 6011,
       "name": "invalidDepositAmount",
       "msg": "Deposit amount must be greater than zero"
     },
     {
-      "code": 6013,
+      "code": 6012,
       "name": "arithmeticOverflow",
       "msg": "Arithmetic overflow"
     },
     {
-      "code": 6014,
+      "code": 6013,
       "name": "invalidMint",
       "msg": "Token mint does not match group configuration"
     },
     {
-      "code": 6015,
+      "code": 6014,
       "name": "memberCountMismatch",
       "msg": "Member count mismatch in distribution"
     },
     {
-      "code": 6016,
+      "code": 6015,
       "name": "invalidAccountOwner",
       "msg": "Account is not owned by this program"
     },
     {
-      "code": 6017,
+      "code": 6016,
       "name": "invalidMemberRecord",
       "msg": "Member record does not match the canonical PDA for its member"
     },
     {
-      "code": 6018,
+      "code": 6017,
       "name": "invalidTokenAccountOwner",
       "msg": "Destination token account does not belong to the expected member"
     },
     {
-      "code": 6019,
+      "code": 6018,
       "name": "duplicateMemberRecord",
       "msg": "The same member record was passed more than once"
     },
     {
-      "code": 6020,
-      "name": "unauthorizedRecipient",
-      "msg": "Recipient is not the configured FEE_RECIPIENT"
-    },
-    {
-      "code": 6021,
-      "name": "noFeesToWithdraw",
-      "msg": "Treasury has no fees to withdraw"
-    },
-    {
-      "code": 6022,
-      "name": "treasuryNotInitialized",
-      "msg": "Protocol treasury token account for this mint has not been initialized"
-    },
-    {
-      "code": 6023,
+      "code": 6019,
       "name": "invalidRentPayer",
       "msg": "Rent refund destination does not match the recorded rent payer"
     },
     {
-      "code": 6024,
+      "code": 6020,
       "name": "recordRetentionNotElapsed",
       "msg": "Member records stay open for the retention period after settlement"
     },
     {
-      "code": 6025,
+      "code": 6021,
       "name": "unsupportedMint",
       "msg": "This mint cannot be used for a group"
     },
     {
-      "code": 6026,
+      "code": 6022,
       "name": "mintNotWritable",
       "msg": "Mint must be writable to cancel a group with no members whose vault holds tokens"
     },
     {
-      "code": 6027,
+      "code": 6023,
       "name": "groupHasOpenRecords",
       "msg": "Close every member record before closing the group"
     },
     {
-      "code": 6028,
+      "code": 6024,
       "name": "groupHasMembers",
       "msg": "The join authority can only be set before anyone joins"
     },
     {
-      "code": 6029,
+      "code": 6025,
       "name": "invalidJoinAuthority",
       "msg": "The join authority cannot be the default public key or the program ID"
     },
     {
-      "code": 6030,
+      "code": 6026,
       "name": "joinNotApproved",
       "msg": "This group needs its join authority to approve the join"
     },
     {
-      "code": 6031,
+      "code": 6027,
       "name": "durableNonceNotAllowed",
       "msg": "A gated join cannot use a durable nonce"
     },
     {
-      "code": 6032,
+      "code": 6028,
       "name": "groupNotClosed",
       "msg": "Close the group before closing a join tally"
     },
     {
-      "code": 6033,
+      "code": 6029,
       "name": "joinCountMismatch",
       "msg": "The member's join count no longer matches the approved join"
     },
     {
-      "code": 6034,
+      "code": 6030,
       "name": "expectedJoinsRequired",
       "msg": "A gated join must name the member's expected join count"
     },
     {
-      "code": 6035,
+      "code": 6031,
       "name": "termsMismatch",
       "msg": "The group's terms changed since the join was signed"
     },
     {
-      "code": 6036,
-      "name": "settlementImbalance",
-      "msg": "Settlement payouts do not add up to the deposits"
-    },
-    {
-      "code": 6037,
+      "code": 6032,
       "name": "vaultShortfall",
       "msg": "The vault holds less than the members deposited"
     }
@@ -1874,29 +1561,6 @@ export type Safenudge = {
               "Deposits after this one, the join deposit included."
             ],
             "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "feesWithdrawn",
-      "docs": [
-        "The fee recipient withdrew the treasury balance of one mint."
-      ],
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "recipient",
-            "type": "pubkey"
-          },
-          {
-            "name": "mint",
-            "type": "pubkey"
-          },
-          {
-            "name": "amount",
-            "type": "u64"
           }
         ]
       }
@@ -2012,81 +1676,67 @@ export type Safenudge = {
             "type": "u64"
           },
           {
-            "name": "penaltyValue",
-            "docs": [
-              "Offset 112. Penalty value: fixed amount in token units, or basis points (500 = 5%)."
-            ],
-            "type": "u64"
-          },
-          {
             "name": "cycleStart",
             "docs": [
-              "Offset 120. Unix timestamp when the cycle started; 0 while Open."
+              "Offset 112. Unix timestamp when the cycle started; 0 while Open."
             ],
             "type": "i64"
           },
           {
             "name": "settledAt",
             "docs": [
-              "Offset 128. Unix timestamp of distribute or emergency_cancel; 0 until then."
+              "Offset 120. Unix timestamp of distribute or emergency_cancel; 0 until then."
             ],
             "type": "i64"
           },
           {
             "name": "frequency",
             "docs": [
-              "Offset 136. 0 = weekly, 1 = biweekly, 2 = monthly."
+              "Offset 128. 0 = weekly, 1 = biweekly, 2 = monthly."
             ],
             "type": "u8"
           },
           {
             "name": "totalPeriods",
             "docs": [
-              "Offset 137. Number of deposit periods in the cycle (1-52)."
+              "Offset 129. Number of deposit periods in the cycle (1-52)."
             ],
             "type": "u8"
           },
           {
             "name": "maxMembers",
             "docs": [
-              "Offset 138. Max group size (2-10)."
+              "Offset 130. Max group size (2-10)."
             ],
             "type": "u8"
           },
           {
             "name": "currentMembers",
             "docs": [
-              "Offset 139. Open MemberRecords of this group: join_group adds one, leave_group and",
+              "Offset 131. Open MemberRecords of this group: join_group adds one, leave_group and",
               "close_member_record subtract one. Zero proves no record exists, so `close_group` can",
               "free the group code without a later group inheriting a record."
             ],
             "type": "u8"
           },
           {
-            "name": "penaltyType",
-            "docs": [
-              "Offset 140. 0 = fixed amount, 1 = percentage (basis points)."
-            ],
-            "type": "u8"
-          },
-          {
             "name": "status",
             "docs": [
-              "Offset 141. 0 = Open, 1 = Active, 2 = Completed, 3 = Cancelled."
+              "Offset 132. 0 = Open, 1 = Active, 2 = Completed, 3 = Cancelled."
             ],
             "type": "u8"
           },
           {
             "name": "bump",
             "docs": [
-              "Offset 142. PDA bump for group_config."
+              "Offset 133. PDA bump for group_config."
             ],
             "type": "u8"
           },
           {
             "name": "vaultBump",
             "docs": [
-              "Offset 143. Canonical PDA bump for the vault, stored by create_group so the instructions",
+              "Offset 134. Canonical PDA bump for the vault, stored by create_group so the instructions",
               "that take the vault derive it once instead of searching for it."
             ],
             "type": "u8"
@@ -2094,13 +1744,13 @@ export type Safenudge = {
           {
             "name": "reserved",
             "docs": [
-              "Offset 144. Zero. Room for fixed-size fields added later, so a new field does not move",
+              "Offset 135. Zero. Room for fixed-size fields added later, so a new field does not move",
               "`group_code` or force every live group to settle before the upgrade."
             ],
             "type": {
               "array": [
                 "u8",
-                64
+                73
               ]
             }
           },
@@ -2170,25 +1820,9 @@ export type Safenudge = {
             "type": "u8"
           },
           {
-            "name": "compliantCount",
-            "type": "u8"
-          },
-          {
-            "name": "totalPenalties",
-            "docs": [
-              "Sum of `MemberSettled.penalty`."
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "protocolFee",
-            "type": "u64"
-          },
-          {
             "name": "totalPaid",
             "docs": [
-              "Sum of `MemberSettled.payout`. Plus `protocol_fee`, equals the vault balance before",
-              "settlement."
+              "Sum of `MemberSettled.payout`, equal to the vault balance before settlement."
             ],
             "type": "u64"
           }
@@ -2220,14 +1854,6 @@ export type Safenudge = {
           {
             "name": "totalPeriods",
             "type": "u8"
-          },
-          {
-            "name": "penaltyType",
-            "type": "u8"
-          },
-          {
-            "name": "penaltyValue",
-            "type": "u64"
           }
         ]
       }
@@ -2482,16 +2108,10 @@ export type Safenudge = {
             "type": "u64"
           },
           {
-            "name": "penalty",
-            "docs": [
-              "Penalty charged. Zero when no member was compliant, because all deposits then return."
-            ],
-            "type": "u64"
-          },
-          {
             "name": "payout",
             "docs": [
-              "Tokens sent to the member. The last member also gets the rounding remainder."
+              "Tokens sent to the member: `deposited`, plus, for the last member, any tokens sent to the",
+              "vault from outside the program."
             ],
             "type": "u64"
           }

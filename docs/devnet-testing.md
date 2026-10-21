@@ -27,7 +27,7 @@ solana airdrop 2 && sleep 5 && solana airdrop 2 && sleep 5 && solana airdrop 2
 solana balance                  # confirm you have >= 5 SOL
 
 # Anchor 1.0 routes cargo flags through `--`; both deploy + IDL publish happen in one step:
-anchor build -- --features devnet     # resolves FEE_RECIPIENT to 2jwEs8a…
+anchor build -- --features devnet     # five-minute periods and record retention
 anchor deploy \
   --program-name safenudge \
   --provider.cluster devnet \
@@ -164,17 +164,6 @@ solana program show <NEW_PROGRAM_ID> --url devnet
 `getAccountInfo` on the ProgramData address returns the authority at byte
 offset 13, after a 4-byte enum, an 8-byte slot and a 1-byte option tag.
 
-### Step 3b — create the treasury again
-
-The treasury authority is a PDA of the program ID, so a new program ID means a new, empty
-treasury. Until `init_treasury` runs for each mint in use, any `distribute` that owes a
-protocol fee fails with `TreasuryNotInitialized`. All-compliant cycles still settle, which
-makes this easy to miss in a smoke test.
-
-`init_treasury` must be signed by the devnet `FEE_RECIPIENT` keypair. Run it once per mint:
-the SafePool mock BRS mint and the web app's test USDC mint. It is one-shot per mint and
-fails on a second call.
-
 ### Step 4 — tell SafePool, in the same window
 
 SafePool (`davigiroux/safepool`, private) pins a copy of this repo's IDL and
@@ -214,9 +203,8 @@ stays live and callable; it simply can never be upgraded.
 `scripts/rehearse-devnet.ts` drives a devnet build through two paths in about 11 minutes, with
 no wallet app. First, a join signed for an empty group fails with `TermsMismatch` after the
 creator cancels, closes and creates the code again on other terms. Second, three members join,
-two deposit in each 5-minute period and one misses, and `distribute` pays out exactly what went
-in, protocol fee included. It creates its own mint, and it creates the treasury ATA itself, so
-the `FEE_RECIPIENT` key is not needed. The payer needs about 0.2 SOL.
+two deposit in each 5-minute period and one misses, and `distribute` returns to each member
+exactly what they deposited. It creates its own mint. The payer needs about 0.2 SOL.
 
 ```bash
 anchor build -- --features devnet

@@ -48,8 +48,6 @@ impl<'info> CreateGroup<'info> {
         frequency: u8,
         total_periods: u8,
         max_members: u8,
-        penalty_type: u8,
-        penalty_value: u64,
         bumps: &CreateGroupBumps,
     ) -> Result<()> {
         // ── Checks ──────────────────────────────────────────
@@ -72,20 +70,6 @@ impl<'info> CreateGroup<'info> {
             max_members >= 2 && max_members <= 10,
             SafeNudgeError::InvalidGroupSize
         );
-        require!(penalty_type <= 1, SafeNudgeError::InvalidPenaltyConfig);
-        if penalty_type == 0 {
-            // Fixed penalty is charged per missed period; it may not exceed
-            // the per-period deposit (mirrors the percentage cap's <= 100%
-            // per period). An unbounded value used to allow groups whose
-            // settlement math overflowed (issue #44 H-1).
-            require!(
-                penalty_value <= deposit_amount,
-                SafeNudgeError::InvalidPenaltyConfig
-            );
-        }
-        if penalty_type == 1 {
-            require!(penalty_value <= 5000, SafeNudgeError::InvalidPenaltyConfig);
-        }
 
         // ── Effects ─────────────────────────────────────────
         let group = &mut self.group_config;
@@ -93,14 +77,12 @@ impl<'info> CreateGroup<'info> {
         group.rent_payer = self.rent_payer.key();
         group.mint = self.mint.key();
         group.deposit_amount = deposit_amount;
-        group.penalty_value = penalty_value;
         group.cycle_start = 0;
         group.settled_at = 0;
         group.frequency = frequency;
         group.total_periods = total_periods;
         group.max_members = max_members;
         group.current_members = 0;
-        group.penalty_type = penalty_type;
         group.status = STATUS_OPEN;
         group.bump = bumps.group_config;
         group.vault_bump = bumps.vault;

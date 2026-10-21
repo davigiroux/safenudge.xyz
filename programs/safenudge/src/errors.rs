@@ -18,8 +18,6 @@ pub enum SafeNudgeError {
     CycleEnded,
     #[msg("Invalid group code format")]
     InvalidGroupCode,
-    #[msg("Invalid penalty configuration")]
-    InvalidPenaltyConfig,
     #[msg("Invalid frequency value")]
     InvalidFrequency,
     #[msg("Invalid group size")]
@@ -42,12 +40,6 @@ pub enum SafeNudgeError {
     InvalidTokenAccountOwner,
     #[msg("The same member record was passed more than once")]
     DuplicateMemberRecord,
-    #[msg("Recipient is not the configured FEE_RECIPIENT")]
-    UnauthorizedRecipient,
-    #[msg("Treasury has no fees to withdraw")]
-    NoFeesToWithdraw,
-    #[msg("Protocol treasury token account for this mint has not been initialized")]
-    TreasuryNotInitialized,
     #[msg("Rent refund destination does not match the recorded rent payer")]
     InvalidRentPayer,
     #[msg("Member records stay open for the retention period after settlement")]
@@ -74,8 +66,6 @@ pub enum SafeNudgeError {
     ExpectedJoinsRequired,
     #[msg("The group's terms changed since the join was signed")]
     TermsMismatch,
-    #[msg("Settlement payouts do not add up to the deposits")]
-    SettlementImbalance,
     #[msg("The vault holds less than the members deposited")]
     VaultShortfall,
 }

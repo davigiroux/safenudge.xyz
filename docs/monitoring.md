@@ -15,7 +15,7 @@ Two risks matter more than any bug in a single instruction:
 1. **Upgrade authority.** Until `--final` ([ADR-0001](./adr/0001-defer-program-immutability-to-multisig.md)), whoever controls the Squads multisig that holds upgrade authority can replace `distribute`. That is the Drift vector. A proposal on that multisig must page a human within a minute, every time, with no exceptions.
 2. **Settlement that does not happen.** `distribute` and `emergency_cancel` are permissionless or creator-only, and both can fail for reasons the program cannot fix alone (a frozen member token account, rent changes; see the Key Design Decisions log in `CLAUDE.md`). A failed settlement means user funds stay in a vault. We need to see failed attempts, not only successful ones.
 
-Everything else (volume, fees collected, deposit streaks) is dashboard material, not paging material.
+Everything else (volume, deposit streaks) is dashboard material, not paging material.
 
 ## 2. How Microscope works
 
@@ -44,6 +44,11 @@ RPC polling ──────┘   decoder built from  └─> stdout JSON ─>
   {"kind":"program_instruction","name":"create_group","failed":false,
    "data":{"accounts":{"creator":"…","group_config":"…","mint":"…","rent_payer":"…","vault":"…"},
            "data":{"group_code":"…","deposit_amount":1000000,"frequency":0,"total_periods":4,"max_members":3,"penalty_type":0,"penalty_value":100000}}}
+  ```
+
+  That record predates the refund-only build (ADR-0005), which dropped `penalty_type` and `penalty_value`.
+
+  ```json
   {"kind":"program_event","name":"group_created","instruction":"create_group","source":"log","failed":false,
    "data":{"group":"…","creator":"…","rent_payer":"…","mint":"…","deposit_amount":1000000,"total_periods":4,"max_members":3}}
   ```
@@ -80,16 +85,14 @@ Amounts are raw token units (`u64`); the client formats them. One event per stat
 | `leave_group` | `MemberLeft` | `group`, `member`, `refund`, `current_members` | Refund amount |
 | `start_cycle` | `CycleStarted` | `group`, `members`, `cycle_start`, `cycle_end` | Lets us alert on groups whose `cycle_end` passed with no settlement |
 | `deposit` | `DepositMade` | `group`, `member`, `period`, `amount`, `deposits_made` | Compliance and volume |
-| `distribute` | `MemberSettled` (one per member) | `group`, `member`, `deposited`, `penalty`, `payout` | Per-member outcome; payout cap checks |
-| `distribute` | `GroupSettled` | `group`, `members`, `compliant_count`, `total_penalties`, `protocol_fee`, `total_paid` | Fee revenue; conservation check off-chain (`total_paid + protocol_fee` equals the vault balance before settlement) |
+| `distribute` | `MemberSettled` (one per member) | `group`, `member`, `deposited`, `payout` | Per-member outcome; `payout` equals `deposited` except for the last member, who also gets any donated balance |
+| `distribute` | `GroupSettled` | `group`, `members`, `total_paid` | Conservation check off-chain (`total_paid` equals the vault balance before settlement) |
 | `emergency_cancel` | `GroupCancelled` | `group`, `creator`, `members`, `refunded_total`, `burned` | `burned > 0` is rare and must be visible |
-| `withdraw_fees` | `FeesWithdrawn` | `recipient`, `mint`, `amount` | Treasury outflow |
 | `set_join_authority` | `JoinAuthoritySet` | `group`, `creator`, `authority` | Which groups are gated and by which key; a key change between groups at one code is visible |
 | `close_group` | `GroupClosed` | `group`, `rent_payer`, `lamports`, `join_gate_lamports` | End of a group's life; rent returned. `lamports` is the `GroupConfig` balance (vault rent included when `refund_vault_rent` never ran), `join_gate_lamports` the gate's (0 without one) |
-| `init_treasury` | none | — | Instruction record is enough (one-shot) |
 | `refund_vault_rent`, `close_member_record` | none | — | Lamport-only, no token movement |
 
-Three instructions emit nothing: `init_treasury`, `refund_vault_rent` and `close_member_record`.
+Three instructions emit nothing: `refund_vault_rent`, `close_member_record` and `close_join_tally`.
 
 How the events are emitted:
 
@@ -97,7 +100,7 @@ How the events are emitted:
 - `distribute` emits one `MemberSettled` per member and then `GroupSettled`, after the vault closes.
 - Events add no accounts and no arguments, so the change was additive for SafePool: the IDL gained `events` and `types`, and call sites did not change. SafePool repins the IDL to decode events.
 - Field names are snake_case and flat. Microscope field paths only accept segments that start with a letter or `_`, so array elements (for example `periods_deposited[3]`) cannot be addressed. Events carry no arrays.
-- The `events` tests in `tests/safenudge.ts` decode each event from the transaction logs and assert its fields. The 10-member settlement test checks that `GroupSettled.total_paid` plus `protocol_fee` equals the vault balance before settlement.
+- The `events` tests in `tests/safenudge.ts` decode each event from the transaction logs and assert its fields. The 10-member settlement test checks that `GroupSettled.total_paid` equals the vault balance before settlement.
 
 ## 4. Configuration
 
@@ -118,7 +121,7 @@ poll_interval_seconds = 5
 replay_window_slots = 300
 
 [dashboard]
-event_fields = ["name", "instruction", "signature", "slot", "failed", "data.group", "data.member", "data.amount", "data.payout", "data.protocol_fee"]
+event_fields = ["name", "instruction", "signature", "slot", "failed", "data.group", "data.member", "data.amount", "data.payout", "data.total_paid"]
 multisig_fields = ["action", "instruction", "signature", "slot", "failed"]
 
 [alerting]
@@ -163,20 +166,6 @@ channels = ["telegram"]
 kind = "instruction"
 name = "emergency_cancel"
 conditions = [{ field = "failed", operator = "eq", value = false }]
-severity = "warning"
-channels = ["telegram"]
-
-# ── Treasury ──────────────────────────────────────────────────
-[[alerts]]
-kind = "instruction"
-name = "withdraw_fees"
-conditions = [{ field = "failed", operator = "eq", value = false }]
-severity = "warning"
-channels = ["telegram"]
-
-[[alerts]]
-kind = "instruction"
-name = "init_treasury"
 severity = "warning"
 channels = ["telegram"]
 ```
