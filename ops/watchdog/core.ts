@@ -87,7 +87,7 @@ const PERIOD_SECS: Record<Cluster, Record<number, bigint>> = {
   devnet: { 0: 7n * DAY, 1: 14n * DAY, 2: 30n * DAY, 3: 300n },
 };
 
-export const GROUP_DISCRIMINATOR = Buffer.from("snGroup4");
+export const GROUP_DISCRIMINATOR = Buffer.from("snGroup5");
 export const STATUS_OFFSET = 132;
 export const STATUS_ACTIVE = 1;
 

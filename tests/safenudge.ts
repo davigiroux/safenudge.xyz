@@ -882,7 +882,7 @@ describe("safenudge", () => {
 
       const data = Buffer.from(context.banksClient.getAccount(getGroupPda("x")[0]).data);
       assert.equal(data.length, 244);
-      assert.equal(data.subarray(0, 8).toString(), "snGroup4");
+      assert.equal(data.subarray(0, 8).toString(), "snGroup5");
       assert.deepEqual(data.subarray(8, 40), creator.publicKey.toBuffer());
       assert.deepEqual(data.subarray(40, 72), sponsor.publicKey.toBuffer());
       assert.deepEqual(data.subarray(72, 104), usdcMint.toBuffer());
