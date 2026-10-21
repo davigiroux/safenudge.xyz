@@ -44,7 +44,7 @@ solana program show GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc --url devnet
 
 Output should show `Last Deployed Slot` and the program data account. The program ID matches the one in [Anchor.toml](../Anchor.toml).
 
-**Before you upgrade a deployed program to a build that changes an account layout:** settle or cancel every live group first. The rule and the reason are in [ARCHITECTURE.md, "Upgrades that change an account layout"](../ARCHITECTURE.md#upgrades-that-change-an-account-layout). It applies to every cluster.
+**Before you upgrade a deployed program to a build that changes an account layout:** close every group, member record and join tally the old binary created, not only settle them, or deploy under a new program ID. On 2026-10-21 the devnet program held 65 old-layout groups. The rule and the reason are in [ARCHITECTURE.md, "Upgrades that change an account layout"](../ARCHITECTURE.md#upgrades-that-change-an-account-layout). It applies to every cluster.
 
 ## 2b. Redeploying devnet under a new program ID
 

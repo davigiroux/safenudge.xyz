@@ -257,7 +257,7 @@ Health alerts fire when the indexer host stops: on the devnet trial, a sleeping 
 
 These steps are part of the upgrade checklist in `ARCHITECTURE.md` ("Upgrades that change an account layout"):
 
-1. Copy the new `target/idl/safenudge.json` to `app/src/idl/safenudge.json`. `build.sh` reads it from there. In Docker mode, copy it into the Microscope checkout.
+1. Copy the new `target/idl/safenudge.json` to `idl/safenudge.json` (CI checks they match). `build.sh` reads it from there. In Docker mode, copy it into the Microscope checkout.
 2. Rebuild and reinstall: `ops/monitoring/build.sh <cluster> <dir>`, then `install.sh` on the host (`just generate`, rebuild, `just up` in Docker mode). The indexer will not start against a mismatched IDL hash, so a skipped step is visible: the service restarts in a loop and the health alerts fire.
 3. Records before the upgrade are decoded with the new IDL if backfilled again; do not re-backfill across a layout change.
 4. Expect a Squads alert for every step of the upgrade itself. An upgrade that produced no alert means monitoring is broken.

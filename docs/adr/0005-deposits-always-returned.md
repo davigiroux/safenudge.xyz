@@ -59,9 +59,10 @@ Decision:
 - On mainnet the Squad vault ran `init_treasury` for BRS before this
   change. That treasury token account stays open under the old treasury
   PDA, with about 0.002 SOL of rent locked. No instruction can reach it.
-- It is a layout and interface change: every live group on a cluster must
-  be settled or cancelled before that cluster takes this build, and every
-  client repins the IDL (ARCHITECTURE.md, "Upgrades that change an
+- It is a layout and interface change: every account the old binary
+  created on a cluster must be closed, not only settled, before that
+  cluster takes this build (or the build goes to a new program ID), and
+  every client repins the IDL (ARCHITECTURE.md, "Upgrades that change an
   account layout").
 - The hackathon web app, which offered penalties, was retired in the same
   release.
