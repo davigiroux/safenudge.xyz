@@ -3912,6 +3912,34 @@ describe("safenudge", () => {
       assert.equal(treasuryAfter, treasuryBefore);
     });
 
+    it("test_distribute_with_a_zero_penalty_returns_every_deposit_when_members_miss", async () => {
+      // SafePool creates every Pool with a fixed penalty of 0 (its ADR-0005): a miss costs nothing.
+      const { gPda, vPda } = await createWeeklyGroup("dist-no-penalty", { depositAmount: 10_000_000, totalPeriods: 3 });
+      const members = [
+        await joinNewMember(gPda, vPda, 100_000_000),
+        await joinNewMember(gPda, vPda, 100_000_000),
+        await joinNewMember(gPda, vPda, 100_000_000),
+      ];
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+      await depositCall(members[0], gPda, vPda);
+      await depositCall(members[1], gPda, vPda);
+      setUnixTime(cycleStart + BigInt(2 * WEEK_SECS));
+      await depositCall(members[0], gPda, vPda);
+      setUnixTime(cycleStart + BigInt(3 * WEEK_SECS));
+      const before = await Promise.all(members.map((m) => getTokenBalanceOrZero(m.tokenAccount)));
+
+      const events = await eventsOf(distributeMethod(gPda, vPda, members, null));
+
+      const received = await Promise.all(members.map(async (m, i) => (await getTokenBalanceOrZero(m.tokenAccount)) - before[i]));
+      assert.deepEqual(received, [30_000_000n, 20_000_000n, 10_000_000n]);
+      assert.isNull(context.banksClient.getAccount(vPda));
+      assert.deepEqual(events.at(-1), {
+        name: "groupSettled",
+        data: { group: gPda.toBase58(), members: 3, compliantCount: 1, totalPenalties: 0n, protocolFee: 0n, totalPaid: 60_000_000n },
+      });
+    });
+
     it("settles an extreme fixed penalty without overflow (no settlement brick)", async () => {
       // Issue #44 H-1 positive proof. deposit == penalty == 2^62 (the max the
       // create bound allows) and 5 missed periods make the raw penalty
