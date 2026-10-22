@@ -8,7 +8,7 @@ use anchor_lang::prelude::*;
 // land on the devnet program. Keep `Anchor.toml` in step with whichever branch
 // is built.
 #[cfg(not(feature = "mainnet"))]
-declare_id!("GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc");
+declare_id!("FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW");
 
 // Mainnet program ID (issue #20), deployed 2026-10-19. The keypair was generated on
 // the deploy machine and is backed up off-machine; it never enters this repository.

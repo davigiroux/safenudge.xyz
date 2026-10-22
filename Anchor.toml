@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.devnet]
-safenudge = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
+safenudge = "FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW"
 
 # Mainnet (issue #20). Upgrade authority: the Squads vault 3M4JicDnPbSbXboGW8Wz7DyDGTTAFqH27TseSTzAQ3PX.
 # Build with `anchor build --ignore-keys -- --features mainnet` and check that
@@ -21,7 +21,7 @@ safenudge = "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc"
 # so this block must stay present for the in-process test suite to load. The
 # program ID is the same as the devnet entry above.
 [programs.localnet]
-safenudge = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
+safenudge = "FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW"
 
 [provider]
 cluster = "devnet"

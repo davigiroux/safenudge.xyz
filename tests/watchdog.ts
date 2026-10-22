@@ -261,7 +261,7 @@ describe("watchdog", () => {
     it("test_valid_config_uses_defaults", () => {
       const result = parseConfig([], valid);
       if (!("config" in result)) throw new Error(`unexpected errors: ${result.errors.join("; ")}`);
-      expect(result.config.programId.toBase58()).to.equal("GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc");
+      expect(result.config.programId.toBase58()).to.equal("FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW");
       expect(result.config.failuresBeforeAlert).to.equal(2);
       expect(result.config.graceSecs).to.equal(86_400n);
       expect(result.config.cluster).to.equal("devnet");

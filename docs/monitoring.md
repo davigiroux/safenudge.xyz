@@ -107,7 +107,7 @@ How the events are emitted:
 `microscope.toml` for the first deployment (devnet, RPC mode). Values in `<...>` are filled in locally; the multisig addresses and the `.env` file are not committed to this repository.
 
 ```toml
-program_id = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"   # devnet
+program_id = "FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW"   # devnet
 idl_path = "idl/safenudge.json"                               # copy of target/idl/safenudge.json at the deployed commit
 
 [multisig]                      # add once the devnet Squad from ADR-0001 exists

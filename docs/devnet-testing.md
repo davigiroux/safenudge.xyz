@@ -39,12 +39,12 @@ Anchor 1.0 auto-publishes the IDL during `deploy` (stored in a metadata account 
 **Verify:**
 
 ```bash
-solana program show GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc --url devnet
+solana program show FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW --url devnet
 ```
 
 Output should show `Last Deployed Slot` and the program data account. The program ID matches the one in [Anchor.toml](../Anchor.toml).
 
-**Before you upgrade a deployed program to a build that changes an account layout:** close every group, member record and join tally the old binary created, not only settle them, or deploy under a new program ID. On 2026-10-21 the devnet program held 65 old-layout groups. The rule and the reason are in [ARCHITECTURE.md, "Upgrades that change an account layout"](../ARCHITECTURE.md#upgrades-that-change-an-account-layout). It applies to every cluster.
+**Before you upgrade a deployed program to a build that changes an account layout:** close every group, member record and join tally the old binary created, not only settle them, or deploy under a new program ID. On 2026-10-21 the devnet program `GxruFdaF…` held 65 old-layout groups, so the refund-only build went to the new ID `FJYGbzdt…` instead (see "The old deployment" below). The rule and the reason are in [ARCHITECTURE.md, "Upgrades that change an account layout"](../ARCHITECTURE.md#upgrades-that-change-an-account-layout). It applies to every cluster.
 
 ## 2b. Redeploying devnet under a new program ID
 
@@ -197,6 +197,13 @@ with real funds behind it.
 `88vmqe9y…` keeps ~2.44 SOL of devnet rent locked forever — `solana program
 close` needs the upgrade authority. Devnet SOL, so ignore it. The program
 stays live and callable; it simply can never be upgraded.
+
+`GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` runs the build before the
+refund-only upgrade (penalties, `snGroup2` layouts). It still owns 65 groups and
+152 member records, which the new layouts cannot read, so it was left on its
+binary rather than upgraded. Its upgrade authority `2jwEs8aP…` still holds it:
+once no one needs those groups, settle and close them with the old binary and
+run `solana program close` to recover its ~2.5 SOL of rent.
 
 ## 3. Scripted rehearsal of an upgrade
 

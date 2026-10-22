@@ -10,7 +10,7 @@ Each run sends a Telegram message only when a finding appears or clears, plus on
 | --- | --- | --- | --- |
 | `RPC_URL` | yes | | RPC endpoint. Contains an API key; the script never prints it. |
 | `EXPECTED_UPGRADE_AUTHORITY` | yes | | Address that must hold upgrade authority, or `none` after `--final`. |
-| `PROGRAM_ID` | no | devnet program `GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc` | Program to watch. |
+| `PROGRAM_ID` | no | devnet program `FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW` | Program to watch. |
 | `CLUSTER` | no | `devnet` | `devnet` or `mainnet`. Selects the period table: `devnet` adds the five-minute frequency 3 of `--features devnet` builds. |
 | `GRACE_HOURS` | no | `24` | Hours after `cycle_end` before an Active group is a finding. 0 to 168. |
 | `RPC_FAILURES_BEFORE_ALERT` | no | `2` | Consecutive failed runs of one check before its `rpc:<check>` finding opens. 1 to 6, so an outage cannot go unreported for more than an hour. |
