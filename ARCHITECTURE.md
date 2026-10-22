@@ -792,7 +792,7 @@ The refund-only upgrade (ADR-0005) removes penalties and the protocol fee, and a
 - `distribute` loses `treasury_authority` and `treasury_token_account`, so its account list is `payer`, `group_config`, `vault`, `mint`, `token_program`. `init_treasury` and `withdraw_fees` are gone.
 - `MemberSettled` loses `penalty`, `GroupSettled` loses `compliant_count`, `total_penalties` and `protocol_fee`, and `FeesWithdrawn` is gone.
 - Error codes are renumbered: `InvalidPenaltyConfig`, `UnauthorizedRecipient`, `NoFeesToWithdraw` and `TreasuryNotInitialized` are gone, and `TermsMismatch` and `VaultShortfall` are new. A client that maps codes to names from the IDL needs no other change; one that hard-codes numbers must repin them.
-- The account sizes rise, so a sponsor's rent budget for a gated create rises by 487,680 lamports. Kora's `max_allowed_lamports` is now 8,249,920, which also counts the join tally that the creator's first join creates (the earlier figure left it out). The watchdog in `ops/watchdog/core.ts` reads the new offsets.
+- The account sizes rise, so a sponsor's rent budget for a gated create rises by 487,680 lamports. The watchdog in `ops/watchdog/core.ts` reads the new offsets.
 
 Every upgrade that changes the IDL, with or without a layout change, also needs these monitoring steps (see [docs/monitoring.md](./docs/monitoring.md), §6):
 

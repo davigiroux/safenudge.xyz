@@ -124,7 +124,6 @@ safenudge.xyz/
 ├── tests/                    # LiteSVM integration tests
 ├── idl/                      # Committed IDL; SafePool and monitoring copy it
 ├── ops/                      # Watchdog and monitoring bundle
-├── infra/kora/               # Fee relay config used by SafePool
 ├── scripts/                  # measure-join.ts, rehearse-devnet.ts
 ├── docs/                     # ADRs, devnet guide, monitoring
 ├── ARCHITECTURE.md           # Account layouts, instructions, security
