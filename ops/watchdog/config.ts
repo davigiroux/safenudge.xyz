@@ -3,7 +3,7 @@
 import { PublicKey } from "@solana/web3.js";
 import { Cluster, DEFAULT_FAILURES_BEFORE_ALERT, escapeHtml } from "./core";
 
-export const DEVNET_PROGRAM_ID = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc";
+export const DEVNET_PROGRAM_ID = "FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW";
 // Upper bounds: a larger value would let a long RPC outage, or a long-unsettled group, pass with no alert.
 const MAX_FAILURES_BEFORE_ALERT = 6;
 const MAX_GRACE_HOURS = 168;

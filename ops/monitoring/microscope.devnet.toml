@@ -1,6 +1,6 @@
 # SafeNudge devnet. Source: docs/monitoring.md §4. Built into the indexer by ops/monitoring/build.sh.
 # The IDL is idl/safenudge.json at the commit the bundle is built from.
-program_id = "GxruFdaFHYPv9MqhFM2MoFWyYNXGnmhdTpy1MFHXJSUc"
+program_id = "FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW"
 idl_path = "idl/safenudge.json"
 
 [datasource]
