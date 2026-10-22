@@ -17,7 +17,6 @@ safenudge/
 ├── tests/                      # Anchor integration tests (TypeScript, LiteSVM)
 ├── idl/                        # Committed IDL; CI checks it matches the build. SafePool and monitoring copy it
 ├── ops/                        # Watchdog and monitoring bundle
-├── infra/kora/                 # Fee relay config used by SafePool
 ├── scripts/                    # measure-join.ts, rehearse-devnet.ts
 ├── CONCEPT.md                  # Hackathon product concept (historical)
 ├── ARCHITECTURE.md             # Technical architecture (read-only reference)
