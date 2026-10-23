@@ -603,6 +603,19 @@ The build is not byte-for-byte reproducible across operating systems: the same c
 
 Read rent from the cluster (`solana rent <bytes>`), never from a per-byte rate remembered from older docs: mainnet charged 5,080 lamports per byte on this date, not 6,960.
 
+**Mainnet upgrade record (2026-10-22).** The refund-only build ([ADR-0005](./docs/adr/0005-deposits-always-returned.md)) replaced the 2026-10-19 binary while the program owned no account, so no account in the old layout was stranded.
+
+| | |
+|---|---|
+| Source | `c54f7d0`, built with `solana-verify build --library-name safenudge --base-image solanafoundation/solana-verifiable-build:3.1.10 -- --features mainnet` (crates vendored from `Cargo.lock` because the build container had no network) |
+| Binary | 444,368 bytes, executable hash `40362d8d8b6b0c987b05a591505b3b09852fcb00447b49be6255d54910baf568`; it carries the mainnet program ID and the `snGroup5`/`snMembr3` discriminators, and no devnet ID |
+| Buffer | `AuTgu3XbVkMJpinY7BL7YedE9xAK1XHaHQ6sAbM6x71s`, written from a single-use key with `--use-rpc` (a sandbox without QUIC cannot use the default TPU path), its authority then moved to the Squad vault; 2.258 SOL of rent, returned to the spill address by the upgrade |
+| Proposal | Squads transaction 4, proposal `31Aso4DeWzqhYdQa4A8X82HwhK3qm38iaXd3aRFqdoPJ`, 2 of 3 approvals |
+| Upgraded | slot 460160441, transaction `4cDJShTh7REZgRaChs1C829ai6KUtuaAKaZmZLDeygeJHGiaNcQz7HLaPd29yeqQpemeLvVBJDhxKzK5EqxnnaS4`; `solana-verify get-program-hash` returns the hash above |
+| ProgramData | unchanged: 732,024 bytes of program space, authority the Squad vault |
+
+`ffbfebe` (a `VaultShortfall` check in `emergency_cancel`) landed after `c54f7d0` and is not on mainnet. It changes no layout and no interface, so it can go out in a later upgrade at any time.
+
 ---
 
 ### Events
