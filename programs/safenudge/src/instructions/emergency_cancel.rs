@@ -61,6 +61,7 @@ impl<'info> EmergencyCancel<'info> {
         let mut refund_amounts: Vec<u64> = Vec::with_capacity(member_count);
         let mut seen_records: Vec<Pubkey> = Vec::with_capacity(member_count);
         let mint_key = ctx.accounts.mint.key();
+        let mut total_deposited: u64 = 0;
 
         for i in 0..member_count {
             let record_idx = i.checked_mul(2).ok_or(SafeNudgeError::ArithmeticOverflow)?;
@@ -78,8 +79,17 @@ impl<'info> EmergencyCancel<'info> {
                 &mut seen_records,
             )?;
 
+            total_deposited = total_deposited
+                .checked_add(member_record.total_deposited)
+                .ok_or(SafeNudgeError::ArithmeticOverflow)?;
             refund_amounts.push(member_record.total_deposited);
         }
+
+        // The last-listed member receives the vault balance, so a short vault would underpay them.
+        require!(
+            ctx.accounts.vault.amount >= total_deposited,
+            SafeNudgeError::VaultShortfall
+        );
 
         let unowed_balance = unowed_vault_balance(member_count, ctx.accounts.vault.amount);
         if unowed_balance > 0 {
