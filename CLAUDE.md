@@ -164,6 +164,7 @@ UNIT TESTS (program logic):
 │   ├── creator cancels during open -> full refund
 │   ├── creator cancels during active -> full refund
 │   ├── non-creator cancels -> UnauthorizedCreator error
+│   ├── vault holds less than the deposits -> VaultShortfall error, nothing moves
 │   └── cancel after completed -> InvalidGroupStatus error
 ├── set_join_authority
 │   ├── creator sets authority -> gate stored, rent charged to group rent payer

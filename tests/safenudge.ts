@@ -28,6 +28,8 @@ import {
   createInitializeDefaultAccountStateInstruction,
   createInitializeInterestBearingMintInstruction,
   createInitializeMetadataPointerInstruction,
+  createReallocateInstruction,
+  createEnableRequiredMemoTransfersInstruction,
   getMintLen,
   getExtensionTypes,
   unpackMint,
@@ -218,15 +220,17 @@ describe("safenudge", () => {
     return { keypair, tokenAccount: ata };
   }
 
-  async function createTokenAccountFor(owner: PublicKey, mint: PublicKey = usdcMint): Promise<PublicKey> {
+  async function createTokenAccountFor(
+    owner: PublicKey, mint: PublicKey = usdcMint, tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+  ): Promise<PublicKey> {
     const account = Keypair.generate();
     await provider.sendAndConfirm(
       new Transaction().add(
         SystemProgram.createAccount({
           fromPubkey: payer.publicKey, newAccountPubkey: account.publicKey,
-          space: ACCOUNT_SIZE, lamports: Number(rentFor(ACCOUNT_SIZE)), programId: TOKEN_PROGRAM_ID,
+          space: ACCOUNT_SIZE, lamports: Number(rentFor(ACCOUNT_SIZE)), programId: tokenProgram,
         }),
-        createInitializeAccountInstruction(account.publicKey, mint, owner),
+        createInitializeAccountInstruction(account.publicKey, mint, owner, tokenProgram),
       ),
       [payer, account],
     );
@@ -579,9 +583,12 @@ describe("safenudge", () => {
     ]);
   }
 
-  function distributeMethod(gPda: PublicKey, vPda: PublicKey, members: Member[], mint: PublicKey = usdcMint) {
+  function distributeMethod(
+    gPda: PublicKey, vPda: PublicKey, members: Member[], mint: PublicKey = usdcMint,
+    tokenProgram: PublicKey = TOKEN_PROGRAM_ID,
+  ) {
     return program.methods.distribute()
-      .accounts({ payer: payer.publicKey, groupConfig: gPda, vault: vPda, mint, tokenProgram: TOKEN_PROGRAM_ID })
+      .accounts({ payer: payer.publicKey, groupConfig: gPda, vault: vPda, mint, tokenProgram })
       .remainingAccounts(memberPairs(members));
   }
 
@@ -2816,6 +2823,40 @@ describe("safenudge", () => {
       assert.equal(await getTokenBalanceOrZero(tokenAccount), 100_000_000n);
       assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
     });
+
+    it("test_deposit_with_wrong_token_account_vault_or_mint_fails_and_moves_nothing", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("dep-wrong-accts", { depositAmount: 5_000_000 });
+      const m1 = await joinNewMember(gPda, vPda, 100_000_000);
+      await joinNewMember(gPda, vPda, 100_000_000);
+      const cycleStart = await startCycle(gPda);
+      setUnixTime(cycleStart + BigInt(WEEK_SECS));
+
+      const otherMint = await createMint(TOKEN_PROGRAM_ID);
+      const { tokenAccount: otherMintAccount } = await createFundedMember(100_000_000, undefined, otherMint);
+      const { tokenAccount: outsiderAccount } = await createFundedMember(100_000_000);
+      const other = await createWeeklyGroup("dep-wrong-accts-b", { depositAmount: 5_000_000 });
+      await joinNewMember(other.gPda, other.vPda, 100_000_000);
+      const deposit = (patch: { memberTokenAccount?: PublicKey; vault?: PublicKey; mint?: PublicKey }) =>
+        depositMethod(m1, gPda, vPda).accounts(patch).signers([m1.keypair]).rpc();
+
+      // The member's own record, paying from a token account of another mint.
+      await expectError(
+        depositMethod({ ...m1, tokenAccount: otherMintAccount }, gPda, vPda).signers([m1.keypair]).rpc(), "InvalidMint",
+      );
+      // Paying from a token account that another wallet owns.
+      await expectError(deposit({ memberTokenAccount: outsiderAccount }), "ConstraintRaw");
+      // Paying into the vault of another group.
+      await expectError(deposit({ vault: other.vPda }), "ConstraintSeeds");
+      // Naming a mint other than the group's.
+      await expectError(deposit({ mint: otherMint }), "InvalidMint");
+
+      const record = await program.account.memberRecord.fetch(m1.recordPda);
+      assert.equal(record.depositsMade, 1);
+      assert.equal(await getTokenBalanceOrZero(m1.tokenAccount), 95_000_000n);
+      assert.equal(await getTokenBalanceOrZero(outsiderAccount), 100_000_000n);
+      assert.equal(await getTokenBalanceOrZero(vPda), 10_000_000n);
+      assert.equal(await getTokenBalanceOrZero(other.vPda), 5_000_000n);
+    });
   });
 
   // ─── distribute tests ─────────────────────────────────────
@@ -3469,6 +3510,78 @@ describe("safenudge", () => {
         assert.isNull(context.banksClient.getAccount(vPda));
       });
     }
+
+    // A member of a Token-2022 group can require a memo on incoming transfers to their own
+    // account. Settlement sends no memo, so the transfer into that account fails like a frozen one.
+    for (const how of ["distribute", "cancel"] as const) {
+      it(`${how} pays another token account of a member whose canonical ATA requires a memo`, async () => {
+        const code = `memo-ata-${how}`;
+        const mint = await createMint(TOKEN_2022_PROGRAM_ID);
+        await createGroupMethod(
+          code, { depositAmount: 10_000_000, totalPeriods: 1 }, payer.publicKey, payer.publicKey, mint, TOKEN_2022_PROGRAM_ID,
+        ).rpc();
+        const [gPda] = getGroupPda(code);
+        const [vPda] = getVaultPda(gPda);
+        const members: Member[] = [];
+        for (let i = 0; i < 2; i++) {
+          const { keypair, tokenAccount } = await createFundedMember(10_000_000, undefined, mint, TOKEN_2022_PROGRAM_ID);
+          const member = { keypair, tokenAccount, recordPda: getMemberPda(gPda, keypair.publicKey)[0] };
+          await joinMethod(member, gPda, vPda, keypair.publicKey, { mint, tokenProgram: TOKEN_2022_PROGRAM_ID })
+            .signers([keypair]).rpc();
+          members.push(member);
+        }
+        const cycleStart = await startCycle(gPda);
+        setUnixTime(cycleStart + BigInt(WEEK_SECS));
+        const memoMember = members[1];
+        await provider.sendAndConfirm(
+          new Transaction().add(
+            createReallocateInstruction(
+              memoMember.tokenAccount, payer.publicKey, [ExtensionType.MemoTransfer], memoMember.keypair.publicKey,
+              [], TOKEN_2022_PROGRAM_ID,
+            ),
+            createEnableRequiredMemoTransfersInstruction(
+              memoMember.tokenAccount, memoMember.keypair.publicKey, [], TOKEN_2022_PROGRAM_ID,
+            ),
+          ),
+          [payer, memoMember.keypair],
+        );
+        const settle = (pairs: Member[]) => how === "distribute"
+          ? distributeMethod(gPda, vPda, pairs, mint, TOKEN_2022_PROGRAM_ID).rpc()
+          : cancelMethod(gPda, vPda, pairs, payer.publicKey, mint, TOKEN_2022_PROGRAM_ID).rpc();
+
+        await expectError(settle(members), "No memo in previous instruction");
+        assert.equal(await getTokenBalanceOrZero(vPda), 20_000_000n);
+
+        const plain = await createTokenAccountFor(memoMember.keypair.publicKey, mint, TOKEN_2022_PROGRAM_ID);
+        await settle([members[0], { ...memoMember, tokenAccount: plain }]);
+
+        assert.equal(await getTokenBalanceOrZero(members[0].tokenAccount), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(plain), 10_000_000n);
+        assert.equal(await getTokenBalanceOrZero(memoMember.tokenAccount), 0n);
+        assert.isNull(context.banksClient.getAccount(vPda));
+      });
+    }
+
+    it("test_emergency_cancel_vault_holding_less_than_the_deposits_fails_with_vault_shortfall_and_moves_nothing", async () => {
+      const { gPda, vPda } = await createWeeklyGroup("cancel-shortfall", { depositAmount: 10_000_000 });
+      const members = [
+        await joinNewMember(gPda, vPda, 100_000_000),
+        await joinNewMember(gPda, vPda, 100_000_000),
+      ];
+      // No instruction can lower a vault below its members' deposits, so write the state directly.
+      const vault = context.banksClient.getAccount(vPda);
+      const token = AccountLayout.decode(vault.data);
+      const data = Buffer.alloc(AccountLayout.span);
+      AccountLayout.encode({ ...token, amount: token.amount - 1n }, data);
+      context.banksClient.setAccount(vPda, { ...vault, data });
+      const balancesBefore = await Promise.all(members.map((m) => getTokenBalanceOrZero(m.tokenAccount)));
+
+      await expectError(cancelCall(gPda, vPda, members), "VaultShortfall");
+
+      assert.deepEqual(await Promise.all(members.map((m) => getTokenBalanceOrZero(m.tokenAccount))), balancesBefore);
+      assert.equal(await getTokenBalanceOrZero(vPda), 19_999_999n);
+      assert.equal((await program.account.groupConfig.fetch(gPda)).status, 0);
+    });
 
     it("refunds each member exactly their total_deposited mid-cycle and closes the vault", async () => {
       const { gPda, vPda } = await createWeeklyGroup("cancel-uneven", { depositAmount: 10_000_000 });
