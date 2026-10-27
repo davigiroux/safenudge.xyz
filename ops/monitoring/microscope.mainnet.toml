@@ -1,0 +1,73 @@
+# SafeNudge mainnet. Source: docs/monitoring.md §4. Built into the indexer by ops/monitoring/build.sh.
+# The IDL is idl/safenudge.json at the commit the bundle is built from.
+# build.sh fills the <...> values from SQUADS_VAULT and SQUADS_MULTISIG; the multisig addresses are not committed.
+program_id = "98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc"
+idl_path = "idl/safenudge.json"
+
+[multisig]
+vault_address = "<SQUADS_VAULT>"
+state_address = "<SQUADS_MULTISIG>"
+version = "v4"
+
+# Polling, not Yellowstone: no gRPC provider yet. Each poll reads the program and the multisig,
+# so 15 seconds keeps a month of polling under about 400k RPC calls.
+[datasource]
+mode = "rpc"
+poll_interval_seconds = 15
+replay_window_slots = 300
+
+[dashboard]
+event_fields = ["name", "instruction", "signature", "slot", "failed", "data.group", "data.member", "data.amount", "data.payout", "data.total_paid"]
+multisig_fields = ["action", "instruction", "signature", "slot", "failed"]
+
+[alerting]
+lookback_window_seconds = 60
+evaluation_interval_seconds = 10
+explorer_transaction_url = "https://explorer.solana.com/tx/{signature}"
+
+# Upgrade authority: every Squad proposal, approval, execution and configuration change pages.
+[[alerts]]
+kind = "multisig"
+name = "proposal_created"
+severity = "critical"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "multisig"
+name = "proposal_approved"
+severity = "critical"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "multisig"
+name = "transaction_executed"
+severity = "critical"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "multisig"
+name = "configuration_transaction_created"
+severity = "critical"
+channels = ["telegram"]
+
+# Settlement health.
+[[alerts]]
+kind = "instruction"
+name = "distribute"
+conditions = [{ field = "failed", operator = "eq", value = true }]
+severity = "error"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "instruction"
+name = "emergency_cancel"
+conditions = [{ field = "failed", operator = "eq", value = false }]
+severity = "warning"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "event"
+name = "group_cancelled"
+conditions = [{ field = "data.burned", operator = "gt", value = 0 }]
+severity = "error"
+channels = ["telegram"]
