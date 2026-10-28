@@ -4,7 +4,7 @@ How we watch the SafeNudge program on-chain before and after the mainnet launch,
 
 The tool is [Solana Microscope](https://github.com/solana-foundation/solana-microscope) (Solana Foundation, MIT, first published September 2026). This doc records what it does, what it cannot do, and the configuration we plan to run. Facts about Microscope were read from its source at commit `fb22551`; re-check them when upgrading.
 
-Status: **events shipped, monitoring proposed.** The program emits eleven events (§3). PR #82 added nine, and `GroupClosed` and `JoinAuthoritySet` came later. No Microscope deployment exists yet.
+Status: **events shipped, mainnet monitoring configured** (§5). The program emits eleven events (§3). PR #82 added nine, and `GroupClosed` and `JoinAuthoritySet` came later.
 
 ---
 
@@ -104,7 +104,7 @@ How the events are emitted:
 
 ## 4. Configuration
 
-`microscope.toml` for the first deployment (devnet, RPC mode). Values in `<...>` are filled in locally; the multisig addresses and the `.env` file are not committed to this repository.
+`microscope.toml` for the first deployment (devnet, RPC mode). The mainnet file is `ops/monitoring/microscope.mainnet.toml`. Values in `<...>` are filled in locally; the multisig addresses and the `.env` file are not committed to this repository.
 
 ```toml
 program_id = "FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW"   # devnet
@@ -200,7 +200,7 @@ Alert names are checked against the IDL at startup: an event alert for an event 
 | Grafana Cloud trial (done, 2026-10-12) | Indexer and Alloy local, Grafana Cloud for storage, dashboards and alerts | Same | Records and metrics reached the stack, a `group_created` alert fired from Cloud, and `RPC polling stale` fired while the host slept. See §5.1. |
 | Devnet host (running since 2026-10-12) | Small Linux VPS: indexer, Alloy and watchdog as systemd services, no Docker ([`ops/monitoring`](../ops/monitoring/README.md)). Grafana Cloud as above | Same | Indexer about 13 MB of memory, Alloy about 240 MB. Moved off the laptop because sleep fired the health alerts. |
 | Squad rehearsal | Devnet host | Same | Add `[multisig]` for the devnet Squad when ADR-0001's devnet rehearsal starts; every step of the rehearsal must produce the expected alert. |
-| Mainnet | A second host, not the devnet one, with the same `ops/monitoring` bundle and a `microscope.mainnet.toml` | Yellowstone + `RPC_URL` gap recovery | The host runs no Grafana, Loki or Prometheus, so it can be smaller than the 2 vCPU / 4 GiB the full stack needs. Must be running and proven before upgrade authority moves to the mainnet Squad. |
+| Mainnet | The devnet host, which stops monitoring devnet. Same `ops/monitoring` bundle, built with `microscope.mainnet.toml` and `SQUADS_VAULT` / `SQUADS_MULTISIG` set | RPC polling every 15 s (program and Squad multisig), mainnet `RPC_URL` | Devnet monitoring is retired: its alerts were not acted on. Yellowstone stays the target once a gRPC provider is chosen. The upgrade authority moved to the Squad on 2026-10-19, before this host watched it. |
 
 Operational notes:
 

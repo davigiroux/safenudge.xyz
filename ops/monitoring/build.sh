@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the monitoring host bundle (linux/amd64): indexer, Alloy, Node, watchdog, configs and units.
 # Usage: ops/monitoring/build.sh <cluster> <out-dir>    e.g. ops/monitoring/build.sh devnet /tmp/bundle
+# Mainnet also needs SQUADS_VAULT and SQUADS_MULTISIG (the Squad's default vault and multisig account).
 # Needs docker buildx, git, curl, npx. Writes no secrets: copy env/*.env.example to <out-dir>/env/ and fill them in.
 set -euo pipefail
 
@@ -27,11 +28,24 @@ mkdir -p "$OUT/dl" "$OUT/idl" "$OUT/units"
 WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 
+# Multisig addresses are not committed; fill <SQUADS_VAULT> and <SQUADS_MULTISIG> from the environment.
+sed -e "s/<SQUADS_VAULT>/${SQUADS_VAULT:-}/" -e "s/<SQUADS_MULTISIG>/${SQUADS_MULTISIG:-}/" "$CONFIG" > "$WORK/microscope.toml"
+if grep -q '= ""' "$WORK/microscope.toml"; then
+  echo "$CONFIG needs SQUADS_VAULT and SQUADS_MULTISIG set" >&2; exit 1
+fi
+CONFIG=$WORK/microscope.toml
+
+# The decoder takes its program ID from the IDL address, which is the devnet ID in the repository.
+PROGRAM_ID=$(sed -n 's/^program_id = "\(.*\)"$/\1/p' "$CONFIG")
+IDL_ADDRESS=$(sed -n 's/^  "address": "\(.*\)",$/\1/p' "$REPO/idl/safenudge.json")
+sed "s/^  \"address\": \"$IDL_ADDRESS\",$/  \"address\": \"$PROGRAM_ID\",/" "$REPO/idl/safenudge.json" > "$WORK/safenudge.json"
+grep -q "^  \"address\": \"$PROGRAM_ID\",$" "$WORK/safenudge.json" || { echo "could not set the IDL address to $PROGRAM_ID" >&2; exit 1; }
+
 git clone -q "$MICROSCOPE_REPO" "$WORK/microscope"
 git -C "$WORK/microscope" checkout -q "$MICROSCOPE_REF"
 cp "$CONFIG" "$WORK/microscope/microscope.toml"
 mkdir -p "$WORK/microscope/idl"
-cp "$REPO/idl/safenudge.json" "$WORK/microscope/idl/safenudge.json"
+cp "$WORK/safenudge.json" "$WORK/microscope/idl/safenudge.json"
 docker buildx build -q --platform linux/amd64 -t safenudge-microscope-indexer:bundle --load "$WORK/microscope" >/dev/null
 cid=$(docker create --platform linux/amd64 safenudge-microscope-indexer:bundle)
 docker cp "$cid:/usr/local/bin/microscope-indexer" "$OUT/microscope-indexer"
@@ -46,7 +60,7 @@ fetch "$OUT/dl/node-linux-x64.tar.xz" \
   "https://nodejs.org/dist/$NODE_VERSION/node-$NODE_VERSION-linux-x64.tar.xz" "$NODE_SHA256"
 
 cp "$CONFIG" "$OUT/microscope.toml"
-cp "$REPO/idl/safenudge.json" "$OUT/idl/safenudge.json"
+cp "$WORK/safenudge.json" "$OUT/idl/safenudge.json"
 cp "$HERE/alloy.alloy" "$HERE/nft.conf" "$HERE/install.sh" "$OUT/"
 cp "$HERE"/units/* "$OUT/units/"
 git -C "$REPO" rev-parse HEAD > "$OUT/SOURCE_COMMIT"

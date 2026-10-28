@@ -44,10 +44,11 @@ def upsert(path, uid, body):
     return status
 
 
-def telegram_point(uid, resolve, silent):
+def telegram_point(name, resolve, silent):
+    # Grafana caps a contact point UID at 40 characters; rules route by name, so only the UID is shortened.
     return {
-        "uid": uid,
-        "name": uid,
+        "uid": name.replace("-telegram-", "-tg-"),
+        "name": name,
         "type": "telegram",
         "settings": {
             "bottoken": os.environ["TELEGRAM_BOT_TOKEN"],
@@ -76,8 +77,8 @@ print("template", status if status < 300 else out)
 
 for kind, resolve in (("activity", False), ("health", True)):
     for tone, silent in (("loud", False), ("quiet", True)):
-        uid = f"{DEPLOYMENT}-telegram-{kind}-{tone}"
-        print("contact point", uid, upsert("/api/v1/provisioning/contact-points", uid, telegram_point(uid, resolve, silent)))
+        point = telegram_point(f"{DEPLOYMENT}-telegram-{kind}-{tone}", resolve, silent)
+        print("contact point", point["name"], upsert("/api/v1/provisioning/contact-points", point["uid"], point))
 
 pause_health = os.environ.get("PAUSE_HEALTH") == "1"
 pushed = dropped = 0
