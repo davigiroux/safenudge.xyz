@@ -71,3 +71,22 @@ name = "group_cancelled"
 conditions = [{ field = "data.burned", operator = "gt", value = 0 }]
 severity = "error"
 channels = ["telegram"]
+
+# Group lifecycle: one message per event, no sound.
+[[alerts]]
+kind = "event"
+name = "group_created"
+severity = "info"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "event"
+name = "cycle_started"
+severity = "info"
+channels = ["telegram"]
+
+[[alerts]]
+kind = "event"
+name = "group_settled"
+severity = "info"
+channels = ["telegram"]
