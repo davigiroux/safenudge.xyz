@@ -76,17 +76,17 @@ channels = ["telegram"]
 [[alerts]]
 kind = "event"
 name = "group_created"
-severity = "info"
+severity = "warning"
 channels = ["telegram"]
 
 [[alerts]]
 kind = "event"
 name = "cycle_started"
-severity = "info"
+severity = "warning"
 channels = ["telegram"]
 
 [[alerts]]
 kind = "event"
 name = "group_settled"
-severity = "info"
+severity = "warning"
 channels = ["telegram"]
