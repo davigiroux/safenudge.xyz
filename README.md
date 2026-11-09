@@ -1,13 +1,24 @@
 # SafeNudge
 
-**A group savings program on Solana, for Brazilian caixinhas, MOAIs and vaquinhas.**
+**A group savings program on Solana. Friends commit to save together, and every member gets back what they put in.**
 
 [![CI](https://github.com/davigiroux/safenudge.xyz/actions/workflows/ci.yml/badge.svg)](https://github.com/davigiroux/safenudge.xyz/actions/workflows/ci.yml)
 [![Anchor](https://img.shields.io/badge/Anchor-1.0.2-blueviolet)](https://www.anchor-lang.com/)
 
 Friends agree to deposit a fixed amount every period into a shared vault that no person controls. The program records who made each deposit. When the cycle ends, every member gets back exactly what they deposited. A missed deposit costs no principal; it is simply visible to the group ([ADR-0005](./docs/adr/0005-deposits-always-returned.md)).
 
-This repository holds the program. Its client is **SafePool**, an app in a private repository by the same author. The hackathon web app that once lived here and at safenudge.xyz is retired; [`CONCEPT.md`](./CONCEPT.md) and [`ROADMAP.md`](./ROADMAP.md) describe that proof of concept and are kept as history.
+This repository holds the program. Its client is **SafePool**, an app in a private repository by the same author. The hackathon web app that once lived here and at safenudge.xyz is retired; [`CONCEPT.md`](./CONCEPT.md) and [`ROADMAP.md`](./ROADMAP.md) describe that proof of concept and are kept as history: its penalties, protocol fee and yield are gone from the program.
+
+## Status
+
+| Cluster | Program ID | Build |
+|---|---|---|
+| Mainnet | `98poy9z9Z2MTz2TXW5W2LfnWosRubJYLbNzAjCYZeYFc` | Refund-only build from `c54f7d0`, upgraded 2026-10-22 through the Squads multisig. Verifiable: [upgrade record](./ARCHITECTURE.md#cluster-builds) |
+| Devnet | `FJYGbzdtS56PZDghiUT42UbgHg4VXh3DLoPehXHY5qKW` | Test cluster, built with `--features devnet` (five-minute periods) |
+
+`main` is ahead of mainnet by one security fix: `emergency_cancel` checks `VaultShortfall` (`ffbfebe`). It ships with the next upgrade.
+
+A monitoring host indexes the mainnet program and sends Telegram alerts for group lifecycle events, Squads multisig activity and watchdog findings ([`docs/monitoring.md`](./docs/monitoring.md)).
 
 ---
 
@@ -79,7 +90,7 @@ Full specs are in [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 5. **Permissionless settlement.** Anyone can settle a finished cycle.
 6. **`transfer_checked` everywhere,** and a mint allowlist: `create_group` rejects wrapped SOL and any Token-2022 mint with an extension outside metadata and interest-bearing.
 
-**Known limit.** Settlement pays every member in one transaction, so a frozen member token account blocks it until the account is thawed or the caller passes another token account of that member. A claim path is planned in [issue #56](https://github.com/davigiroux/safenudge.xyz/issues/56).
+**Known limit.** Settlement pays every member in one transaction, so a frozen member token account blocks it until the account is thawed or the caller passes another token account of that member. A claim path is planned with the v2 two-phase settlement ([issue #56](https://github.com/davigiroux/safenudge.xyz/issues/56)).
 
 **Upgrade authority.** On mainnet the upgrade authority is a 2-of-3 Squads multisig. Making the program immutable waits on an external review and a mainnet soak; see [ADR-0001](./docs/adr/0001-defer-program-immutability-to-multisig.md). Until then, read the guarantees above as "no single party can move your money", not "the rules can never change".
 
